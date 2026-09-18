@@ -1,0 +1,57 @@
+# careconnect-api — FastAPI backend
+# Build context: api/
+# Platform: linux/arm64
+
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+# Install build tools needed for bcrypt / cryptography / pydantic-core wheels
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml .
+# Install only runtime deps (no [dev] extras)
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir --prefix=/install \
+        "fastapi>=0.115" \
+        "uvicorn[standard]>=0.30" \
+        "sqlalchemy[asyncio]>=2.0" \
+        "aiomysql>=0.2" \
+        "pydantic>=2.0" \
+        "pydantic-settings>=2.0" \
+        "pyjwt>=2.8" \
+        "bcrypt>=4.0" \
+        "httpx>=0.27" \
+        "redis>=5.0" \
+        "apscheduler>=3.10" \
+        "pyyaml>=6.0"
+
+# ── Runtime image ─────────────────────────────────────────────────────────────
+FROM python:3.12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r appuser \
+    && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+
+WORKDIR /app
+
+COPY --from=builder /install /usr/local
+
+# Copy application source
+COPY careconnect_api/ ./careconnect_api/
+COPY migrations/ ./migrations/
+
+RUN chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
+    CMD wget -qO- http://localhost:8080/healthz || exit 1
+
+CMD ["uvicorn", "careconnect_api.main:app", "--host", "0.0.0.0", "--port", "8080"]

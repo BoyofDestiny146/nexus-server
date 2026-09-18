@@ -1,0 +1,26 @@
+# secrets / local env
+*.env
+!*.env.example
+.env.local
+*.pem
+*.key
+*-token
+run/secrets/
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# node / next
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+# xiaozhi-server runtime data (models, chroma cache, logs)
+xiaozhi-server/models/
+xiaozhi-server/tmp/
+xiaozhi-server/data/*
+!xiaozhi-server/data/.config.yaml
+# device dumps
+*.bin
+snapshots/

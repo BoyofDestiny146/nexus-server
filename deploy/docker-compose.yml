@@ -1,0 +1,407 @@
+# CareConnect production compose — Jetson AGX Orin end-deployment target
+#
+# Rules:
+#   - Image-based ONLY. No build: contexts. Pull from the private registry.
+#   - Ollama runs natively on the Jetson (GPU via JetPack) — NOT a service.
+#   - bridge service EXCLUDED (W1-A / XiaoZhi path only; W1-B SenseCAP dropped).
+#   - All services: restart: unless-stopped.
+#   - Secrets: named Docker volume cc-secrets (files, not env values).
+#
+# Jetson docker daemon.json (verified 2026-05-30 on JetPack 6.1 / L4T R36.4.7):
+#   DO **NOT** set "iptables": false. This kernel DOES have iptable_raw/nat
+#   (`modprobe iptable_raw` succeeds). Setting iptables:false makes published
+#   ports (caddy 443, mqtt 1883) silently fail to bind after a REBOOT — Docker
+#   stops managing the bridge NAT/port-publish. Let Docker manage iptables.
+#   Correct daemon.json (nvidia runtime + the insecure registry only):
+#
+#     sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
+#     {
+#       "runtimes": {"nvidia": {"path": "nvidia-container-runtime", "args": []}},
+#       "insecure-registries": ["localhost:5000"]
+#     }
+#     EOF
+#     sudo systemctl restart docker
+#
+#   Also: disable any OLD per-service user-systemd units (xiaozhi-mqtt-gateway,
+#   caddy-careconnect, careconnect-api, ...) — on boot they revive and fight the
+#   containers for ports. `systemctl --user disable --now <unit>` for each.
+#
+# Registry assumption (Phase 2):
+#   Private registry (REGISTRY env var, default localhost:5000).
+#   Jetson /etc/docker/daemon.json insecure-registries entry required:
+#     "insecure-registries": ["localhost:5000"]
+#   Cross-built with: docker buildx --platform linux/arm64 (see deploy/README.md)
+#
+# Bring-up (Jetson, first time):
+#   cp deploy/docker-compose.yml deploy/.env deploy/scripts/ ~/careconnect-deploy/
+#   (the Caddyfile is baked into the careconnect-caddy image from deploy/Caddyfile.hazel)
+#   cd ~/careconnect-deploy
+#   ./scripts/gen-secrets.sh            # generates cc-secrets volume files
+#   docker compose pull
+#   docker compose up -d
+#   ./scripts/bootstrap-admin.sh        # seeds admin accounts from CC_ADMIN1_* / CC_ADMIN2_* env
+
+name: careconnect
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+
+  # ── Caddy reverse proxy + TLS ───────────────────────────────────────────────
+  caddy:
+    image: ${REGISTRY:-localhost:5000}/careconnect-caddy:${TAG:-latest}
+    <<: [*restart, *logging]
+    ports:
+      - "80:80"
+      - "443:443"
+      # Internal admin API (Caddy) — localhost only; not exposed externally
+      - "127.0.0.1:2019:2019"
+    volumes:
+      # Persist local-CA cert and ACME state across restarts
+      - caddy-data:/data
+      - caddy-config:/config
+      # Static dashboard export (populated by the web init container) served at /srv/web
+      - web-static:/srv/web:ro
+      # Captured Watcher photos (written by xiaozhi-server vision_handler), served at /photos/
+      - cc-photos:/srv/photos:ro
+    networks:
+      - careconnect
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      api:
+        condition: service_started
+      xiaozhi-server:
+        condition: service_started
+      web:
+        condition: service_completed_successfully
+
+  # ── careconnect FastAPI backend ─────────────────────────────────────────────
+  api:
+    image: ${REGISTRY:-localhost:5000}/careconnect-api:${TAG:-latest}
+    <<: [*restart, *logging]
+    # Port NOT exposed to host — traffic enters only via Caddy.
+    expose:
+      - "8080"
+    environment:
+      # Local timezone so chat/heartbeat timestamps are consistent (was UTC).
+      TZ: "${CC_TZ:-America/Chicago}"
+      CC_HOST: "0.0.0.0"
+      CC_PORT: "8080"
+      CC_DB_HOST: "mariadb"
+      CC_DB_PORT: "3306"
+      CC_DB_USER: "${CC_DB_USER:-careconnect}"
+      CC_DB_NAME: "${CC_DB_NAME:-xiaozhi_esp32_server}"
+      CC_DB_PASSWORD_FILE: "/run/secrets/mariadb-app"
+      CC_REDIS_URL: "redis://redis:6379/0"
+      CC_JWT_SECRET_FILE: "/run/secrets/api-jwt-secret"
+      CC_INTERNAL_TOKEN_FILE: "/run/secrets/api-internal-token"
+      CC_CLIENT_API_KEY_FILE: "/run/secrets/api-client-key"
+      # Admin passwords MUST come from .env so the two admin accounts are
+      # deterministic across container recreate/reboot. Without these the seed
+      # auto-generates a new password into the container's EPHEMERAL fs each
+      # recreate, silently changing the login (CREDENTIALS.txt goes stale).
+      CC_ADMIN1_PASSWORD: "${CC_ADMIN1_PASSWORD}"
+      CC_ADMIN2_PASSWORD: "${CC_ADMIN2_PASSWORD}"
+      CC_OLLAMA_URL: "${CC_OLLAMA_URL:-http://host-gateway:11434}"
+      CC_OLLAMA_TRIAGE_MODEL: "${CC_OLLAMA_TRIAGE_MODEL:-cc-llm}"
+      CC_XIAOZHI_INGEST_ENABLED: "true"
+      # No bridge service — W1-A only
+      CC_BRIDGE_ENABLED: "false"
+      # Online window for client heartbeat API (seconds)
+      CC_WATCHER_ONLINE_WINDOW_SECONDS: "${CC_WATCHER_ONLINE_WINDOW_SECONDS:-120}"
+      # careconnect voice: TTS server + shared per-device voice config (see xiaozhi-server)
+      CC_TTS_URL: "http://piper-tts:5500"
+      CC_VOICE_CONFIG_PATH: "/data/voice_config.json"
+    volumes:
+      - cc-secrets:/run/secrets:ro
+      - cc-voice:/data
+    networks:
+      - careconnect
+    extra_hosts:
+      # Resolve host-gateway to the Jetson host so containers can reach
+      # native Ollama on :11434. Docker injects the host IP automatically
+      # when this alias is used; override CC_OLLAMA_URL if needed.
+      - "host-gateway:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Next.js dashboard static export ────────────────────────────────────────
+  # The web image only holds the out/ export at /srv/web.
+  # Caddy serves the files directly via a bind mount (see caddy volumes below).
+  # If the web image cannot share a volume with caddy, use Caddy's
+  # reverse_proxy to a lightweight static file server instead:
+  #   image: ${REGISTRY:-...}/careconnect-web:${TAG:-latest}
+  #   command: ["serve", "-s", "/srv/web", "-l", "3000"]
+  # For now the web service copies its export into the web-static volume at
+  # startup, then exits (init container pattern).
+  web:
+    image: ${REGISTRY:-localhost:5000}/careconnect-web:${TAG:-latest}
+    <<: *logging
+    # Init container: copy static export to shared volume then exit.
+    # Caddy mounts web-static at /srv/web.
+    command: ["/bin/sh", "-c", "cp -a /app/out/. /srv/web/ && echo 'web: static export copied'"]
+    restart: "no"
+    volumes:
+      - web-static:/srv/web
+    networks:
+      - careconnect
+
+  # ── XiaoZhi ESP32 server (WS :8000, OTA HTTP :8003) ───────────────────────
+  xiaozhi-server:
+    image: ${REGISTRY:-localhost:5000}/careconnect-xiaozhi-server:${TAG:-latest}
+    <<: [*restart, *logging]
+    # Published on the host so the W1-A watcher reaches them by Jetson IP.
+    # Plain ws://+http:// (no TLS) — the embedded device can't validate the
+    # Caddy local-CA cert, so the device path bypasses Caddy. Browser/dashboard
+    # still uses Caddy HTTPS (haizel.online). See plan Phase 4.
+    ports:
+      - "8000:8000"   # XiaoZhi WebSocket (voice sessions)
+      - "8003:8003"   # OTA HTTP endpoint (watcher fetches server config)
+    environment:
+      # Local timezone so chat-turn timestamps match the dashboard (was UTC).
+      TZ: "${CC_TZ:-America/Chicago}"
+      # DB access (direct write to ai_agent_chat_history via careconnect_db.py)
+      CC_DB_HOST: "mariadb"
+      CC_DB_PORT: "3306"
+      CC_DB_USER: "${CC_DB_USER:-careconnect}"
+      CC_DB_NAME: "${CC_DB_NAME:-xiaozhi_esp32_server}"
+      # careconnect_db.py reads secret file via CC_DB_PASSWORD_FILE env or
+      # ~/.config/careconnect/mariadb-app fallback
+      CC_DB_PASSWORD_FILE: "/run/secrets/mariadb-app"
+      # Notify API for real-time dashboard push
+      CC_NOTIFY_URL: "http://api:8080/api/internal/notify/chat-turn"
+      CC_INTERNAL_TOKEN_FILE: "/run/secrets/api-internal-token"
+      # Ollama LLM (native on Jetson host)
+      OLLAMA_BASE_URL: "${CC_OLLAMA_URL:-http://host-gateway:11434}"
+      # Multi-engine TTS (container service: piper + kokoro + edge)
+      PIPER_URL: "http://piper-tts:5500/v1/audio/speech"
+      # careconnect voice: 24 kHz device output (natural) + per-device voice config
+      # shared with the api via the cc-voice volume (MAC -> {voice, speed}).
+      CC_TTS_OUT_RATE: "24000"
+      CC_OPUS_BITRATE: "32000"
+      CC_VOICE_CONFIG: "/data/voice_config.json"
+      # WebSocket address returned in OTA response to the firmware.
+      # Remote watcher reaches this via the Cloudflare tunnel (ws. host -> xiaozhi-server:8000).
+      # ota_handler.py reads CC_XIAOZHI_WS_URL; XIAOZHI_WEBSOCKET_URL kept for back-compat.
+      CC_XIAOZHI_WS_URL: "${CC_XIAOZHI_WS_URL:-wss://ws.haizel.online/xiaozhi/v1/}"
+      XIAOZHI_WEBSOCKET_URL: "${CC_XIAOZHI_WS_URL:-wss://ws.haizel.online/xiaozhi/v1/}"
+      # OTA transport block selection: "websocket" (remote/internet via tunnel —
+      # omit the un-tunnelable MQTT block), "both" (LAN co-located), or "mqtt".
+      CC_OTA_TRANSPORT: "${CC_OTA_TRANSPORT:-both}"
+      # MQTT signature key via docker secret (env-override-first; kills the
+      # HOME-relative read that forced the docker-commit workaround).
+      MQTT_SIGNATURE_KEY_FILE: "/run/secrets/mqtt-signature-key"
+    volumes:
+      - cc-secrets:/run/secrets:ro
+      - cc-voice:/data
+      # careconnect_db._find_secret() resolves secrets under HOME/.config/careconnect/secrets/
+      # (HOME for xiaozhiuser = /opt/xiaozhi-esp32-server) — mount cc-secrets there too.
+      - cc-secrets:/opt/xiaozhi-esp32-server/.config/careconnect/secrets:ro
+      # Runtime config (.config.yaml) + model/chroma cache. WORKDIR is
+      # /opt/xiaozhi-esp32-server (NOT /app) — config_loader reads data/.config.yaml here.
+      - xiaozhi-data:/opt/xiaozhi-esp32-server/data
+      # Captured camera frames (served by Caddy at /photos/ for the dashboard)
+      - cc-photos:/photos
+      # Large model weights (SenseVoice ASR + Silero VAD) live in a volume,
+      # not baked into the clean image. Populate from the xiaozhi-server models/ directory.
+      - xiaozhi-models:/opt/xiaozhi-esp32-server/models
+    networks:
+      - careconnect
+    extra_hosts:
+      - "host-gateway:host-gateway"
+    healthcheck:
+      # clean python:3.10-slim image has no wget; use stdlib urllib instead.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8003/xiaozhi/ota/', timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
+  # ── XiaoZhi MQTT gateway (MQTT :1883, UDP audio :8884, admin :8007) ────────
+  # Node.js process: in-process MQTT broker + UDP audio frames + WS relay.
+  # The watcher connects to :1883 (plain TCP, host:port format in NVS).
+  # The watcher firmware expects host:port in NVS.
+  xiaozhi-mqtt-gateway:
+    image: ${REGISTRY:-localhost:5000}/careconnect-mqtt-gateway:${TAG:-latest}
+    <<: [*restart, *logging]
+    ports:
+      # MQTT broker — reachable from watcher on the LAN (GL.iNet subnet)
+      - "1883:1883"
+      # UDP audio frames
+      - "8884:8884/udp"
+      # Admin API — localhost only
+      - "127.0.0.1:8007:8007"
+    environment:
+      # The gateway's own public endpoint — used when building MQTT config for OTA.
+      # Must be reachable as "host:port" (NO mqtt:// scheme — firmware rejects it).
+      PUBLIC_IP: "${CC_MQTT_PUBLIC_IP:-haizel.online}"
+      MQTT_ENDPOINT: "${CC_MQTT_ENDPOINT:-haizel.online:1883}"
+      MQTT_PORT: "1883"
+      UDP_PORT: "8884"
+      API_PORT: "8007"
+      MQTT_SIGNATURE_KEY_FILE: "/run/secrets/mqtt-signature-key"
+      # xiaozhi-server WS endpoint — gateway proxies audio frames here
+      XIAOZHI_SERVER_WS: "ws://xiaozhi-server:8000/xiaozhi/v1/"
+    volumes:
+      - cc-secrets:/run/secrets:ro
+    networks:
+      - careconnect
+    healthcheck:
+      # Gateway has no /health route — TCP-probe the MQTT port instead.
+      test: ["CMD", "node", "-e", "const n=require('net');const c=n.createConnection(1883,'127.0.0.1');c.on('connect',()=>{c.destroy();process.exit(0)});c.on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      - xiaozhi-server
+
+  # ── Piper TTS ───────────────────────────────────────────────────────────────
+  # FastAPI wrapper around piper binary. en_US-amy-medium voice baked into image.
+  # xiaozhi-server calls: POST http://piper-tts:5500/v1/audio/speech
+  piper-tts:
+    image: ${REGISTRY:-localhost:5000}/careconnect-piper:${TAG:-latest}
+    <<: [*restart, *logging]
+    expose:
+      - "5500"
+    networks:
+      - careconnect
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5500/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── MariaDB ─────────────────────────────────────────────────────────────────
+  # Fresh schema on first boot.
+  # Schema is seeded by careconnect-api on startup (bootstrap path).
+  mariadb:
+    image: mariadb:10.11.11
+    <<: [*restart, *logging]
+    expose:
+      - "3306"
+    environment:
+      TZ: "${CC_TZ:-America/Chicago}"
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/mariadb-root
+      MARIADB_DATABASE: "${CC_DB_NAME:-xiaozhi_esp32_server}"
+      MARIADB_USER: "${CC_DB_USER:-careconnect}"
+      MARIADB_PASSWORD_FILE: /run/secrets/mariadb-app
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - cc-secrets:/run/secrets:ro
+    networks:
+      - careconnect
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--su-mysql", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── Redis (pub/sub for dashboard WebSocket fan-out) ─────────────────────────
+  redis:
+    image: redis:7.4.3-alpine
+    <<: [*restart, *logging]
+    expose:
+      - "6379"
+    command: redis-server --appendonly yes --appendfsync everysec
+    volumes:
+      - redis-data:/data
+    networks:
+      - careconnect
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ── Cloudflare Tunnel — public internet ingress for haizel.online ───────────
+  # Outbound-only connector: no port-forward, home/Jetson IP hidden. The tunnel's
+  # ingress is remotely-managed (set by deploy/scripts/cf-tunnel-setup.py):
+  #   haizel.online / www / app / api  -> https://caddy:443  (dashboard + API)
+  #   ota.haizel.online                -> http://xiaozhi-server:8003  (device OTA)
+  #   ws.haizel.online                 -> http://xiaozhi-server:8000  (device voice WS)
+  # Joins the careconnect network so it resolves caddy/xiaozhi-server by name.
+  # Token lives ONLY in .env (CC_TUNNEL_TOKEN) — never baked into the image or git.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    <<: [*restart, *logging]
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: "${CC_TUNNEL_TOKEN:?CC_TUNNEL_TOKEN must be set in .env}"
+    networks:
+      - careconnect
+    depends_on:
+      - caddy
+
+
+# ── Named volumes ──────────────────────────────────────────────────────────────
+volumes:
+  # MariaDB data — survives compose down
+  mariadb-data:
+    driver: local
+  # Redis AOF persistence
+  redis-data:
+    driver: local
+  # Caddy local-CA cert + ACME state (swap to real cert in Phase 5 without data loss)
+  caddy-data:
+    driver: local
+  caddy-config:
+    driver: local
+  # Shared web static export (populated by web init container, served by caddy)
+  web-static:
+    driver: local
+  # XiaoZhi server runtime data (models cache, config overrides)
+  xiaozhi-data:
+    driver: local
+  xiaozhi-models:
+    driver: local
+  # careconnect per-device voice config (MAC -> {voice, speed}); shared between
+  # the api (writes via dashboard) and xiaozhi-server (reads at session init).
+  cc-voice:
+    driver: local
+  # Secret files: mariadb-root, mariadb-app, api-jwt-secret, api-internal-token,
+  #               api-client-key, mqtt-signature-key
+  # Populated by scripts/gen-secrets.sh before first compose up.
+  cc-secrets:
+    driver: local
+  # Captured Watcher camera frames (vision); served by Caddy at /photos/
+  cc-photos:
+    driver: local
+
+
+# ── Networks ───────────────────────────────────────────────────────────────────
+networks:
+  careconnect:
+    driver: bridge
+    # With iptables=false in daemon.json (Jetson L4T workaround) Docker does
+    # not install FORWARD chain rules, so inter-container traffic relies on
+    # the kernel's ip_forward being enabled (Docker still sets it via sysctl).
+    # On a single-tenant Jetson box this is acceptable.

@@ -1,0 +1,294 @@
+"""careconnect direct-DB persistence layer for xiaozhi-server.
+
+Replaces the inherited Java manager-api round-trip with a direct MariaDB
+write into the same ``ai_agent_chat_history`` table the careconnect bridge
+writes to. Both ingest paths converge on one DB row shape so the dashboard,
+daily 02:00 triage, and Chroma RAG don't need to know which protocol
+delivered a given turn.
+
+Mirrors the pattern in ``careconnect/bridge/bridge_skeleton.py`` (lines
+~120-280): pymysql connect against ``xiaozhi_esp32_server`` using the
+shared credential at ``~/.config/careconnect/mariadb-app``; INSERT one row
+per turn keyed by mac_address; fire-and-forget POST to the careconnect-api
+internal-notify endpoint so the dashboard's Redis pub/sub WebSocket
+subscribers see the row in real time.
+
+Exported function ``report(...)`` matches the signature of the original
+``config.manage_api_client.manage_report`` so ``core/handle/reportHandle.py``
+can swap in a one-line import change.
+
+Created 2026-05-04.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+from typing import Optional
+
+import httpx
+import pymysql
+
+TAG = __name__
+log = logging.getLogger(TAG)
+
+HOME = Path.home()
+
+# Resolved at read time so a single image works on both:
+#   - bare-metal dev Jetson: ``~/.config/careconnect/<name>``
+#   - fallback: ``~/.config/careconnect/secrets/<name>`` (mount)
+_SECRET_DIRS = [
+    HOME / ".config" / "careconnect" / "secrets",
+    HOME / ".config" / "careconnect",
+]
+
+
+# careconnect: explicit per-secret file overrides. Compose sets these to the
+# mounted docker-secret paths (e.g. /run/secrets/mariadb-app). Honoring them is
+# the clean container-native fix: it removes the dependency on HOME resolving to
+# a path under which cc-secrets happens to be mounted (the container runs as
+# root with HOME=/root, but the upstream mount targeted a different HOME, which
+# caused "No such file: /root/.config/careconnect/secrets/mariadb-app" and broke
+# persona lookup + chat-history writes). Env override > HOME-relative search.
+_SECRET_ENV = {
+    "mariadb-app": "CC_DB_PASSWORD_FILE",
+    "api-internal-token": "CC_INTERNAL_TOKEN_FILE",
+}
+
+
+def _find_secret(name: str) -> Path:
+    # 1) explicit env override pointing at the exact file (container-native).
+    env_var = _SECRET_ENV.get(name)
+    if env_var:
+        env_path = os.environ.get(env_var)
+        if env_path:
+            p = Path(env_path)
+            if p.exists():
+                return p
+    # 2) HOME-relative search (bare-metal dev + legacy mount layouts).
+    for d in _SECRET_DIRS:
+        p = d / name
+        if p.exists():
+            return p
+    # Return the env-override path if set (names the configured path in errors),
+    # else the secrets/ candidate so the error message names a sane path.
+    if env_var and os.environ.get(env_var):
+        return Path(os.environ[env_var])
+    return _SECRET_DIRS[0] / name
+
+
+# Bridge / api hosts. Override via env when running in containers.
+NOTIFY_URL = os.environ.get(
+    "CC_NOTIFY_URL", "http://127.0.0.1:8080/api/internal/notify/chat-turn"
+)
+DB_HOST = os.environ.get("CC_DB_HOST", "127.0.0.1")
+DB_PORT = int(os.environ.get("CC_DB_PORT", "3306"))
+DB_USER = os.environ.get("CC_DB_USER", "xiaozhi")
+DB_NAME = os.environ.get("CC_DB_NAME", "xiaozhi_esp32_server")
+
+# Singletons resolved on first call so import-time failures don't kill
+# xiaozhi-server boot. The credential files are written at careconnect-api
+# first-run and persist; if missing we surface a clear error per call.
+_db_password: Optional[str] = None
+_internal_token: Optional[str] = None
+
+
+def _password() -> str:
+    global _db_password
+    if _db_password is None:
+        _db_password = _find_secret("mariadb-app").read_text().strip()
+    return _db_password
+
+
+def _token() -> Optional[str]:
+    global _internal_token
+    if _internal_token is None:
+        p = _find_secret("api-internal-token")
+        if p.exists():
+            _internal_token = p.read_text().strip()
+    return _internal_token
+
+
+def _connect():
+    return pymysql.connect(
+        host=DB_HOST, port=DB_PORT,
+        user=DB_USER, password=_password(),
+        database=DB_NAME,
+        charset="utf8mb4",
+        autocommit=True,
+    )
+
+
+def _normalize_mac(mac_address: str) -> str:
+    """Strip colons/dashes/spaces, uppercase. Mirrors the dashboard's
+    ``_normalize_eui`` so the bridge's MAC and the dashboard's stored MAC
+    (which is uppercase contiguous hex) match cleanly.
+    """
+    return (mac_address or "").upper().replace(":", "").replace("-", "").replace(" ", "")
+
+
+def lookup_agent_id(mac_address: str) -> Optional[str]:
+    """Return the ai_agent.id bound to this device's MAC, or None.
+
+    Tries the exact MAC first (in case the row was inserted with the same
+    format the firmware sends), then a normalized lookup (uppercase, no
+    separators) which matches what the dashboard's onboarding flow stores.
+    """
+    if not mac_address:
+        return None
+    candidates = [mac_address, _normalize_mac(mac_address)]
+    # de-dupe while preserving order
+    candidates = list(dict.fromkeys(c for c in candidates if c))
+    try:
+        conn = _connect()
+        try:
+            with conn.cursor() as cur:
+                for cand in candidates:
+                    cur.execute(
+                        "SELECT agent_id FROM ai_device WHERE mac_address = %s LIMIT 1",
+                        (cand,),
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        return row[0]
+                return None
+        finally:
+            conn.close()
+    except Exception as e:
+        log.error("careconnect_db.lookup_agent_id mac=%s failed: %s", mac_address, e)
+        return None
+
+
+def lookup_agent_persona(mac_address: str) -> Optional[dict]:
+    """Return ``{"agent_id", "agent_name", "system_prompt", "first_name"}`` for
+    the device's MAC, or None. Used by ``connection.py`` to override the
+    global prompt with the per-client persona at session start.
+    """
+    if not mac_address:
+        return None
+    candidates = [mac_address, _normalize_mac(mac_address)]
+    candidates = list(dict.fromkeys(c for c in candidates if c))
+    try:
+        conn = _connect()
+        try:
+            with conn.cursor() as cur:
+                for cand in candidates:
+                    cur.execute(
+                        """
+                        SELECT a.id, a.agent_name, a.system_prompt
+                          FROM ai_device d
+                          JOIN ai_agent a ON a.id = d.agent_id
+                         WHERE d.mac_address = %s
+                         LIMIT 1
+                        """,
+                        (cand,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        agent_id, agent_name, system_prompt = row
+                        first_name = (agent_name or "").strip().split()[0] if agent_name else None
+                        return {
+                            "agent_id": agent_id,
+                            "agent_name": agent_name,
+                            "system_prompt": system_prompt,
+                            "first_name": first_name,
+                        }
+                return None
+        finally:
+            conn.close()
+    except Exception as e:
+        log.error("careconnect_db.lookup_agent_persona mac=%s failed: %s", mac_address, e)
+        return None
+
+
+def insert_chat_turn(
+    mac_address: str,
+    agent_id: str,
+    session_id: str,
+    chat_type: int,
+    content: str,
+) -> None:
+    """One row in ``ai_agent_chat_history``, same shape as the bridge writes.
+    Truncates content to 1024 chars (DB column limit; bridge does the same).
+    """
+    if not (mac_address and agent_id and content):
+        return None
+    content = content[:1024]
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO ai_agent_chat_history
+                  (mac_address, agent_id, session_id, chat_type, content,
+                   created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, NOW(3), NOW(3))
+                """,
+                (mac_address, agent_id, session_id, chat_type, content),
+            )
+            return cur.lastrowid  # so the live WS push can carry the real DB id
+    finally:
+        conn.close()
+
+
+def notify_chat_turn(
+    agent_id: str,
+    session_id: str,
+    chat_type: int,
+    content: str,
+    mac_address: str,
+    row_id: int | None = None,
+) -> None:
+    """Fire-and-forget POST to the careconnect-api internal-notify endpoint
+    so dashboard WebSocket subscribers (``web/lib/useLiveChat.ts``) see the
+    new turn in near-real-time. Best-effort — failure is logged but never
+    raised; the DB row already landed via insert_chat_turn().
+    """
+    token = _token()
+    if not token:
+        return
+    payload = {
+        "agentId": agent_id,
+        "sessionId": session_id,
+        "chatType": chat_type,
+        "content": content,
+        "macAddress": mac_address,
+        "id": row_id,
+    }
+    try:
+        httpx.post(
+            NOTIFY_URL,
+            json=payload,
+            headers={"X-Internal-Token": token},
+            timeout=0.5,
+        )
+    except Exception as e:
+        log.debug("careconnect_db.notify_chat_turn failed (non-fatal): %s", e)
+
+
+def report(
+    mac_address: str,
+    session_id: str,
+    chat_type: int,
+    content: str,
+    audio=None,
+    report_time: Optional[int] = None,
+) -> None:
+    """Drop-in replacement for ``config.manage_api_client.manage_report``.
+
+    Signature mirrors the original so ``core/handle/reportHandle.py:37`` can
+    swap the import line and keep working. ``audio`` and ``report_time`` are
+    accepted for compatibility but ignored — careconnect's chat-history
+    schema doesn't store audio (per careconnect/bridge convention) and
+    timestamps are populated by MariaDB ``NOW(3)``.
+    """
+    agent_id = lookup_agent_id(mac_address)
+    if not agent_id:
+        log.debug("careconnect_db.report: device %s not bound to any agent", mac_address)
+        return
+    try:
+        rid = insert_chat_turn(mac_address, agent_id, session_id, chat_type, content)
+        notify_chat_turn(agent_id, session_id, chat_type, content, mac_address, row_id=rid)
+    except Exception as e:
+        log.error("careconnect_db.report failed mac=%s agent=%s: %s",
+                  mac_address, agent_id, e)

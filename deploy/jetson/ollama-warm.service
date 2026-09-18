@@ -1,0 +1,16 @@
+[Unit]
+Description=Warm ALL CareConnect models hot into GPU on boot (chat + vision + embeddings, resident)
+After=ollama.service network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Settle delay so the docker stack's ASR/VAD GPU load finishes first (reduces the
+# iGPU memory pressure that makes the 2nd model OOM-retry), then the warm script
+# retries each model until it's actually resident (see cc-warm-models.sh).
+ExecStartPre=/bin/sleep 60
+ExecStart=/usr/local/bin/cc-warm-models.sh
+
+[Install]
+WantedBy=multi-user.target

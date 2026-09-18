@@ -1,0 +1,162 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────── *
+ * careconnect — editorial-clinical
+ *
+ * Three rules carry the whole UI:
+ *
+ *   1. Typographic counterpoint.  Source Serif 4 for human content (patient
+ *      names, page kickers, big numbers).  Inter for chrome and copy.
+ *      JetBrains Mono for clinical identifiers (MACs, EUIs, agent IDs,
+ *      timestamps).
+ *
+ *   2. Hairline borders, not shadows.  A single 1px slate-line carries every
+ *      divider.  Cards rest on the bone bg like paper on linen — visible
+ *      because of color, not depth.
+ *
+ *   3. Risk colour is the only chromatic event outside of teal.  When a risk
+ *      dot changes, it pulses (see .risk-pulse).  The eye knows.
+ *
+ * Whitespace is generous on purpose.  This is a tool clinicians glance at
+ * many times a day; calm beats clever.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  html { @apply bg-bone text-slate antialiased; }
+  body {
+    @apply bg-bone text-slate font-sans;
+    font-feature-settings: "ss01", "cv11", "tnum";
+  }
+  ::selection { background: rgba(31, 138, 126, 0.18); }
+
+  /* Tabular figures everywhere a number sits next to other numbers — */
+  /* keeps risk dashboards from jittering. */
+  .num    { font-variant-numeric: tabular-nums; }
+
+  /* Subtle gridded watermark used on Login and Empty states. */
+  .paper-grid {
+    background-image:
+      linear-gradient(rgba(31,42,55,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(31,42,55,0.025) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+}
+
+@layer components {
+  /* Surfaces ---------------------------------------------------------------- */
+  .card {
+    @apply bg-white border border-slate-line/70 rounded-card transition;
+  }
+  .card-hover { @apply hover:border-slate-line/100 hover:bg-bone-soft; }
+
+  /* Buttons ---------------------------------------------------------------- */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-card
+      bg-teal text-white font-medium tracking-tight
+      hover:bg-teal-deep transition disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-card
+      border border-slate-line bg-white text-slate-deep font-medium tracking-tight
+      hover:bg-bone-soft hover:border-slate-line/100 transition
+      disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-card
+      text-slate-deep hover:bg-slate-line/40 transition;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-card
+      bg-risk-urgent text-white font-medium tracking-tight
+      hover:opacity-90 transition disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  /* Inputs ----------------------------------------------------------------- */
+  .input {
+    @apply w-full bg-white border border-slate-line/80 rounded-card px-3 py-2
+      text-slate-deep placeholder-slate-muted focus:outline-none
+      focus:border-teal focus:ring-2 focus:ring-teal/15 transition;
+  }
+  .label {
+    @apply block text-[11px] uppercase tracking-[0.12em] text-slate-muted mb-2 font-medium;
+  }
+  .helper {
+    @apply mt-1.5 text-[12px] text-slate-muted;
+  }
+  .field-error {
+    @apply mt-1.5 text-[12px] text-risk-urgent;
+  }
+
+  /* Pills, chips, tags ---------------------------------------------------- */
+  .chip {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-chip
+      text-[12px] tracking-tight bg-bone-soft border border-slate-line/70 text-slate-deep;
+  }
+  .chip-teal {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-chip
+      text-[12px] tracking-tight bg-teal-tint border border-teal/20 text-teal-deep;
+  }
+
+  /* Kicker — the small uppercase line above page titles. */
+  .kicker {
+    @apply text-[11px] uppercase tracking-[0.16em] text-slate-muted font-medium;
+  }
+
+  /* Display headlines (serif) --------------------------------------------- */
+  .display-1 { @apply font-display tracking-display text-[44px] leading-[1.1]; }
+  .display-2 { @apply font-display tracking-display text-[32px] leading-[1.15]; }
+  .display-3 { @apply font-display tracking-display text-[24px] leading-[1.2]; }
+
+  /* Risk pulse — short crossfade on level change. */
+  @keyframes risk-pulse {
+    0%   { box-shadow: 0 0 0 0 currentColor; }
+    100% { box-shadow: 0 0 0 12px transparent; }
+  }
+  .risk-pulse { animation: risk-pulse 900ms ease-out; }
+
+  /* Quiet bouncy "live" dot. */
+  @keyframes live-dot {
+    0%, 100% { opacity: .35; transform: scale(1); }
+    50%      { opacity: 1;   transform: scale(1.15); }
+  }
+  .live-dot {
+    @apply inline-block w-2 h-2 rounded-full bg-teal;
+    animation: live-dot 1.6s ease-in-out infinite;
+  }
+
+  /* Stagger reveal — used once on Patients list mount. */
+  @keyframes rise-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .rise-in { animation: rise-in .42s ease-out both; }
+
+  /* Toast slide. */
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .toast-in { animation: slide-up .22s ease-out both; }
+
+  /* Skeleton shimmer */
+  @keyframes shimmer {
+    0%   { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  .skeleton {
+    background: linear-gradient(90deg, #EFEAE0 25%, #F7F4EE 50%, #EFEAE0 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s linear infinite;
+    @apply rounded;
+  }
+
+  /* Sparkline gridline (used inline on the patient detail) */
+  .grid-rule {
+    background-image: linear-gradient(to right,
+      rgba(56,67,81,0.08) 50%, transparent 50%);
+    background-size: 8px 1px;
+    background-repeat: repeat-x;
+  }
+}

@@ -1,0 +1,7 @@
+# deploy/ context .dockerignore
+# The deploy/ directory is the build context for caddy and piper.
+# Exclude files not needed in either build.
+docker-compose.yml
+README.md
+build-and-push.sh
+*.Dockerfile

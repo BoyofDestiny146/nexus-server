@@ -1,0 +1,31 @@
+# careconnect-xiaozhi-server — clean source overlay
+#
+# De-drifts the docker-commit image WITHOUT recompiling the heavy native deps
+# (torch/funasr/modelscope). FROM the last working image (which has correct
+# deps + model handling) and copy the COMPLETE current source over it, so every
+# .py matches the repo (no leftover docker-commit edits). The OTA secret-path
+# fix in source makes the old /root/.config copy hack irrelevant.
+#
+# Build on the Jetson (native arm64, from a context = xiaozhi-server/):
+#   docker build --network=host -f Dockerfile.overlay \
+#     -t localhost:5000/careconnect-xiaozhi-server:clean-20260608 \
+#     -t localhost:5000/careconnect-xiaozhi-server:latest .
+ARG BASE=localhost:5000/careconnect-xiaozhi-server:base
+FROM ${BASE}
+
+USER root
+
+# Overlay the full application source (deps stay from the base image's /usr/local).
+COPY core         /opt/xiaozhi-esp32-server/core
+COPY config       /opt/xiaozhi-esp32-server/config
+COPY plugins_func /opt/xiaozhi-esp32-server/plugins_func
+COPY app.py       /opt/xiaozhi-esp32-server/app.py
+# Baked config defaults (runtime still prefers the xiaozhi-data volume copy).
+COPY data/.config.yaml /opt/xiaozhi-esp32-server/data/.config.yaml
+
+# Syntax-check the overlaid source so a bad copy fails the build, not the device.
+RUN python -c "import compileall,sys; sys.exit(0 if compileall.compile_dir('/opt/xiaozhi-esp32-server/core', quiet=1) else 1)"
+
+# The base image runs as root (its docker-commit chain dropped the xiaozhiuser
+# from /etc/passwd), so stay root — do NOT switch USER or the container fails to
+# start with "unable to find user xiaozhiuser". Files copied as root are fine.

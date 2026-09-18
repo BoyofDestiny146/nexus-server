@@ -1,0 +1,90 @@
+# CareConnect production Caddyfile — haizel.online (behind Cloudflare Tunnel)
+#
+# Public TLS is terminated at the Cloudflare edge (real cert). The cloudflared
+# connector reaches this Caddy over the docker network at https://caddy:443 with
+# originRequest.noTLSVerify=true, so Caddy's `tls internal` (self-signed) cert is
+# fine here — clients never see it. Caddy routes purely by Host header.
+#
+# Tunnel ingress (set by deploy/scripts/cf-tunnel-setup.py):
+#   haizel.online / www / app / api  -> https://caddy:443   (this file)
+#   ota.haizel.online                -> http://xiaozhi-server:8003   (bypasses Caddy)
+#   ws.haizel.online                 -> http://xiaozhi-server:8000   (bypasses Caddy)
+#
+# Caddy is run as a container (see deploy/docker-compose.yml, service caddy).
+# Internal service names (api, xiaozhi-server, web) are Docker Compose DNS names.
+
+{
+    auto_https disable_redirects
+    local_certs
+}
+
+# ── HTTP → redirect to HTTPS (rarely hit; CF speaks HTTPS to the origin) ───────
+http://haizel.online, http://www.haizel.online, http://app.haizel.online, http://api.haizel.online {
+    redir https://{host}{uri} 308
+}
+
+# ── HTTPS — dashboard + API on apex, www, app, and api hosts ───────────────────
+# All four hostnames serve the full site: the static dashboard SPA plus the
+# /api and /ws reverse proxies. api.haizel.online is an alias so devices have a
+# clean host to POST heartbeats to (api.haizel.online/api/v1/watcher/*).
+haizel.online, www.haizel.online, app.haizel.online, api.haizel.online {
+    tls internal
+
+    # ── Root → login ─────────────────────────────────────────────────────────
+    # Bare root on the dashboard hosts redirects to the canonical login page
+    # (the SPA uses basePath /careconnect). Must be a handle block so it wins
+    # over the handle /* catch-all (a bare `redir /` is ordered after handle).
+    # If already authenticated, the SPA bounces the user on to the app.
+    handle / {
+        redir https://haizel.online/careconnect/login 302
+    }
+
+    # ── careconnect API ───────────────────────────────────────────────────────
+    # /api/v1/* = client-facing heartbeat API (X-API-Key). /api/* = dashboard REST.
+    # First-match semantics: declare /api/v1/* before /api/*.
+    handle /api/v1/* {
+        reverse_proxy api:8080
+    }
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+
+    # ── WebSocket (dashboard live-chat fan-out) ───────────────────────────────
+    handle /ws/* {
+        reverse_proxy api:8080 {
+            transport http {
+                versions 1.1
+            }
+        }
+    }
+
+    # ── XiaoZhi OTA / WS (kept for LAN/dashboard-host access; devices use the
+    #    dedicated ota./ws. hosts that bypass Caddy via the tunnel) ────────────
+    handle /xiaozhi/ota* {
+        reverse_proxy xiaozhi-server:8003
+    }
+    handle /xiaozhi/v1/* {
+        reverse_proxy xiaozhi-server:8000 {
+            transport http {
+                versions 1.1
+            }
+        }
+    }
+    handle /xiaozhi/* {
+        respond "Decommissioned; path not served." 410
+    }
+
+    # ── Captured Watcher photos (cc-photos volume, written by vision_handler) ──
+    # Shown inline in the dashboard conversation via the [[photo:/photos/..]] marker.
+    handle /photos/* {
+        root * /srv
+        file_server
+    }
+
+    # ── Next.js static export (dashboard SPA) ────────────────────────────────
+    handle /* {
+        root * /srv/web
+        try_files {path} {path}/index.html /patients/_/index.html
+        file_server
+    }
+}

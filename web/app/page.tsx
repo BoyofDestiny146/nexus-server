@@ -1,0 +1,1 @@
+export default function Page() { return <main className="p-12"><h1 className="font-display text-4xl">careconnect</h1><p className="mt-2 text-slate-muted">Phase 7 scaffold up. Login at <code>/careconnect/login</code>.</p></main>; }
