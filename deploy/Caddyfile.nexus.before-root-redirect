@@ -1,0 +1,52 @@
+{
+    auto_https disable_redirects
+}
+
+http://care.nexus.warehouse-13.biz {
+    redir https://care.nexus.warehouse-13.biz{uri} 308
+}
+
+care.nexus.warehouse-13.biz {
+    handle / {
+        redir /careconnect/login 302
+    }
+
+    handle /api/v1/* {
+        reverse_proxy api:8080
+    }
+
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+
+    handle /ws/* {
+        reverse_proxy api:8080 {
+            transport http {
+                versions 1.1
+            }
+        }
+    }
+
+    handle /photos/* {
+        root * /srv
+        file_server
+    }
+
+    handle /* {
+        root * /srv/web
+        try_files {path} {path}/index.html /patients/_/index.html
+        file_server
+    }
+}
+
+ota.nexus.warehouse-13.biz {
+    reverse_proxy xiaozhi-server:8003
+}
+
+ws.nexus.warehouse-13.biz {
+    reverse_proxy xiaozhi-server:8000 {
+        transport http {
+            versions 1.1
+        }
+    }
+}

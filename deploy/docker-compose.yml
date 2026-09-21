@@ -60,8 +60,8 @@ services:
     image: ${REGISTRY:-localhost:5000}/careconnect-caddy:${TAG:-latest}
     <<: [*restart, *logging]
     ports:
-      - "80:80"
-      - "443:443"
+      - "18180:80"
+      - "18443:443"
       # Internal admin API (Caddy) — localhost only; not exposed externally
       - "127.0.0.1:2019:2019"
     volumes:
