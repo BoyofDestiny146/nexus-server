@@ -222,6 +222,14 @@ class ConnectionHandler:
             self.websocket = ws
             self.device_id = self.headers.get("device-id", None)
 
+            # careconnect: register/update the Watcher in ai_device as soon as
+            # Device-Id is accepted. W1-A firmware never POSTs /watcher/heartbeat,
+            # so this is what makes the device appear on the Devices page.
+            # Non-blocking: run in the connection executor so a DB hiccup
+            # cannot stall the hello / MCP path.
+            if self.device_id:
+                self.executor.submit(self._cc_register_watcher)
+
             # 初始化活动时间戳
             self.last_activity_time = time.time() * 1000
 
@@ -364,6 +372,22 @@ class ConnectionHandler:
                         "content": {"action": "restart"},
                     }
                 )
+            )
+
+    def _cc_register_watcher(self):
+        """Ensure ai_device has a W1-A row for this connection's Device-Id.
+
+        Called from the connection thread pool after auth. Must never raise
+        into the WS loop — a missing/failed upsert only means the Devices
+        page stays empty until the next successful connect.
+        """
+        try:
+            from config.careconnect_db import ensure_watcher_device
+
+            ensure_watcher_device(self.device_id or "")
+        except Exception as e:
+            self.logger.bind(tag=TAG).warning(
+                f"careconnect watcher register failed (non-fatal): {e}"
             )
 
     def _initialize_components(self):

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -127,6 +128,109 @@ def _normalize_mac(mac_address: str) -> str:
     return (mac_address or "").upper().replace(":", "").replace("-", "").replace(" ", "")
 
 
+def _mac_lookup_candidates(mac_address: str) -> list:
+    """Formats that may already exist in ai_device (heartbeat vs onboard)."""
+    upper = (mac_address or "").strip().upper()
+    stripped = _normalize_mac(upper)
+    out = []
+    for cand in (upper, stripped):
+        if cand and cand not in out:
+            out.append(cand)
+    if len(stripped) == 12 and all(c in "0123456789ABCDEF" for c in stripped):
+        colon = ":".join(stripped[i : i + 2] for i in range(0, 12, 2))
+        if colon not in out:
+            out.append(colon)
+    return out
+
+
+def _now_utc_naive():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _device_id_for_mac(mac: str) -> str:
+    return f"watcher-{mac.lower()[:24]}"
+
+
+def ensure_watcher_device(mac_address: str) -> bool:
+    """Upsert a W1-A SenseCAP Watcher into ``ai_device`` on WebSocket connect.
+
+    Mirrors ``api/careconnect_api/watcher_device.py:ensure_watcher_device``:
+    create a minimal unbound row if the MAC is new; otherwise only refresh
+    ``last_connected_at`` and ``last_seen``. Never binds ``agent_id``, never
+    overwrites alias / client_device_id / telemetry.
+
+    Returns True if a row was ensured, False if mac was empty or DB failed
+    (failures are logged, never raised to the WS path).
+    """
+    stored_mac = (mac_address or "").strip().upper()
+    if not stored_mac:
+        return False
+    now = _now_utc_naive()
+    candidates = _mac_lookup_candidates(stored_mac)
+    try:
+        conn = _connect()
+        try:
+            with conn.cursor() as cur:
+                row = None
+                for cand in candidates:
+                    cur.execute(
+                        "SELECT id FROM ai_device WHERE mac_address = %s LIMIT 1",
+                        (cand,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        break
+                if row:
+                    cur.execute(
+                        """
+                        UPDATE ai_device
+                           SET last_connected_at = %s,
+                               last_seen = %s
+                         WHERE id = %s
+                        """,
+                        (now, now, row[0]),
+                    )
+                    log.info("watcher updated mac=%s", stored_mac)
+                else:
+                    try:
+                        cur.execute(
+                            """
+                            INSERT INTO ai_device
+                              (id, mac_address, device_type, firmware_type, board,
+                               sort, last_connected_at, last_seen)
+                            VALUES (%s, %s, %s, %s, %s, 0, %s, %s)
+                            """,
+                            (
+                                _device_id_for_mac(stored_mac),
+                                stored_mac,
+                                "W1-A",
+                                "xiaozhi",
+                                "sensecap_watcher",
+                                now,
+                                now,
+                            ),
+                        )
+                        log.info("watcher registered mac=%s", stored_mac)
+                    except pymysql.err.IntegrityError:
+                        # Concurrent insert of the same PK — treat as update.
+                        cur.execute(
+                            """
+                            UPDATE ai_device
+                               SET last_connected_at = %s,
+                                   last_seen = %s
+                             WHERE mac_address = %s OR id = %s
+                            """,
+                            (now, now, stored_mac, _device_id_for_mac(stored_mac)),
+                        )
+                        log.info("watcher updated mac=%s", stored_mac)
+            return True
+        finally:
+            conn.close()
+    except Exception as e:
+        log.error("careconnect_db.ensure_watcher_device mac=%s failed: %s", stored_mac, e)
+        return False
+
+
 def lookup_agent_id(mac_address: str) -> Optional[str]:
     """Return the ai_agent.id bound to this device's MAC, or None.
 
@@ -136,9 +240,9 @@ def lookup_agent_id(mac_address: str) -> Optional[str]:
     """
     if not mac_address:
         return None
-    candidates = [mac_address, _normalize_mac(mac_address)]
-    # de-dupe while preserving order
-    candidates = list(dict.fromkeys(c for c in candidates if c))
+    candidates = _mac_lookup_candidates(mac_address)
+    if not candidates:
+        return None
     try:
         conn = _connect()
         try:
@@ -166,8 +270,9 @@ def lookup_agent_persona(mac_address: str) -> Optional[dict]:
     """
     if not mac_address:
         return None
-    candidates = [mac_address, _normalize_mac(mac_address)]
-    candidates = list(dict.fromkeys(c for c in candidates if c))
+    candidates = _mac_lookup_candidates(mac_address)
+    if not candidates:
+        return None
     try:
         conn = _connect()
         try:

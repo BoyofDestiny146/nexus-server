@@ -154,3 +154,121 @@ async def test_heartbeat_upserts_telemetry(client: AsyncClient):
     assert data["battery"] == 95
     assert data["fw"] == "1.9.0"
     assert data["rssi"] == -55
+
+
+# ---------- WS-registration helper (shared with XiaoZhi ensure_watcher_device) ----------
+
+_REAL_MAC = "E0:72:A1:DB:36:40"
+_REAL_MAC_STRIPPED = "E072A1DB3640"
+
+
+@pytest.mark.asyncio
+async def test_ensure_first_time_registration(db_session: AsyncSession):
+    from careconnect_api.models import AiDevice
+    from careconnect_api.watcher_device import ensure_watcher_device
+
+    dev = await ensure_watcher_device(
+        db_session, "e0:72:a1:db:36:40", touch_last_connected=True
+    )
+    assert dev.mac_address == _REAL_MAC
+    assert dev.device_type == "W1-A"
+    assert dev.firmware_type == "xiaozhi"
+    assert dev.board == "sensecap_watcher"
+    assert dev.sort == 0
+    assert dev.agent_id is None
+    assert dev.client_device_id is None
+    assert dev.alias is None
+    assert dev.last_connected_at is not None
+    assert dev.last_seen is not None
+
+    n = (
+        await db_session.execute(
+            select(AiDevice).where(AiDevice.mac_address.in_([_REAL_MAC, _REAL_MAC_STRIPPED]))
+        )
+    ).scalars().all()
+    assert len(n) == 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_reconnect_does_not_duplicate(db_session: AsyncSession):
+    from careconnect_api.models import AiDevice
+    from careconnect_api.watcher_device import ensure_watcher_device
+
+    first = await ensure_watcher_device(
+        db_session, _REAL_MAC, touch_last_connected=True
+    )
+    first_id = first.id
+    first_connected = first.last_connected_at
+
+    second = await ensure_watcher_device(
+        db_session, "e0:72:a1:db:36:40", touch_last_connected=True
+    )
+    assert second.id == first_id
+    assert second.last_connected_at >= first_connected
+
+    n = (
+        await db_session.execute(
+            select(AiDevice).where(AiDevice.mac_address.in_([_REAL_MAC, _REAL_MAC_STRIPPED]))
+        )
+    ).scalars().all()
+    assert len(n) == 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_preserves_agent_id_and_metadata(db_session: AsyncSession):
+    from careconnect_api.models import AiDevice
+    from careconnect_api.watcher_device import ensure_watcher_device, get_watcher_device
+
+    await ensure_watcher_device(db_session, _REAL_MAC, touch_last_connected=True)
+    existing = await get_watcher_device(db_session, _REAL_MAC)
+    existing.agent_id = "agentbound001"
+    existing.alias = "Living room"
+    existing.client_device_id = "EXT-99"
+    existing.battery = 80
+    await db_session.commit()
+
+    await ensure_watcher_device(db_session, _REAL_MAC, touch_last_connected=True)
+    again = await get_watcher_device(db_session, _REAL_MAC)
+    assert again.agent_id == "agentbound001"
+    assert again.alias == "Living room"
+    assert again.client_device_id == "EXT-99"
+    assert again.battery == 80
+    assert again.device_type == "W1-A"
+
+
+@pytest.mark.asyncio
+async def test_ensure_finds_onboard_stripped_mac_without_duplicate(db_session: AsyncSession):
+    """Onboarding stores uppercase hex without colons; Device-Id has colons."""
+    from careconnect_api.models import AiDevice
+    from careconnect_api.watcher_device import (
+        device_id_for_mac,
+        ensure_watcher_device,
+        get_watcher_device,
+    )
+
+    db_session.add(
+        AiDevice(
+            id=device_id_for_mac(_REAL_MAC_STRIPPED),
+            mac_address=_REAL_MAC_STRIPPED,
+            device_type="W1-A",
+            firmware_type="xiaozhi",
+            board="sensecap_watcher",
+            sort=0,
+            agent_id="alreadybound",
+        )
+    )
+    await db_session.commit()
+
+    dev = await ensure_watcher_device(
+        db_session, "e0:72:a1:db:36:40", touch_last_connected=True
+    )
+    assert dev.mac_address == _REAL_MAC_STRIPPED
+    assert dev.agent_id == "alreadybound"
+
+    n = (
+        await db_session.execute(
+            select(AiDevice).where(AiDevice.mac_address.in_([_REAL_MAC, _REAL_MAC_STRIPPED]))
+        )
+    ).scalars().all()
+    assert len(n) == 1
+    assert await get_watcher_device(db_session, _REAL_MAC) is not None

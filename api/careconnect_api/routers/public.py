@@ -46,6 +46,11 @@ from ..db import get_db
 from ..envelope import APIException
 from ..models import AiAgentChatHistory, AiDevice
 from ..settings import settings
+from ..watcher_device import (
+    ensure_watcher_device,
+    get_watcher_device,
+    normalize_mac_upper,
+)
 
 
 log = logging.getLogger("public")
@@ -90,11 +95,6 @@ def _is_online(last_seen: datetime | None) -> bool:
         return False
     window = timedelta(seconds=settings.watcher_online_window_seconds)
     return (_now_utc_naive() - last_seen) <= window
-
-
-def _device_id_for_mac(mac: str) -> str:
-    """Derive a stable ai_device.id from a MAC address."""
-    return f"watcher-{mac.lower()[:24]}"
 
 
 def _status_row(dev: AiDevice) -> dict[str, Any]:
@@ -184,38 +184,18 @@ async def watcher_heartbeat(
     If no row exists for the MAC, a minimal ai_device row is created.
     Idempotent: repeated calls only advance last_seen and update telemetry.
     """
-    mac = payload.mac.strip().upper()
+    mac = normalize_mac_upper(payload.mac)
     if not mac:
         raise APIException(400, "mac is required")
 
-    now = _now_utc_naive()
-
-    dev = (
-        await db.execute(select(AiDevice).where(AiDevice.mac_address == mac))
-    ).scalar_one_or_none()
-
-    if dev is None:
-        dev = AiDevice(
-            id=_device_id_for_mac(mac),
-            mac_address=mac,
-            device_type="W1-A",
-            firmware_type="xiaozhi",
-            board="sensecap_watcher",
-            sort=0,
-        )
-        db.add(dev)
-        log.info("heartbeat: new device registered mac=%s", mac)
-
-    dev.last_seen = now
-    if payload.battery is not None:
-        dev.battery = payload.battery
-    if payload.fw is not None:
-        dev.fw = payload.fw
-    if payload.rssi is not None:
-        dev.rssi = payload.rssi
-
     try:
-        await db.commit()
+        dev = await ensure_watcher_device(
+            db,
+            mac,
+            battery=payload.battery,
+            fw=payload.fw,
+            rssi=payload.rssi,
+        )
     except Exception:
         await db.rollback()
         raise
@@ -224,7 +204,8 @@ async def watcher_heartbeat(
         "heartbeat: mac=%s battery=%s fw=%s rssi=%s",
         mac, payload.battery, payload.fw, payload.rssi,
     )
-    return {"mac": mac, "last_seen": now.isoformat()}
+    last_seen = dev.last_seen.isoformat() if dev.last_seen else None
+    return {"mac": mac, "last_seen": last_seen}
 
 
 @router.get("/watcher/{mac}/status", response_model=None, dependencies=[Depends(require_api_key)])
@@ -233,10 +214,8 @@ async def watcher_status(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Return current status for one device by MAC address."""
-    mac = mac.strip().upper()
-    dev = (
-        await db.execute(select(AiDevice).where(AiDevice.mac_address == mac))
-    ).scalar_one_or_none()
+    mac = normalize_mac_upper(mac)
+    dev = await get_watcher_device(db, mac)
 
     if dev is None:
         raise APIException(404, f"device {mac} not found")
