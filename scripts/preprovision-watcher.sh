@@ -22,7 +22,7 @@
 #
 # COMMON FLAGS
 #   --port <dev>                serial port (default: /dev/ttyACM1)
-#   --ota-url <url>             default: https://ota.haizel.online/xiaozhi/ota/
+#   --ota-url <url>             default: https://ota.nexus.warehouse-13.biz/xiaozhi/ota/
 #   --ssid <ssid>               WiFi SSID (omit to leave WiFi unset -> device
 #                               boots into SoftAP for on-site WiFi setup)
 #   --password <pw>             WiFi password (discouraged; prefer --password-file)
@@ -46,7 +46,7 @@ CHIP=esp32s3
 BAUD=460800
 
 PORT=/dev/ttyACM1
-OTA_URL="https://ota.haizel.online/xiaozhi/ota/"
+OTA_URL="https://ota.nexus.warehouse-13.biz/xiaozhi/ota/"
 SSID=""
 PASSWORD=""
 PASSWORD_FILE=""

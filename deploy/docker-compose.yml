@@ -205,8 +205,8 @@ services:
       # WebSocket address returned in OTA response to the firmware.
       # Remote watcher reaches this via the Cloudflare tunnel (ws. host -> xiaozhi-server:8000).
       # ota_handler.py reads CC_XIAOZHI_WS_URL; XIAOZHI_WEBSOCKET_URL kept for back-compat.
-      CC_XIAOZHI_WS_URL: "${CC_XIAOZHI_WS_URL:-wss://ws.haizel.online/xiaozhi/v1/}"
-      XIAOZHI_WEBSOCKET_URL: "${CC_XIAOZHI_WS_URL:-wss://ws.haizel.online/xiaozhi/v1/}"
+      CC_XIAOZHI_WS_URL: "${CC_XIAOZHI_WS_URL:-wss://ws.nexus.warehouse-13.biz/xiaozhi/v1/}"
+      XIAOZHI_WEBSOCKET_URL: "${CC_XIAOZHI_WS_URL:-wss://ws.nexus.warehouse-13.biz/xiaozhi/v1/}"
       # OTA transport block selection: "websocket" (remote/internet via tunnel —
       # omit the un-tunnelable MQTT block), "both" (LAN co-located), or "mqtt".
       CC_OTA_TRANSPORT: "${CC_OTA_TRANSPORT:-both}"
@@ -352,10 +352,11 @@ services:
   # Token lives ONLY in .env (CC_TUNNEL_TOKEN) — never baked into the image or git.
   cloudflared:
     image: cloudflare/cloudflared:latest
+    profiles: [tunnel]
     <<: [*restart, *logging]
     command: ["tunnel", "--no-autoupdate", "run"]
     environment:
-      TUNNEL_TOKEN: "${CC_TUNNEL_TOKEN:?CC_TUNNEL_TOKEN must be set in .env}"
+      TUNNEL_TOKEN: "${CC_TUNNEL_TOKEN:-}"
     networks:
       - careconnect
     depends_on:

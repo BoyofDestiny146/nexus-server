@@ -19,7 +19,7 @@ const SERVER_BASE =
  *  Devices reach OTA on the dedicated ota. host that the Cloudflare tunnel routes
  *  straight to xiaozhi-server (bypassing Caddy). */
 export const OTA_URL =
-  process.env.NEXT_PUBLIC_OTA_URL ?? "https://ota.haizel.online/xiaozhi/ota/";
+  process.env.NEXT_PUBLIC_OTA_URL ?? "https://ota.nexus.warehouse-13.biz/xiaozhi/ota/";
 
 /** WebSocket base — used by useLiveChat for the /ws/* routes. */
 export const WS_BASE =

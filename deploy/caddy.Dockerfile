@@ -7,7 +7,7 @@ FROM caddy:2.9.1-alpine
 # Bake in the production Caddyfile.
 # Phase 5: to swap to real ACME, rebuild with an updated Caddyfile.hazel
 # (replace `tls internal` block) — no other change needed.
-COPY Caddyfile.hazel /etc/caddy/Caddyfile
+COPY Caddyfile.nexus /etc/caddy/Caddyfile
 
 # Verify Caddyfile parses before shipping the image.
 # `caddy validate` exits non-zero on syntax errors.
