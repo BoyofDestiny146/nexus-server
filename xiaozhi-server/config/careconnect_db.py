@@ -121,11 +121,27 @@ def _connect():
 
 
 def _normalize_mac(mac_address: str) -> str:
-    """Strip colons/dashes/spaces, uppercase. Mirrors the dashboard's
-    ``_normalize_eui`` so the bridge's MAC and the dashboard's stored MAC
-    (which is uppercase contiguous hex) match cleanly.
+    """Strip colons/dashes/spaces, uppercase. Physical-device key.
+
+    Lockstep with ``api/careconnect_api/watcher_device.py:stripped_mac``.
     """
-    return (mac_address or "").upper().replace(":", "").replace("-", "").replace(" ", "")
+    return (mac_address or "").strip().upper().replace(":", "").replace("-", "").replace(" ", "")
+
+
+def _colon_mac(mac_address: str):
+    stripped = _normalize_mac(mac_address)
+    if len(stripped) == 12 and all(c in "0123456789ABCDEF" for c in stripped):
+        return ":".join(stripped[i : i + 2] for i in range(0, 12, 2))
+    return None
+
+
+def _canonical_store_mac(mac_address: str) -> str:
+    """Format written on INSERT. 12-hex MACs use colon-separated uppercase."""
+    return _colon_mac(mac_address) or _normalize_mac(mac_address)
+
+
+def _display_mac(mac_address: str) -> str:
+    return _colon_mac(mac_address) or (mac_address or "").strip().upper()
 
 
 def _mac_lookup_candidates(mac_address: str) -> list:
@@ -133,13 +149,9 @@ def _mac_lookup_candidates(mac_address: str) -> list:
     upper = (mac_address or "").strip().upper()
     stripped = _normalize_mac(upper)
     out = []
-    for cand in (upper, stripped):
+    for cand in (upper, stripped, _colon_mac(upper)):
         if cand and cand not in out:
             out.append(cand)
-    if len(stripped) == 12 and all(c in "0123456789ABCDEF" for c in stripped):
-        colon = ":".join(stripped[i : i + 2] for i in range(0, 12, 2))
-        if colon not in out:
-            out.append(colon)
     return out
 
 
@@ -148,7 +160,9 @@ def _now_utc_naive():
 
 
 def _device_id_for_mac(mac: str) -> str:
-    return f"watcher-{mac.lower()[:24]}"
+    """Deterministic PK from stripped hex — same as API device_id_for_mac."""
+    key = _normalize_mac(mac).lower()
+    return f"watcher-{key[:24]}"
 
 
 def ensure_watcher_device(mac_address: str) -> bool:
@@ -159,14 +173,20 @@ def ensure_watcher_device(mac_address: str) -> bool:
     ``last_connected_at`` and ``last_seen``. Never binds ``agent_id``, never
     overwrites alias / client_device_id / telemetry.
 
+    ``ai_device.id`` is always ``watcher-<stripped-hex>`` so colon and
+    stripped spellings collide on the primary key if two connects race.
+    No unique index on mac_address is required.
+
     Returns True if a row was ensured, False if mac was empty or DB failed
     (failures are logged, never raised to the WS path).
     """
-    stored_mac = (mac_address or "").strip().upper()
-    if not stored_mac:
+    if not _normalize_mac(mac_address):
         return False
     now = _now_utc_naive()
-    candidates = _mac_lookup_candidates(stored_mac)
+    candidates = _mac_lookup_candidates(mac_address)
+    device_id = _device_id_for_mac(mac_address)
+    store_mac = _canonical_store_mac(mac_address)
+    shown = _display_mac(mac_address)
     try:
         conn = _connect()
         try:
@@ -180,6 +200,12 @@ def ensure_watcher_device(mac_address: str) -> bool:
                     row = cur.fetchone()
                     if row:
                         break
+                if row is None:
+                    cur.execute(
+                        "SELECT id FROM ai_device WHERE id = %s LIMIT 1",
+                        (device_id,),
+                    )
+                    row = cur.fetchone()
                 if row:
                     cur.execute(
                         """
@@ -190,7 +216,7 @@ def ensure_watcher_device(mac_address: str) -> bool:
                         """,
                         (now, now, row[0]),
                     )
-                    log.info("watcher updated mac=%s", stored_mac)
+                    log.info("watcher updated mac=%s", shown)
                 else:
                     try:
                         cur.execute(
@@ -201,8 +227,8 @@ def ensure_watcher_device(mac_address: str) -> bool:
                             VALUES (%s, %s, %s, %s, %s, 0, %s, %s)
                             """,
                             (
-                                _device_id_for_mac(stored_mac),
-                                stored_mac,
+                                device_id,
+                                store_mac,
                                 "W1-A",
                                 "xiaozhi",
                                 "sensecap_watcher",
@@ -210,7 +236,7 @@ def ensure_watcher_device(mac_address: str) -> bool:
                                 now,
                             ),
                         )
-                        log.info("watcher registered mac=%s", stored_mac)
+                        log.info("watcher registered mac=%s", shown)
                     except pymysql.err.IntegrityError:
                         # Concurrent insert of the same PK — treat as update.
                         cur.execute(
@@ -218,16 +244,16 @@ def ensure_watcher_device(mac_address: str) -> bool:
                             UPDATE ai_device
                                SET last_connected_at = %s,
                                    last_seen = %s
-                             WHERE mac_address = %s OR id = %s
+                             WHERE id = %s
                             """,
-                            (now, now, stored_mac, _device_id_for_mac(stored_mac)),
+                            (now, now, device_id),
                         )
-                        log.info("watcher updated mac=%s", stored_mac)
+                        log.info("watcher updated mac=%s", shown)
             return True
         finally:
             conn.close()
     except Exception as e:
-        log.error("careconnect_db.ensure_watcher_device mac=%s failed: %s", stored_mac, e)
+        log.error("careconnect_db.ensure_watcher_device mac=%s failed: %s", shown, e)
         return False
 
 

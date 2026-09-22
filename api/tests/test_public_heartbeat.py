@@ -81,7 +81,8 @@ async def test_status_shows_online_after_heartbeat(client: AsyncClient):
     resp2 = await client.get(f"/api/v1/watcher/{_MAC}/status", headers=_HEADERS_OK)
     data = resp2.json()["data"]
     assert data["online"] is True
-    assert data["mac"] == _MAC
+    from careconnect_api.watcher_device import stripped_mac
+    assert stripped_mac(data["mac"]) == stripped_mac(_MAC)
     assert data["battery"] == 90
     assert data["last_seen"] is not None
 
@@ -102,10 +103,12 @@ async def test_status_shows_offline_after_window(client: AsyncClient, db_session
     await client.post("/api/v1/watcher/heartbeat", json={"mac": _MAC}, headers=_HEADERS_OK)
 
     # Now backdating last_seen to 300 seconds ago (well beyond the 120s default).
+    from careconnect_api.watcher_device import mac_lookup_candidates
+
     stale = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=300)
     await db_session.execute(
         update(AiDevice)
-        .where(AiDevice.mac_address == _MAC)
+        .where(AiDevice.mac_address.in_(mac_lookup_candidates(_MAC)))
         .values(last_seen=stale)
     )
     await db_session.commit()
@@ -124,9 +127,10 @@ async def test_watchers_list(client: AsyncClient):
     resp = await client.get("/api/v1/watchers", headers=_HEADERS_OK)
     data = resp.json()
     assert data["code"] == 0
-    macs = {d["mac"] for d in data["data"]}
-    assert _MAC in macs
-    assert _MAC2 in macs
+    from careconnect_api.watcher_device import stripped_mac
+    macs = {stripped_mac(d["mac"]) for d in data["data"]}
+    assert stripped_mac(_MAC) in macs
+    assert stripped_mac(_MAC2) in macs
 
 
 @pytest.mark.asyncio
@@ -160,16 +164,29 @@ async def test_heartbeat_upserts_telemetry(client: AsyncClient):
 
 _REAL_MAC = "E0:72:A1:DB:36:40"
 _REAL_MAC_STRIPPED = "E072A1DB3640"
+_REAL_MAC_LOWER = "e0:72:a1:db:36:40"
+_CANONICAL_ID = "watcher-e072a1db3640"
+
+
+@pytest.mark.asyncio
+async def test_device_id_identical_for_all_mac_spellings():
+    from careconnect_api.watcher_device import device_id_for_mac
+
+    assert device_id_for_mac(_REAL_MAC_LOWER) == _CANONICAL_ID
+    assert device_id_for_mac(_REAL_MAC) == _CANONICAL_ID
+    assert device_id_for_mac(_REAL_MAC_STRIPPED) == _CANONICAL_ID
+    assert device_id_for_mac("e0-72-a1-db-36-40") == _CANONICAL_ID
 
 
 @pytest.mark.asyncio
 async def test_ensure_first_time_registration(db_session: AsyncSession):
     from careconnect_api.models import AiDevice
-    from careconnect_api.watcher_device import ensure_watcher_device
+    from careconnect_api.watcher_device import ensure_watcher_device, mac_lookup_candidates
 
     dev = await ensure_watcher_device(
-        db_session, "e0:72:a1:db:36:40", touch_last_connected=True
+        db_session, _REAL_MAC_LOWER, touch_last_connected=True
     )
+    assert dev.id == _CANONICAL_ID
     assert dev.mac_address == _REAL_MAC
     assert dev.device_type == "W1-A"
     assert dev.firmware_type == "xiaozhi"
@@ -183,7 +200,7 @@ async def test_ensure_first_time_registration(db_session: AsyncSession):
 
     n = (
         await db_session.execute(
-            select(AiDevice).where(AiDevice.mac_address.in_([_REAL_MAC, _REAL_MAC_STRIPPED]))
+            select(AiDevice).where(AiDevice.mac_address.in_(mac_lookup_candidates(_REAL_MAC)))
         )
     ).scalars().all()
     assert len(n) == 1
@@ -192,7 +209,7 @@ async def test_ensure_first_time_registration(db_session: AsyncSession):
 @pytest.mark.asyncio
 async def test_ensure_reconnect_does_not_duplicate(db_session: AsyncSession):
     from careconnect_api.models import AiDevice
-    from careconnect_api.watcher_device import ensure_watcher_device
+    from careconnect_api.watcher_device import ensure_watcher_device, mac_lookup_candidates
 
     first = await ensure_watcher_device(
         db_session, _REAL_MAC, touch_last_connected=True
@@ -201,22 +218,64 @@ async def test_ensure_reconnect_does_not_duplicate(db_session: AsyncSession):
     first_connected = first.last_connected_at
 
     second = await ensure_watcher_device(
-        db_session, "e0:72:a1:db:36:40", touch_last_connected=True
+        db_session, _REAL_MAC_LOWER, touch_last_connected=True
     )
-    assert second.id == first_id
+    assert second.id == first_id == _CANONICAL_ID
     assert second.last_connected_at >= first_connected
 
     n = (
         await db_session.execute(
-            select(AiDevice).where(AiDevice.mac_address.in_([_REAL_MAC, _REAL_MAC_STRIPPED]))
+            select(AiDevice).where(AiDevice.mac_address.in_(mac_lookup_candidates(_REAL_MAC)))
         )
     ).scalars().all()
     assert len(n) == 1
 
 
 @pytest.mark.asyncio
-async def test_ensure_preserves_agent_id_and_metadata(db_session: AsyncSession):
+async def test_ensure_all_mac_spellings_are_one_device(db_session: AsyncSession):
     from careconnect_api.models import AiDevice
+    from careconnect_api.watcher_device import (
+        ensure_watcher_device,
+        get_watcher_device,
+        mac_lookup_candidates,
+    )
+
+    a = await ensure_watcher_device(db_session, _REAL_MAC_LOWER, touch_last_connected=True)
+    b = await ensure_watcher_device(db_session, _REAL_MAC, touch_last_connected=True)
+    c = await ensure_watcher_device(db_session, _REAL_MAC_STRIPPED, touch_last_connected=True)
+
+    assert a.id == b.id == c.id == _CANONICAL_ID
+    assert await get_watcher_device(db_session, _REAL_MAC_LOWER) is not None
+    assert await get_watcher_device(db_session, _REAL_MAC) is not None
+    assert await get_watcher_device(db_session, _REAL_MAC_STRIPPED) is not None
+
+    n = (
+        await db_session.execute(
+            select(AiDevice).where(
+                AiDevice.mac_address.in_(mac_lookup_candidates(_REAL_MAC))
+                | (AiDevice.id == _CANONICAL_ID)
+            )
+        )
+    ).scalars().all()
+    assert len(n) == 1
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_and_ws_generate_identical_device_id(db_session: AsyncSession):
+    """Heartbeat create path and WS ensure() must mint the same PK."""
+    from careconnect_api.models import AiDevice
+    from careconnect_api.watcher_device import device_id_for_mac, ensure_watcher_device
+
+    await ensure_watcher_device(db_session, _REAL_MAC_LOWER, touch_last_connected=True)
+    row = (
+        await db_session.execute(select(AiDevice).where(AiDevice.id == _CANONICAL_ID))
+    ).scalar_one()
+    assert row.id == device_id_for_mac(_REAL_MAC)
+    assert row.id == device_id_for_mac(_REAL_MAC_STRIPPED)
+
+
+@pytest.mark.asyncio
+async def test_ensure_preserves_agent_id_and_metadata(db_session: AsyncSession):
     from careconnect_api.watcher_device import ensure_watcher_device, get_watcher_device
 
     await ensure_watcher_device(db_session, _REAL_MAC, touch_last_connected=True)
@@ -225,15 +284,21 @@ async def test_ensure_preserves_agent_id_and_metadata(db_session: AsyncSession):
     existing.alias = "Living room"
     existing.client_device_id = "EXT-99"
     existing.battery = 80
+    existing.fw = "1.9.0"
+    existing.rssi = -62
     await db_session.commit()
 
-    await ensure_watcher_device(db_session, _REAL_MAC, touch_last_connected=True)
-    again = await get_watcher_device(db_session, _REAL_MAC)
+    # WS reconnect: timestamps only (no telemetry kwargs).
+    await ensure_watcher_device(db_session, _REAL_MAC_STRIPPED, touch_last_connected=True)
+    again = await get_watcher_device(db_session, _REAL_MAC_LOWER)
     assert again.agent_id == "agentbound001"
     assert again.alias == "Living room"
     assert again.client_device_id == "EXT-99"
     assert again.battery == 80
+    assert again.fw == "1.9.0"
+    assert again.rssi == -62
     assert again.device_type == "W1-A"
+    assert again.last_connected_at is not None
 
 
 @pytest.mark.asyncio
@@ -244,6 +309,7 @@ async def test_ensure_finds_onboard_stripped_mac_without_duplicate(db_session: A
         device_id_for_mac,
         ensure_watcher_device,
         get_watcher_device,
+        mac_lookup_candidates,
     )
 
     db_session.add(
@@ -260,14 +326,15 @@ async def test_ensure_finds_onboard_stripped_mac_without_duplicate(db_session: A
     await db_session.commit()
 
     dev = await ensure_watcher_device(
-        db_session, "e0:72:a1:db:36:40", touch_last_connected=True
+        db_session, _REAL_MAC_LOWER, touch_last_connected=True
     )
-    assert dev.mac_address == _REAL_MAC_STRIPPED
+    assert dev.id == _CANONICAL_ID
+    assert dev.mac_address == _REAL_MAC_STRIPPED  # existing spelling preserved
     assert dev.agent_id == "alreadybound"
 
     n = (
         await db_session.execute(
-            select(AiDevice).where(AiDevice.mac_address.in_([_REAL_MAC, _REAL_MAC_STRIPPED]))
+            select(AiDevice).where(AiDevice.mac_address.in_(mac_lookup_candidates(_REAL_MAC)))
         )
     ).scalars().all()
     assert len(n) == 1
