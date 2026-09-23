@@ -265,8 +265,21 @@ async def handle_mcp_message(conn, mcp_client: MCPClient, payload: dict):
                     # raised because the LLM session must continue.
                     try:
                         if _careconnect_find_set_volume_tool(mcp_client):
+                            volume = 95
+                            try:
+                                from config.voice_config import get_device_volume
+
+                                volume = get_device_volume(
+                                    getattr(conn, "device_id", None) or ""
+                                )
+                            except Exception as vol_exc:
+                                logger.bind(tag=TAG).warning(
+                                    f"careconnect volume lookup failed, using 95: {vol_exc}"
+                                )
                             asyncio.create_task(
-                                _careconnect_set_default_volume(conn, mcp_client)
+                                _careconnect_set_default_volume(
+                                    conn, mcp_client, volume=volume
+                                )
                             )
                     except Exception as e:
                         logger.bind(tag=TAG).warning(

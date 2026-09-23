@@ -3,6 +3,7 @@ the contract the existing dashboard's axios interceptor expects (success when
 code == 0)."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import Request
@@ -10,6 +11,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
+
+_log = logging.getLogger("api")
 
 
 class APIException(Exception):
@@ -32,7 +35,22 @@ class EnvelopeMiddleware(BaseHTTPMiddleware):
     isn't JSON (e.g., WebSocket upgrade, file streams, /metrics)."""
 
     async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except APIException as exc:
+            return JSONResponse(envelope(exc.data, code=exc.code, msg=exc.msg))
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else "error"
+            return JSONResponse(envelope(None, code=exc.status_code, msg=detail))
+        except RequestValidationError as exc:
+            return JSONResponse(envelope(exc.errors(), code=400, msg="validation error"))
+        except Exception as exc:
+            # BaseHTTPMiddleware re-raises inner exceptions from call_next, so
+            # FastAPI's Exception handler never becomes the HTTP response. Catch
+            # here or the dashboard sees a raw HTTP 500 ("unexpected 500").
+            _log.exception("unhandled error on %s %s", request.method, request.url.path)
+            msg = str(exc).strip() or exc.__class__.__name__
+            return JSONResponse(envelope(None, code=500, msg=msg))
 
         # Skip non-JSON responses
         ct = response.headers.get("content-type", "")
@@ -88,3 +106,15 @@ async def http_exception_handler(_request: Request, exc: HTTPException):
 
 async def validation_exception_handler(_request: Request, exc: RequestValidationError):
     return JSONResponse(envelope(exc.errors(), code=400, msg="validation error"))
+
+
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Catch anything that is not APIException/HTTPException/validation.
+
+    Unhandled exceptions otherwise bypass EnvelopeMiddleware (they bubble out
+    of ``call_next``) and Starlette returns a raw HTTP 500. The dashboard
+    then shows ``unexpected 500`` because the body is not ``{code,msg,data}``.
+    """
+    _log.exception("unhandled error on %s %s", request.method, request.url.path)
+    msg = str(exc).strip() or exc.__class__.__name__
+    return JSONResponse(envelope(None, code=500, msg=msg))

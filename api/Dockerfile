@@ -32,10 +32,12 @@ RUN pip install --no-cache-dir --upgrade pip \
 FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends wget \
+    && apt-get install -y --no-install-recommends wget gosu \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r appuser \
-    && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+    && useradd -r -g appuser -d /app -s /sbin/nologin appuser \
+    && mkdir -p /data \
+    && chmod 0777 /data
 
 WORKDIR /app
 
@@ -44,10 +46,14 @@ COPY --from=builder /install /usr/local
 # Copy application source
 COPY careconnect_api/ ./careconnect_api/
 COPY migrations/ ./migrations/
+COPY docker-entrypoint.sh /docker-entrypoint.sh
 
-RUN chown -R appuser:appuser /app
+RUN chown -R appuser:appuser /app \
+    && chmod 0755 /docker-entrypoint.sh
 
-USER appuser
+# Entrypoint starts as root so it can chmod the shared cc-voice volume, then
+# drops to appuser via gosu. Do not set USER appuser here.
+ENTRYPOINT ["/docker-entrypoint.sh"]
 
 EXPOSE 8080
 

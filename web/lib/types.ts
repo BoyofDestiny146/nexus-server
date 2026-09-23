@@ -140,4 +140,5 @@ export interface DeviceVoice {
   voice: string;
   speed: string;
   response_length?: string;
+  volume?: number;
 }

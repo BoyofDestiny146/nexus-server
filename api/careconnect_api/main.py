@@ -27,6 +27,7 @@ from .envelope import (
     api_exception_handler,
     envelope,
     http_exception_handler,
+    unhandled_exception_handler,
     validation_exception_handler,
 )
 from .bootstrap_root import seed_two_admins
@@ -86,6 +87,7 @@ app.add_middleware(EnvelopeMiddleware)
 app.add_exception_handler(APIException, api_exception_handler)
 app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 
 @app.get("/healthz")

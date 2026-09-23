@@ -3,40 +3,40 @@
 /**
  * VoiceSelector — per-device voice + speed picker.
  *
- * Renders two <select> controls (Voice, Speed) pre-populated from
- * GET /api/voices and pre-selected from GET /api/device/{mac}/voice.
- * Includes a Preview button (POST /api/voice/preview → audio/wav blob)
- * and a Save button (PUT /api/device/{mac}/voice).
- *
- * Designed as a self-contained component so it can be embedded inline
- * inside a table expander row or a mobile card without lifting state.
+ * Renders Voice / Speed / Length, Preview, Delete, Save, plus volume,
+ * an editable test message, and Test Voice. Catalog from GET /api/voices;
+ * current values from GET /api/device/{mac}/voice.
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Volume2, Loader2, Check, AlertTriangle, Wifi } from "lucide-react";
-import { apiGet, apiPut, apiBinary, ApiError } from "@/lib/api";
+import { Volume2, Loader2, Check, AlertTriangle, Wifi, Trash2, Play } from "lucide-react";
+import { apiGet, apiPut, apiBinary, apiDelete, ApiError } from "@/lib/api";
 import { classNames } from "@/lib/format";
+import { Modal } from "@/components/Modal";
 import type { VoiceCatalog, DeviceVoice } from "@/lib/types";
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Props {
   mac: string;
+  deviceId: string;
+  agentId?: string | null;
+  agentName?: string | null;
+  onDeleted?: () => void;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 type PreviewStatus = "idle" | "loading" | "playing" | "error";
 
-// ── Component ─────────────────────────────────────────────────────────────────
+const DEFAULT_TEST_MESSAGE = "Hello, this is a test message from CareConnect.";
 
-export function VoiceSelector({ mac }: Props) {
+export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted }: Props) {
   const [catalog, setCatalog] = useState<VoiceCatalog | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Currently selected values — initialised from device's current settings.
   const [selectedVoice, setSelectedVoice] = useState<string>("");
   const [selectedSpeed, setSelectedSpeed] = useState<string>("");
   const [selectedLength, setSelectedLength] = useState<string>("");
+  const [selectedVolume, setSelectedVolume] = useState<number>(80);
+  const [testMessage, setTestMessage] = useState<string>(DEFAULT_TEST_MESSAGE);
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -44,12 +44,12 @@ export function VoiceSelector({ mac }: Props) {
   const [previewStatus, setPreviewStatus] = useState<PreviewStatus>("idle");
   const [previewError, setPreviewError] = useState<string | null>(null);
 
-  // Audio element ref so we can stop a previous preview before starting a new one.
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  // Object URL cleanup.
-  const blobUrlRef = useRef<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // ── Load catalog + device settings ──────────────────────────────────────────
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +65,7 @@ export function VoiceSelector({ mac }: Props) {
         setSelectedVoice(dev.voice || cat.default);
         setSelectedSpeed(dev.speed || cat.default_speed);
         setSelectedLength(dev.response_length || cat.default_length || "brief");
+        setSelectedVolume(typeof dev.volume === "number" ? Math.max(0, Math.min(100, dev.volume)) : 80);
       } catch (e) {
         if (cancelled) return;
         setLoadError(e instanceof ApiError ? e.message : "Failed to load voice settings.");
@@ -75,16 +76,12 @@ export function VoiceSelector({ mac }: Props) {
     return () => { cancelled = true; };
   }, [mac]);
 
-  // ── Cleanup blob URL on unmount ──────────────────────────────────────────────
-
   useEffect(() => {
     return () => {
       stopAudio();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // ── Helpers ──────────────────────────────────────────────────────────────────
 
   function stopAudio() {
     if (audioRef.current) {
@@ -97,7 +94,7 @@ export function VoiceSelector({ mac }: Props) {
     }
   }
 
-  async function handlePreview() {
+  async function playPreview(text?: string) {
     setPreviewStatus("loading");
     setPreviewError(null);
     stopAudio();
@@ -105,11 +102,16 @@ export function VoiceSelector({ mac }: Props) {
     try {
       const blob = await apiBinary("/voice/preview", {
         method: "POST",
-        body: JSON.stringify({ voice: selectedVoice, speed: selectedSpeed }),
+        body: JSON.stringify({
+          voice: selectedVoice,
+          speed: selectedSpeed,
+          text: text && text.trim() ? text : undefined,
+        }),
       });
       const url = URL.createObjectURL(blob);
       blobUrlRef.current = url;
       const audio = new Audio(url);
+      audio.volume = Math.max(0, Math.min(1, selectedVolume / 100));
       audioRef.current = audio;
 
       audio.onended = () => {
@@ -136,10 +138,14 @@ export function VoiceSelector({ mac }: Props) {
     try {
       await apiPut<DeviceVoice>(
         `/device/${encodeURIComponent(mac)}/voice`,
-        { voice: selectedVoice, speed: selectedSpeed, response_length: selectedLength },
+        {
+          voice: selectedVoice,
+          speed: selectedSpeed,
+          response_length: selectedLength,
+          volume: selectedVolume,
+        },
       );
       setSaveStatus("saved");
-      // Reset back to idle after a short beat so the checkmark is visible.
       setTimeout(() => setSaveStatus("idle"), 2200);
     } catch (e) {
       setSaveStatus("error");
@@ -147,7 +153,19 @@ export function VoiceSelector({ mac }: Props) {
     }
   }
 
-  // ── Render: load error ───────────────────────────────────────────────────────
+  async function handleDelete() {
+    if (deleteBusy) return;
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      await apiDelete(`/device/${encodeURIComponent(deviceId)}`);
+      setDeleteOpen(false);
+      onDeleted?.();
+    } catch (e) {
+      setDeleteError(e instanceof ApiError ? e.message : "Delete failed.");
+      setDeleteBusy(false);
+    }
+  }
 
   if (loadError) {
     return (
@@ -157,8 +175,6 @@ export function VoiceSelector({ mac }: Props) {
       </div>
     );
   }
-
-  // ── Render: skeleton while loading ───────────────────────────────────────────
 
   if (!catalog) {
     return (
@@ -171,172 +187,317 @@ export function VoiceSelector({ mac }: Props) {
     );
   }
 
-  // ── Render: controls ─────────────────────────────────────────────────────────
-
   const voiceSelectId = `voice-${mac}`;
   const speedSelectId = `speed-${mac}`;
   const lengthSelectId = `length-${mac}`;
+  const volumeId = `volume-${mac}`;
+  const testMsgId = `test-msg-${mac}`;
 
   const selectedVoiceObj = catalog.voices.find((v) => v.id === selectedVoice);
   const isEdgeVoice = selectedVoiceObj ? !selectedVoiceObj.local : false;
+  const previewBusy = previewStatus === "loading" || previewStatus === "playing";
+  const bound = Boolean(agentId);
+  const clientLabel = agentName || "this client";
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-3">
 
-      {/* Voice dropdown */}
-      <div className="flex flex-col gap-1 min-w-0">
-        <label
-          htmlFor={voiceSelectId}
-          className="text-[10px] uppercase tracking-[0.12em] text-slate-muted font-medium"
-        >
-          Voice
-        </label>
-        <select
-          id={voiceSelectId}
-          value={selectedVoice}
-          onChange={(e) => {
-            setSelectedVoice(e.target.value);
-            setSaveStatus("idle");
-          }}
-          className={classNames(
-            "bg-white border border-slate-line/80 rounded-card px-2.5 py-1.5",
-            "text-[13px] text-slate-deep tracking-tight",
-            "focus:outline-none focus:border-teal focus:ring-2 focus:ring-teal/15 transition",
-            "min-w-[160px]",
+        <div className="flex flex-col gap-1 min-w-0">
+          <label
+            htmlFor={voiceSelectId}
+            className="text-[10px] uppercase tracking-[0.12em] text-slate-muted font-medium"
+          >
+            Voice
+          </label>
+          <select
+            id={voiceSelectId}
+            value={selectedVoice}
+            onChange={(e) => {
+              setSelectedVoice(e.target.value);
+              setSaveStatus("idle");
+            }}
+            className={classNames(
+              "bg-white border border-slate-line/80 rounded-card px-2.5 py-1.5",
+              "text-[13px] text-slate-deep tracking-tight",
+              "focus:outline-none focus:border-teal focus:ring-2 focus:ring-teal/15 transition",
+              "min-w-[160px]",
+            )}
+            aria-label="Voice"
+          >
+            {catalog.voices.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.label}{v.recommended ? " ★" : ""}{!v.local ? " (Edge)" : ""}
+              </option>
+            ))}
+          </select>
+          {isEdgeVoice && (
+            <span className="flex items-center gap-1 text-[11px] text-slate-muted">
+              <Wifi size={10} strokeWidth={1.75} />
+              needs internet
+            </span>
           )}
-          aria-label="Voice"
-        >
-          {catalog.voices.map((v) => (
-            <option key={v.id} value={v.id}>
-              {v.label}{v.recommended ? " ★" : ""}{!v.local ? " (Edge)" : ""}
-            </option>
-          ))}
-        </select>
-        {/* "needs internet" hint shown below the select when an Edge voice is chosen */}
-        {isEdgeVoice && (
-          <span className="flex items-center gap-1 text-[11px] text-slate-muted">
-            <Wifi size={10} strokeWidth={1.75} />
-            needs internet
-          </span>
-        )}
+          {!isEdgeVoice && <span className="h-[16px]" aria-hidden />}
+        </div>
+
+        <div className="flex flex-col gap-1 min-w-0">
+          <label
+            htmlFor={speedSelectId}
+            className="text-[10px] uppercase tracking-[0.12em] text-slate-muted font-medium"
+          >
+            Speed
+          </label>
+          <select
+            id={speedSelectId}
+            value={selectedSpeed}
+            onChange={(e) => {
+              setSelectedSpeed(e.target.value);
+              setSaveStatus("idle");
+            }}
+            className={classNames(
+              "bg-white border border-slate-line/80 rounded-card px-2.5 py-1.5",
+              "text-[13px] text-slate-deep tracking-tight",
+              "focus:outline-none focus:border-teal focus:ring-2 focus:ring-teal/15 transition",
+              "min-w-[140px]",
+            )}
+            aria-label="Speed"
+          >
+            {catalog.speeds.map((s) => (
+              <option key={s.id} value={s.id}>{s.label}</option>
+            ))}
+          </select>
+          <span className="h-[16px]" aria-hidden />
+        </div>
+
+        <div className="flex flex-col gap-1 min-w-0">
+          <label
+            htmlFor={lengthSelectId}
+            className="text-[10px] uppercase tracking-[0.12em] text-slate-muted font-medium"
+          >
+            Length
+          </label>
+          <select
+            id={lengthSelectId}
+            value={selectedLength}
+            onChange={(e) => {
+              setSelectedLength(e.target.value);
+              setSaveStatus("idle");
+            }}
+            className={classNames(
+              "bg-white border border-slate-line/80 rounded-card px-2.5 py-1.5",
+              "text-[13px] text-slate-deep tracking-tight",
+              "focus:outline-none focus:border-teal focus:ring-2 focus:ring-teal/15 transition",
+              "min-w-[140px]",
+            )}
+            aria-label="Response length"
+          >
+            {(catalog.lengths || []).map((l) => (
+              <option key={l.id} value={l.id}>{l.label}</option>
+            ))}
+          </select>
+          <span className="h-[16px]" aria-hidden />
+        </div>
+
+        <div className="flex items-end gap-2 pb-[20px]">
+          <button
+            onClick={() => playPreview()}
+            disabled={previewBusy}
+            className={classNames(
+              "btn-secondary text-[12px] px-3 py-1.5 gap-1.5",
+              previewBusy && "opacity-60 pointer-events-none",
+            )}
+            aria-label="Preview voice"
+            title="Play a short preview with the selected voice and speed"
+          >
+            {previewStatus === "loading" ? (
+              <Loader2 size={13} className="animate-spin" strokeWidth={1.75} />
+            ) : (
+              <Volume2 size={13} strokeWidth={1.75} />
+            )}
+            {previewStatus === "playing" ? "Playing…" : previewStatus === "loading" ? "Synthesising…" : "Preview"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { setDeleteError(null); setDeleteOpen(true); }}
+            className="btn-danger text-[12px] px-3 py-1.5 gap-1.5"
+            aria-label="Delete this device"
+          >
+            <Trash2 size={13} strokeWidth={1.75} />
+            Delete
+          </button>
+
+          <button
+            onClick={handleSave}
+            disabled={saveStatus === "saving"}
+            className={classNames(
+              "btn-primary text-[12px] px-3 py-1.5 gap-1.5",
+              saveStatus === "saving" && "opacity-60 pointer-events-none",
+              saveStatus === "saved" && "bg-teal-deep",
+            )}
+            aria-label="Save voice settings for this device"
+          >
+            {saveStatus === "saving" ? (
+              <Loader2 size={13} className="animate-spin" strokeWidth={1.75} />
+            ) : saveStatus === "saved" ? (
+              <Check size={13} strokeWidth={2} />
+            ) : null}
+            {saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved" : "Save"}
+          </button>
+        </div>
       </div>
 
-      {/* Speed dropdown */}
-      <div className="flex flex-col gap-1 min-w-0">
-        <label
-          htmlFor={speedSelectId}
-          className="text-[10px] uppercase tracking-[0.12em] text-slate-muted font-medium"
-        >
-          Speed
-        </label>
-        <select
-          id={speedSelectId}
-          value={selectedSpeed}
-          onChange={(e) => {
-            setSelectedSpeed(e.target.value);
-            setSaveStatus("idle");
-          }}
-          className={classNames(
-            "bg-white border border-slate-line/80 rounded-card px-2.5 py-1.5",
-            "text-[13px] text-slate-deep tracking-tight",
-            "focus:outline-none focus:border-teal focus:ring-2 focus:ring-teal/15 transition",
-            "min-w-[140px]",
-          )}
-          aria-label="Speed"
-        >
-          {catalog.speeds.map((s) => (
-            <option key={s.id} value={s.id}>{s.label}</option>
-          ))}
-        </select>
-        {/* Spacer so Speed column aligns with Voice even without the hint. */}
-        {!isEdgeVoice && <span className="h-[16px]" aria-hidden />}
-      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1 min-w-[220px] flex-1">
+          <label
+            htmlFor={volumeId}
+            className="text-[10px] uppercase tracking-[0.12em] text-slate-muted font-medium"
+          >
+            Volume (%)
+          </label>
+          <div className="flex items-center gap-3">
+            <input
+              id={volumeId}
+              type="range"
+              min={0}
+              max={100}
+              value={selectedVolume}
+              onChange={(e) => {
+                setSelectedVolume(Number(e.target.value));
+                setSaveStatus("idle");
+              }}
+              className="flex-1 accent-teal h-1.5 cursor-pointer"
+              aria-label="Volume"
+            />
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={selectedVolume}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (Number.isNaN(n)) return;
+                setSelectedVolume(Math.max(0, Math.min(100, Math.round(n))));
+                setSaveStatus("idle");
+              }}
+              className="input !h-8 !px-2 !text-[13px] w-16 num"
+              aria-label="Volume percent"
+            />
+          </div>
+        </div>
 
-      {/* Response length (verbosity) — "brief" keeps replies short for elderly users. */}
-      <div className="flex flex-col gap-1 min-w-0">
-        <label
-          htmlFor={lengthSelectId}
-          className="text-[10px] uppercase tracking-[0.12em] text-slate-muted font-medium"
-        >
-          Length
-        </label>
-        <select
-          id={lengthSelectId}
-          value={selectedLength}
-          onChange={(e) => {
-            setSelectedLength(e.target.value);
-            setSaveStatus("idle");
-          }}
-          className={classNames(
-            "bg-white border border-slate-line/80 rounded-card px-2.5 py-1.5",
-            "text-[13px] text-slate-deep tracking-tight",
-            "focus:outline-none focus:border-teal focus:ring-2 focus:ring-teal/15 transition",
-            "min-w-[140px]",
-          )}
-          aria-label="Response length"
-        >
-          {(catalog.lengths || []).map((l) => (
-            <option key={l.id} value={l.id}>{l.label}</option>
-          ))}
-        </select>
-        {!isEdgeVoice && <span className="h-[16px]" aria-hidden />}
-      </div>
+        <div className="flex flex-col gap-1 min-w-[240px] flex-[2]">
+          <label
+            htmlFor={testMsgId}
+            className="text-[10px] uppercase tracking-[0.12em] text-slate-muted font-medium"
+          >
+            Test message
+          </label>
+          <input
+            id={testMsgId}
+            type="text"
+            value={testMessage}
+            onChange={(e) => setTestMessage(e.target.value)}
+            className="input !h-8 !text-[13px]"
+            placeholder={DEFAULT_TEST_MESSAGE}
+            aria-label="Test message"
+          />
+        </div>
 
-      {/* Action buttons — align to bottom of the label+select+hint stack */}
-      <div className="flex items-end gap-2 pb-[20px]">
-
-        {/* Preview */}
         <button
-          onClick={handlePreview}
-          disabled={previewStatus === "loading" || previewStatus === "playing"}
+          onClick={() => playPreview(testMessage)}
+          disabled={previewBusy}
           className={classNames(
-            "btn-secondary text-[12px] px-3 py-1.5 gap-1.5",
-            (previewStatus === "loading" || previewStatus === "playing") && "opacity-60 pointer-events-none",
+            "btn-secondary text-[12px] px-3 py-1.5 gap-1.5 mb-0.5",
+            previewBusy && "opacity-60 pointer-events-none",
           )}
-          aria-label="Preview voice"
-          title="Play a short preview with the selected voice and speed"
+          aria-label="Test voice with custom message"
         >
           {previewStatus === "loading" ? (
             <Loader2 size={13} className="animate-spin" strokeWidth={1.75} />
           ) : (
-            <Volume2 size={13} strokeWidth={1.75} />
+            <Play size={13} strokeWidth={1.75} />
           )}
-          {previewStatus === "playing" ? "Playing…" : previewStatus === "loading" ? "Synthesising…" : "Preview"}
-        </button>
-
-        {/* Save */}
-        <button
-          onClick={handleSave}
-          disabled={saveStatus === "saving"}
-          className={classNames(
-            "btn-primary text-[12px] px-3 py-1.5 gap-1.5",
-            saveStatus === "saving" && "opacity-60 pointer-events-none",
-            saveStatus === "saved" && "bg-teal-deep",
-          )}
-          aria-label="Save voice settings for this device"
-        >
-          {saveStatus === "saving" ? (
-            <Loader2 size={13} className="animate-spin" strokeWidth={1.75} />
-          ) : saveStatus === "saved" ? (
-            <Check size={13} strokeWidth={2} />
-          ) : null}
-          {saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved" : "Save"}
+          Test Voice
         </button>
       </div>
 
-      {/* Inline error messages */}
+      {!previewError && !saveError && previewStatus === "idle" && saveStatus === "idle" && (
+        <div className="flex items-center gap-1.5 text-[12px] text-teal-deep">
+          <Check size={12} strokeWidth={2} />
+          Voice settings ready. Click Test Voice to hear a sample.
+        </div>
+      )}
+
       {previewError && (
-        <div className="basis-full flex items-center gap-1.5 text-[12px] text-risk-urgent mt-0.5">
+        <div className="flex items-center gap-1.5 text-[12px] text-risk-urgent">
           <AlertTriangle size={12} strokeWidth={1.75} />
           {previewError}
         </div>
       )}
       {saveError && (
-        <div className="basis-full flex items-center gap-1.5 text-[12px] text-risk-urgent mt-0.5">
+        <div className="flex items-center gap-1.5 text-[12px] text-risk-urgent">
           <AlertTriangle size={12} strokeWidth={1.75} />
           {saveError}
         </div>
       )}
+
+      <Modal
+        open={deleteOpen}
+        onClose={() => { if (!deleteBusy) setDeleteOpen(false); }}
+        title="Delete this Watcher?"
+        size="md"
+        footer={
+          <>
+            <button
+              onClick={() => setDeleteOpen(false)}
+              disabled={deleteBusy}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button onClick={handleDelete} disabled={deleteBusy} className="btn-danger">
+              {deleteBusy && <Loader2 size={14} className="animate-spin" />}
+              <Trash2 size={14} />
+              Delete device
+            </button>
+          </>
+        }
+      >
+        <div className="flex items-start gap-3 text-[14px] text-slate-deep leading-relaxed">
+          <AlertTriangle size={18} className="text-risk-urgent shrink-0 mt-0.5" />
+          <div>
+            {bound ? (
+              <>
+                <p>
+                  This Watcher is bound to <span className="font-medium">{clientLabel}</span>.
+                  Deleting removes the device row from CareConnect only.
+                </p>
+                <ul className="mt-3 space-y-1 text-[13px] text-slate-muted">
+                  <li>· The client/person record is <span className="text-slate-deep">kept</span>.</li>
+                  <li>· Chat history and assessments are <span className="text-slate-deep">not</span> deleted.</li>
+                  <li>· If the physical Watcher reconnects later, auto-registration may recreate an unbound device row.</li>
+                </ul>
+              </>
+            ) : (
+              <>
+                <p>
+                  This Watcher is unbound. Deleting removes it from the Devices list.
+                </p>
+                <ul className="mt-3 space-y-1 text-[13px] text-slate-muted">
+                  <li>· No client/person record is affected.</li>
+                  <li>· If the physical Watcher reconnects later, auto-registration may recreate an unbound device row.</li>
+                </ul>
+              </>
+            )}
+          </div>
+        </div>
+        {deleteError && (
+          <div className="mt-4 text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">
+            {deleteError}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

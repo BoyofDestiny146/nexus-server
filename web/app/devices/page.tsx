@@ -117,7 +117,7 @@ function ClientIdCell({ d }: { d: DeviceRow }) {
 
 // ── Desktop table row pair ────────────────────────────────────────────────────
 
-function DeviceTableRow({ d }: { d: DeviceRow }) {
+function DeviceTableRow({ d, onDeleted }: { d: DeviceRow; onDeleted: () => void }) {
   const [voiceOpen, setVoiceOpen] = useState(false);
   const online = isOnline(d.lastConnectedAt);
 
@@ -181,7 +181,13 @@ function DeviceTableRow({ d }: { d: DeviceRow }) {
             colSpan={7}
             className="px-5 py-4 bg-bone-soft border-b border-slate-line/50"
           >
-            <VoiceSelector mac={d.macAddress} />
+            <VoiceSelector
+              mac={d.macAddress}
+              deviceId={d.id}
+              agentId={d.agentId}
+              agentName={d.agentName}
+              onDeleted={onDeleted}
+            />
           </td>
         </tr>
       )}
@@ -191,7 +197,7 @@ function DeviceTableRow({ d }: { d: DeviceRow }) {
 
 // ── Mobile card item ──────────────────────────────────────────────────────────
 
-function DeviceCard({ d }: { d: DeviceRow }) {
+function DeviceCard({ d, onDeleted }: { d: DeviceRow; onDeleted: () => void }) {
   const [voiceOpen, setVoiceOpen] = useState(false);
   const online = isOnline(d.lastConnectedAt);
 
@@ -241,7 +247,13 @@ function DeviceCard({ d }: { d: DeviceRow }) {
             id={`voice-panel-card-${d.id}`}
             className="mt-3 p-4 bg-white border border-slate-line/70 rounded-card"
           >
-            <VoiceSelector mac={d.macAddress} />
+            <VoiceSelector
+              mac={d.macAddress}
+              deviceId={d.id}
+              agentId={d.agentId}
+              agentName={d.agentName}
+              onDeleted={onDeleted}
+            />
           </div>
         )}
       </div>
@@ -258,6 +270,7 @@ function DevicesView() {
   const [pendingKw, setPendingKw] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   // debounce keyword to avoid hammering the API
   useEffect(() => {
@@ -276,7 +289,7 @@ function DevicesView() {
       .catch((e) => { if (!cancelled) setError(e instanceof ApiError ? e.message : "Failed."); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [page, keywords]);
+  }, [page, keywords, refreshNonce]);
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / LIMIT)) : 1;
 
@@ -341,7 +354,11 @@ function DevicesView() {
               </thead>
               <tbody>
                 {data.list.map((d) => (
-                  <DeviceTableRow key={d.id} d={d} />
+                  <DeviceTableRow
+                    key={d.id}
+                    d={d}
+                    onDeleted={() => setRefreshNonce((n) => n + 1)}
+                  />
                 ))}
               </tbody>
             </table>
@@ -349,7 +366,11 @@ function DevicesView() {
             {/* Card list for mobile */}
             <ul className="md:hidden divide-y divide-slate-line/50">
               {data.list.map((d) => (
-                <DeviceCard key={d.id} d={d} />
+                <DeviceCard
+                  key={d.id}
+                  d={d}
+                  onDeleted={() => setRefreshNonce((n) => n + 1)}
+                />
               ))}
             </ul>
           </div>

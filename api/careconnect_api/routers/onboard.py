@@ -523,11 +523,20 @@ async def detach_device(
         await db.rollback()
         raise
 
+    # Best-effort: drop the JSON voice row. Never delete the bound client.
+    try:
+        from .voice import forget_device_voice
+
+        await forget_device_voice(device.mac_address or "")
+    except Exception as exc:
+        log.warning("voice config cleanup after device delete failed: %s", exc)
+
     return {
         "deviceId": device_id,
         "eui": device.mac_address,
         "agentId": device.agent_id,
         "deleted": True,
+        "clientPreserved": True,
     }
 
 

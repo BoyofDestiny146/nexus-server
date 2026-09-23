@@ -60,18 +60,21 @@ export async function api<T = unknown>(
 
   const url = path.startsWith("/api/") || path.startsWith("/ws/") ? path : `/api${path.startsWith("/") ? "" : "/"}${path}`;
   const r = await fetch(url, { ...init, headers });
-  let body: { code: number; msg: string; data: T } | null = null;
+  let body: { code?: number; msg?: string; data?: T; error?: string; detail?: string } | null = null;
   try { body = await r.json(); } catch {}
-  if (!body) {
-    throw new ApiError(r.status, `unexpected ${r.status}`);
+  if (!body || typeof body.code !== "number") {
+    const msg =
+      (body && (body.msg || body.error || (typeof body.detail === "string" ? body.detail : undefined))) ||
+      `unexpected ${r.status}`;
+    throw new ApiError(r.status, String(msg));
   }
   if (body.code !== 0) {
     if (body.code === 401 && typeof window !== "undefined") {
       clearSession();
     }
-    throw new ApiError(body.code, body.msg);
+    throw new ApiError(body.code, body.msg || body.error || `unexpected ${r.status}`);
   }
-  return body.data;
+  return body.data as T;
 }
 
 // Convenience wrappers
@@ -102,12 +105,20 @@ export async function apiBinary(
 
   const url = path.startsWith("/api/") ? path : `/api${path.startsWith("/") ? "" : "/"}${path}`;
   const r = await fetch(url, { ...init, headers });
+  const ct = (r.headers.get("content-type") || "").toLowerCase();
+  // Preview errors are CareConnect envelopes (HTTP 200, code !== 0) or raw
+  // JSON 500s from TTS. Never treat those as a WAV blob.
+  if (ct.includes("application/json")) {
+    let j: { code?: number; msg?: string; error?: string; detail?: string } = {};
+    try { j = await r.json(); } catch { /* ignore */ }
+    const msg = j.msg || j.error || (typeof j.detail === "string" ? j.detail : "") || `unexpected ${r.status}`;
+    throw new ApiError(typeof j.code === "number" ? j.code : r.status, msg);
+  }
   if (!r.ok) {
-    // Try to parse a JSON error body, fall back to status text.
     let msg = `unexpected ${r.status}`;
     try {
-      const j: { msg?: string } = await r.json();
-      if (j.msg) msg = j.msg;
+      const j: { msg?: string; error?: string; detail?: string } = await r.json();
+      msg = j.msg || j.error || (typeof j.detail === "string" ? j.detail : "") || msg;
     } catch { /* ignore */ }
     throw new ApiError(r.status, msg);
   }
