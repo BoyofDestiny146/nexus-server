@@ -155,3 +155,11 @@ docker compose restart api
 ```
 
 Rollback = set `TAG=<previous>` in `.env`, `docker compose up -d`.
+
+Do **not** copy `deploy/docker-compose.yml` over an existing Orin
+`/mnt/xiaozhi/nexus-deploy/docker-compose.yml` (production Caddy is 80/443;
+this repo still has 18180/18443). Patch only the web init copy with:
+
+```sh
+python3 deploy/scripts/ensure_web_volume.py /mnt/xiaozhi/nexus-deploy/docker-compose.yml
+```
