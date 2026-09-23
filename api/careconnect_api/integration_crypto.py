@@ -1,8 +1,9 @@
-"""Fernet (AES-128-CBC + HMAC, i.e. authenticated encryption) for Revel keys.
+"""Fernet (AES-128-CBC + HMAC) for credentials we must retrieve later.
 
-CareConnect inbound secrets are hashed with bcrypt (see auth.hash_password)
-and never stored here. This module is only for credentials we must retrieve
-later (Revel API key).
+CareConnect inbound auth uses bcrypt (see auth.hash_password). The same
+plaintext is also Fernet-encrypted into ``secret_enc`` so Nexus can PUSH
+assessments with X-Client-Secret. Revel stores only Fernet ciphertext.
+Never return either form from GET/list handlers.
 """
 from __future__ import annotations
 

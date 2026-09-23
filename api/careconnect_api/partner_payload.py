@@ -1,10 +1,7 @@
-"""Reusable partner payloads for CareConnect (and later Revel / Calendar / push).
+"""Reusable partner payloads for CareConnect GET, ingest, and outbound push.
 
-Outbound push is not implemented. Routes and future push jobs must call
-``build_client_assessment_payload`` instead of assembling JSON inline.
-
-The payload never includes ``ai_agent.id``, Watcher MAC, integration row ids,
-bcrypt hashes, or Revel ciphertext.
+Outbound POST uses this same dict. The payload never includes ``ai_agent.id``,
+Watcher MAC, integration row ids, bcrypt hashes, or Revel ciphertext.
 """
 from __future__ import annotations
 

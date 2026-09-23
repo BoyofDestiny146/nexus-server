@@ -235,7 +235,7 @@ async def create_careconnect(
             provider=PROVIDER_CARECONNECT,
             public_id=public_id,
             secret_hash=hash_password(secret),
-            secret_enc=None,
+            secret_enc=encrypt_secret(secret),
             secret_hint=secret_hint(secret),
             status="connected",
             created_at=_now(),
@@ -281,6 +281,7 @@ async def rotate_careconnect(
 
     secret = new_careconnect_secret()
     row.secret_hash = hash_password(secret)
+    row.secret_enc = encrypt_secret(secret)
     row.secret_hint = secret_hint(secret)
     row.updated_at = _now()
     try:

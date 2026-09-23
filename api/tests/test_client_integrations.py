@@ -131,10 +131,13 @@ async def test_careconnect_create_returns_secret_once_and_stores_hash(
         )
     ).scalar_one()
     assert row.public_id == data["publicId"]
-    assert row.secret_enc is None
     assert row.secret_hash
     assert verify_password(secret, row.secret_hash)
     assert secret not in (row.secret_hash or "")
+    from careconnect_api.integration_crypto import decrypt_secret
+    assert row.secret_enc
+    assert decrypt_secret(row.secret_enc) == secret
+    assert secret not in row.secret_enc
     # logs must not contain the plaintext secret
     assert secret not in caplog.text
 

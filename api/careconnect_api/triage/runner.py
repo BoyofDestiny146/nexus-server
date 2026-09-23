@@ -263,6 +263,12 @@ async def run_for_agent(
     db.add(row)
     await db.commit()
     await db.refresh(row)
+    try:
+        from ..partner_push import push_assessment_best_effort
+
+        await push_assessment_best_effort(db, agent_id, row)
+    except Exception:
+        log.warning("careconnect push raised after persist")
     return row
 
 

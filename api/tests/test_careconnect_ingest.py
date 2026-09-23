@@ -1,0 +1,283 @@
+"""CareConnect ingest POST + best-effort outbound push."""
+from __future__ import annotations
+
+import json
+import logging
+from datetime import date, datetime
+from decimal import Decimal
+
+import httpx
+import pytest
+import pytest_asyncio
+from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from careconnect_api.auth import ROLE_ROOT, hash_password, issue_token
+from careconnect_api.models import AiMedicalAssessment, SysUser
+from careconnect_api.partner_auth import AUTH_FAIL_MSG
+from careconnect_api.partner_payload import serialize_client_assessment_payload
+from careconnect_api.partner_push import push_assessment_best_effort
+from careconnect_api.settings import settings
+
+
+_INGEST = "/api/v1/integrations/careconnect/ingest"
+_ASSESSMENT = "/api/v1/integrations/careconnect/assessment"
+_ASSESSMENT_PK = 9100
+
+
+@pytest_asyncio.fixture(scope="function")
+async def admin_token(client: AsyncClient, db_session: AsyncSession) -> str:
+    _ = client
+    user = SysUser(
+        id=1,
+        username="admin1",
+        password=hash_password("AdminPassword1!"),
+        super_admin=ROLE_ROOT,
+        status=1,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    token, _expire = issue_token(user.id, user.username, ROLE_ROOT)
+    return token
+
+
+def _auth(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _partner(public_id: str, secret: str) -> dict[str, str]:
+    return {
+        "X-Client-Id": public_id,
+        "X-Client-Secret": secret,
+        "Content-Type": "application/json",
+    }
+
+
+def _blob(payload) -> str:
+    return json.dumps(payload)
+
+
+async def _onboard(client: AsyncClient, token: str, name: str) -> str:
+    resp = await client.post(
+        "/api/agent/onboard", json={"name": name}, headers=_auth(token)
+    )
+    body = resp.json()
+    assert body["code"] == 0, body
+    return body["data"]["agentId"]
+
+
+async def _connect_cc(client: AsyncClient, token: str, agent_id: str) -> tuple[str, str]:
+    resp = await client.post(
+        f"/api/agent/{agent_id}/integrations/careconnect",
+        headers=_auth(token),
+    )
+    body = resp.json()
+    assert body["code"] == 0, body
+    return body["data"]["publicId"], body["data"]["secret"]
+
+
+async def _seed_assessment(db: AsyncSession, agent_id: str) -> AiMedicalAssessment:
+    global _ASSESSMENT_PK
+    _ASSESSMENT_PK += 1
+    row = AiMedicalAssessment(
+        id=_ASSESSMENT_PK,
+        agent_id=agent_id,
+        for_date=date(2026, 9, 23),
+        risk_level="low",
+        confidence=Decimal("0.600"),
+        concerns_json='["internal-only"]',
+        recommendations_json='["Phone check-in to assess client\'s mental state"]',
+        source_msg_count=3,
+        llm_model="qwen2.5:3b",
+        generated_at=datetime(2026, 9, 23, 9, 25, 0),
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+def _v1_payload(public_id: str, assessment: AiMedicalAssessment) -> dict:
+    return serialize_client_assessment_payload(
+        public_client_id=public_id,
+        assessment=assessment,
+        tz_name="America/Chicago",
+    )
+
+
+@pytest.mark.asyncio
+async def test_valid_ingest_accepted_and_payload_preserved(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, caplog
+):
+    agent_id = await _onboard(client, admin_token, "Ingest Ada")
+    public_id, secret = await _connect_cc(client, admin_token, agent_id)
+    row = await _seed_assessment(db_session, agent_id)
+    payload = _v1_payload(public_id, row)
+    caplog.set_level(logging.INFO)
+
+    resp = await client.post(_INGEST, json=payload, headers=_partner(public_id, secret))
+    body = resp.json()
+    assert body["code"] == 0, body
+    data = body["data"]
+    assert data["schemaVersion"] == payload["schemaVersion"]
+    assert data["clientId"] == public_id
+    assert data["clientId"] != agent_id
+    assert data["date"] == payload["date"]
+    assert data["time"] == payload["time"]
+    assert data["timestamp"] == payload["timestamp"]
+    assert data["assessment"] == payload["assessment"]
+    assert data["recommendations"] == payload["recommendations"]
+    assert agent_id not in _blob(body)
+    assert secret not in _blob(body)
+    assert secret not in caplog.text
+    assert "internal-only" not in _blob(body)
+
+
+@pytest.mark.asyncio
+async def test_ingest_bad_credentials_rejected(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession
+):
+    agent_id = await _onboard(client, admin_token, "Ingest Bea")
+    public_id, secret = await _connect_cc(client, admin_token, agent_id)
+    row = await _seed_assessment(db_session, agent_id)
+    payload = _v1_payload(public_id, row)
+
+    wrong = await client.post(
+        _INGEST, json=payload, headers=_partner(public_id, "not-the-secret")
+    )
+    missing = await client.post(_INGEST, json=payload)
+    unknown = await client.post(
+        _INGEST, json=payload, headers=_partner("Nx-NOEXIST01", secret)
+    )
+    for resp in (wrong, missing, unknown):
+        body = resp.json()
+        assert body["code"] == 401
+        assert body["msg"] == AUTH_FAIL_MSG
+        assert body["data"] is None
+        assert secret not in _blob(body)
+
+
+@pytest.mark.asyncio
+async def test_ingest_requires_matching_nx_client_id(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession
+):
+    a = await _onboard(client, admin_token, "Ingest A")
+    b = await _onboard(client, admin_token, "Ingest B")
+    a_id, a_secret = await _connect_cc(client, admin_token, a)
+    b_id, b_secret = await _connect_cc(client, admin_token, b)
+    row_a = await _seed_assessment(db_session, a)
+    payload_b_id = _v1_payload(b_id, row_a)
+
+    resp = await client.post(
+        _INGEST, json=payload_b_id, headers=_partner(a_id, a_secret)
+    )
+    body = resp.json()
+    assert body["code"] == 400
+    assert "clientId" in body["msg"]
+    assert a not in _blob(body)
+    assert b not in _blob(body)
+    assert a_secret not in _blob(body)
+    assert b_secret not in _blob(body)
+
+
+@pytest.mark.asyncio
+async def test_outbound_push_posts_v1_payload_without_logging_secret(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch, caplog
+):
+    agent_id = await _onboard(client, admin_token, "Push Cara")
+    public_id, secret = await _connect_cc(client, admin_token, agent_id)
+    row = await _seed_assessment(db_session, agent_id)
+    captured: dict = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"code": 0, "msg": "success", "data": captured.get("json")}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            captured["url"] = url
+            captured["json"] = json
+            captured["headers"] = headers
+            return _Resp()
+
+    monkeypatch.setattr(settings, "careconnect_push_enabled", True)
+    monkeypatch.setattr("careconnect_api.partner_push.httpx.AsyncClient", _Client)
+    caplog.set_level(logging.INFO)
+
+    ok = await push_assessment_best_effort(db_session, agent_id, row)
+    assert ok is True
+    assert captured["url"].endswith("/api/v1/integrations/careconnect/ingest")
+    sent = captured["json"]
+    assert sent["clientId"] == public_id
+    assert sent["clientId"] != agent_id
+    assert sent["assessment"]["level"] == "Low"
+    assert sent["assessment"]["confidence"] == 60
+    assert sent["recommendations"] == ["Phone check-in to assess client's mental state"]
+    assert agent_id not in _blob(sent)
+    assert captured["headers"]["X-Client-Id"] == public_id
+    assert captured["headers"]["X-Client-Secret"] == secret
+    assert secret not in caplog.text
+    assert "internal-only" not in _blob(sent)
+
+
+@pytest.mark.asyncio
+async def test_push_failure_keeps_assessment_and_get_readback(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch, caplog
+):
+    agent_id = await _onboard(client, admin_token, "Push Dee")
+    public_id, secret = await _connect_cc(client, admin_token, agent_id)
+    row = await _seed_assessment(db_session, agent_id)
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, *args, **kwargs):
+            raise httpx.ConnectError("destination down")
+
+    monkeypatch.setattr(settings, "careconnect_push_enabled", True)
+    monkeypatch.setattr("careconnect_api.partner_push.httpx.AsyncClient", _Client)
+    caplog.set_level(logging.INFO)
+
+    ok = await push_assessment_best_effort(db_session, agent_id, row)
+    assert ok is False
+    assert secret not in caplog.text
+
+    pk = row.id
+    db_session.expire_all()
+    still = (
+        await db_session.execute(
+            select(AiMedicalAssessment).where(AiMedicalAssessment.id == pk)
+        )
+    ).scalar_one()
+    assert still.risk_level == "low"
+
+    readback = await client.get(_ASSESSMENT, headers=_partner(public_id, secret))
+    body = readback.json()
+    assert body["code"] == 0, body
+    assert body["data"]["clientId"] == public_id
+    assert body["data"]["assessment"]["level"] == "Low"
+    n = (
+        await db_session.execute(
+            select(AiMedicalAssessment).where(AiMedicalAssessment.agent_id == agent_id)
+        )
+    ).scalars().all()
+    assert len(n) == 1
