@@ -34,9 +34,13 @@ COPY --from=builder /app/out /app/out
 
 RUN chown -R appuser:appuser /app
 
-USER appuser
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod 0755 /docker-entrypoint.sh
 
-# The compose command overrides this:
-#   command: ["/bin/sh", "-c", "cp -a /app/out/. /srv/web/ && echo 'web: static export copied'"]
-# Provide a sensible default in case someone runs this image standalone.
+# Must start as root so the entrypoint can chown the named volume (created
+# root:root 755). Do not USER appuser here — that was the Permission denied
+# on cp into /srv/web after a volume recreate.
+ENTRYPOINT ["/docker-entrypoint.sh"]
+
+# Compose overrides this with the copy command; keep a safe default.
 CMD ["/bin/sh", "-c", "echo 'careconnect-web: run with the compose command to copy static files'"]

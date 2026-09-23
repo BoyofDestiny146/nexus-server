@@ -8,6 +8,17 @@ in `deploy/docker-compose.yml`. All images are built **natively on the Jetson**
 
 ## 1. Host prerequisites (one time)
 
+- Extra SSD at `/mnt/xiaozhi` (Docker Root Dir `/mnt/xiaozhi/docker-data`).
+  `containerd` and `docker` must wait for that mount — `After=local-fs.target`
+  is not enough when the fstab line uses `nofail`. Install the drop-ins once:
+
+  ```sh
+  sudo deploy/jetson/install-docker-mount-order.sh --status
+  sudo deploy/jetson/install-docker-mount-order.sh
+  # daemon-reload only; do not prune; do not change data-root.
+  # Next reboot orders: /mnt/xiaozhi → containerd → docker → Nexus (unless-stopped).
+  ```
+
 - Docker + NVIDIA Container Toolkit (ships with JetPack). `daemon.json`:
 
   ```json
