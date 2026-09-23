@@ -141,7 +141,10 @@ sudo nexus-status
    ```
    Rebuild/retags only if the recorded image digests are missing. Do not `docker compose pull` at boot.
 5. **Secrets** are already in volume `nexus_cc-secrets` after restore. Do not `cat` them.
-6. **Chroma** (Watcher vector memory) is **not** a named volume; it lives in the XiaoZhi container at `~/.local/share/careconnect/chroma`. After Nexus is up:
+6. **Chroma** (Watcher vector memory) is **not** a named volume. Production
+   XiaoZhi runs as **root**, so it lives at
+   `/root/.local/share/careconnect/chroma` inside `xiaozhi-server` (not
+   `/opt/xiaozhi-esp32-server/.local/...`). After Nexus is up:
    ```sh
    sudo nexus-restore /mnt/xiaozhi/backups/LAST_GOOD --apply-chroma --confirm RESTORE
    ```
@@ -163,7 +166,7 @@ Timestamped directory `/mnt/xiaozhi/backups/nexus-<UTC>/` mode `0700`:
 - `deploy/` — production compose + `.env` (mode 0600, values not logged)
 - `mariadb/<database>.sql` — `mysqldump --single-transaction`
 - `volumes/nexus_<name>.tar.gz` — `cc-secrets`, `cc-voice`, `xiaozhi-data`, `redis-data`, `caddy-data`, `caddy-config`, `cc-photos`, `xiaozhi-models`
-- `chroma/chroma.tar.gz` if present in the running XiaoZhi container
+- `chroma/chroma.tar.gz` from the live XiaoZhi container (`/root/.local/share/careconnect/chroma`, sqlite online backup)
 - `systemd/` — `nexus.service` + docker/containerd drop-ins
 - `docker/` — image names/tags/digests (not image layers)
 - `ollama/` — tag inventory
@@ -197,3 +200,4 @@ sudo nexus-restore /path/to/backup --confirm RESTORE   # destructive apply
 | `nexus_cc-voice` | per-device voice map |
 | `nexus_cc-photos` | Watcher camera stills |
 | `nexus_web-static` | dashboard export (not backed up) |
+| Chroma (in-container) | `/root/.local/share/careconnect/chroma` | `chroma/chroma.tar.gz` |

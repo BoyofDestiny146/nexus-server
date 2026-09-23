@@ -93,6 +93,22 @@ verify_backup_dir() {
       err=1
     fi
   done
+  if [ -f "$d/chroma/status.txt" ] && grep -q '^present=yes' "$d/chroma/status.txt"; then
+    if [ ! -s "$d/chroma/chroma.tar.gz" ]; then
+      echo "verify: chroma existed at backup time but chroma/chroma.tar.gz is missing" >&2
+      err=1
+    elif ! tar -tzf "$d/chroma/chroma.tar.gz" >/dev/null 2>&1; then
+      echo "verify: chroma/chroma.tar.gz is corrupt" >&2
+      err=1
+    elif ! tar -tzf "$d/chroma/chroma.tar.gz" | grep -q 'chroma.sqlite3'; then
+      echo "verify: chroma/chroma.tar.gz does not contain chroma.sqlite3" >&2
+      err=1
+    fi
+    if [ -f "$d/MANIFEST.txt" ] && ! grep -q -i chroma "$d/MANIFEST.txt"; then
+      echo "verify: MANIFEST.txt has no Chroma entry" >&2
+      err=1
+    fi
+  fi
   [ "$err" = "0" ]
 }
 
@@ -120,7 +136,7 @@ done
 echo "skipped volumes:"
 echo "  - $(nexus_vol mariadb-data)  (logical dump is source of truth)"
 echo "  - $(nexus_vol web-static)    (web one-shot recopies from image)"
-echo "chroma:    xiaozhi-server ~/.local/share/careconnect/chroma if present"
+echo "chroma:    live copy from xiaozhi-server /root/.local/share/careconnect/chroma"
 echo "systemd:   nexus.service + docker/containerd mount-order drop-ins if installed"
 echo "inventory: git SHA, compose images/digests, ollama tags"
 echo "NOT included: Docker image layers (reproducible), Watcher firmware"
@@ -234,16 +250,70 @@ for key in $NEXUS_BACKUP_VOLUME_KEYS; do
   chmod 600 "$out"
 done
 
-# --- chroma from running xiaozhi-server (not a named volume today) ---
+# --- chroma from running xiaozhi-server (container-local, not a named volume) ---
+# Production overlay runs as root, so expanduser("~/.local/...") is
+# /root/.local/share/careconnect/chroma — NOT the xiaozhiuser HOME under
+# /opt/xiaozhi-esp32-server. Missing that path was why earlier backups
+# silently skipped Chroma.
+CHROMA_PY=""
+if [ -f /usr/local/lib/nexus/chroma-archive.py ]; then
+  CHROMA_PY=/usr/local/lib/nexus/chroma-archive.py
+elif [ -f "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/chroma-archive.py" ]; then
+  CHROMA_PY="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/chroma-archive.py"
+fi
+CHROMA_STATUS="$PARTIAL/chroma/status.txt"
 XZ_CID="$(nexus_cid xiaozhi-server || true)"
-if [ -n "${XZ_CID:-}" ]; then
-  if docker exec "$XZ_CID" sh -c 'test -d /opt/xiaozhi-esp32-server/.local/share/careconnect/chroma'; then
-    docker exec "$XZ_CID" tar -C /opt/xiaozhi-esp32-server/.local/share/careconnect -czf - chroma \
-      > "$PARTIAL/chroma/chroma.tar.gz" || true
-    if [ -s "$PARTIAL/chroma/chroma.tar.gz" ]; then
-      chmod 600 "$PARTIAL/chroma/chroma.tar.gz"
-    fi
+if [ -z "${XZ_CID:-}" ]; then
+  printf '%s\n' "present=unavailable" "reason=xiaozhi-server container not running" > "$CHROMA_STATUS"
+elif [ -z "$CHROMA_PY" ]; then
+  echo "chroma-archive.py missing" >&2
+  fail_keep_last_good
+else
+  PYBIN=""
+  if docker exec "$XZ_CID" python3 -c "import sys" >/dev/null 2>&1; then
+    PYBIN=python3
+  elif docker exec "$XZ_CID" python -c "import sys" >/dev/null 2>&1; then
+    PYBIN=python
   fi
+  if [ -z "$PYBIN" ]; then
+    echo "xiaozhi-server has no python interpreter for chroma backup" >&2
+    fail_keep_last_good
+  fi
+  docker cp "$CHROMA_PY" "$XZ_CID:/tmp/nexus-chroma-archive.py" >/dev/null
+  disc_rc=0
+  CHROMA_SRC="$(docker exec "$XZ_CID" "$PYBIN" /tmp/nexus-chroma-archive.py discover)" || disc_rc=$?
+  CHROMA_SRC="$(printf '%s' "$CHROMA_SRC" | tr -d '\r' | tail -n 1)"
+  if [ "$disc_rc" -ne 0 ] && [ "$disc_rc" -ne 2 ]; then
+    echo "chroma discover failed rc=$disc_rc" >&2
+    docker exec "$XZ_CID" rm -f /tmp/nexus-chroma-archive.py /tmp/nexus-chroma.tar.gz >/dev/null 2>&1 || true
+    fail_keep_last_good
+  elif [ "$disc_rc" -eq 2 ] || [ -z "$CHROMA_SRC" ]; then
+    printf '%s\n' \
+      "present=no" \
+      "reason=chroma directory missing or empty" \
+      "searched=/root/.local/share/careconnect/chroma ~/.local/share/careconnect/chroma /opt/xiaozhi-esp32-server/.local/share/careconnect/chroma" \
+      > "$CHROMA_STATUS"
+  else
+    if ! docker exec "$XZ_CID" "$PYBIN" /tmp/nexus-chroma-archive.py archive --path "$CHROMA_SRC" -o /tmp/nexus-chroma.tar.gz; then
+      echo "chroma archive failed" >&2
+      docker exec "$XZ_CID" rm -f /tmp/nexus-chroma-archive.py /tmp/nexus-chroma.tar.gz >/dev/null 2>&1 || true
+      fail_keep_last_good
+    fi
+    if ! docker cp "$XZ_CID:/tmp/nexus-chroma.tar.gz" "$PARTIAL/chroma/chroma.tar.gz" >/dev/null; then
+      echo "chroma docker cp failed" >&2
+      fail_keep_last_good
+    fi
+    chmod 600 "$PARTIAL/chroma/chroma.tar.gz"
+    bytes="$(wc -c < "$PARTIAL/chroma/chroma.tar.gz" | tr -d ' ')"
+    printf '%s\n' \
+      "present=yes" \
+      "source=$CHROMA_SRC" \
+      "archive=chroma/chroma.tar.gz" \
+      "bytes=$bytes" \
+      "method=sqlite3.Connection.backup" \
+      > "$CHROMA_STATUS"
+  fi
+  docker exec "$XZ_CID" rm -f /tmp/nexus-chroma-archive.py /tmp/nexus-chroma.tar.gz >/dev/null 2>&1 || true
 fi
 
 # --- systemd ---
@@ -321,6 +391,13 @@ fi
   echo
   echo "== volumes included =="
   ls -1 "$PARTIAL/volumes"
+  echo
+  echo "== chroma =="
+  if [ -f "$PARTIAL/chroma/status.txt" ]; then
+    cat "$PARTIAL/chroma/status.txt"
+  else
+    echo "present=unknown"
+  fi
   echo
   echo "== ollama =="
   if command -v python3 >/dev/null 2>&1; then

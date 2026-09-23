@@ -23,7 +23,7 @@ check() {
 
 for f in wait-docker.sh nexus-lib.sh nexus-status.sh nexus-start.sh \
   nexus-stop.sh nexus-backup.sh nexus-restore.sh install-nexus-ops.sh \
-  install-docker-mount-order.sh tests/test-nexus-ops.sh; do
+  install-docker-mount-order.sh tests/test-nexus-ops.sh tests/test-chroma-backup.sh; do
   check "bash -n $f" sh -n "$ROOT/$f"
 done
 
@@ -165,6 +165,10 @@ else
   echo "ok  backup --verify rejects empty dump"
 fi
 rm -rf "$fake"
+
+if ! sh "$ROOT/tests/test-chroma-backup.sh"; then
+  fail=1
+fi
 
 if [ "$fail" -ne 0 ]; then
   echo "FAILED" >&2

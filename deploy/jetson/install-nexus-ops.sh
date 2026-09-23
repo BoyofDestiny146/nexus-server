@@ -62,6 +62,7 @@ status_one /usr/local/sbin/nexus-start
 status_one /usr/local/sbin/nexus-stop
 status_one /usr/local/sbin/nexus-backup
 status_one /usr/local/sbin/nexus-restore
+status_one /usr/local/lib/nexus/chroma-archive.py
 status_one /etc/systemd/system/docker.service.d/wait-mnt-xiaozhi.conf
 status_one /etc/systemd/system/containerd.service.d/wait-mnt-xiaozhi.conf
 if command -v systemctl >/dev/null 2>&1 && systemctl cat nexus.service >/dev/null 2>&1; then
@@ -77,7 +78,7 @@ if [ "$(id -u)" != "0" ]; then
   exit 1
 fi
 
-for f in nexus.service wait-docker.sh nexus-lib.sh \
+for f in nexus.service wait-docker.sh nexus-lib.sh chroma-archive.py \
   nexus-status.sh nexus-start.sh nexus-stop.sh \
   nexus-backup.sh nexus-restore.sh; do
   [ -f "$SRC/$f" ] || { echo "missing $SRC/$f" >&2; exit 1; }
@@ -90,6 +91,7 @@ install -d -m 755 /usr/local/sbin
 install -m 644 "$SRC/nexus.service" /etc/systemd/system/nexus.service
 install -m 755 "$SRC/wait-docker.sh" /usr/local/lib/nexus/wait-docker.sh
 install -m 644 "$SRC/nexus-lib.sh" /usr/local/lib/nexus/nexus-lib.sh
+install -m 644 "$SRC/chroma-archive.py" /usr/local/lib/nexus/chroma-archive.py
 install -m 755 "$SRC/nexus-status.sh" /usr/local/sbin/nexus-status
 install -m 755 "$SRC/nexus-start.sh" /usr/local/sbin/nexus-start
 install -m 755 "$SRC/nexus-stop.sh" /usr/local/sbin/nexus-stop

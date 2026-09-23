@@ -108,9 +108,9 @@ if [ "$APPLY_CHROMA" = "1" ]; then
   [ -s "$BACKUP/chroma/chroma.tar.gz" ] || nexus_die "no chroma archive in backup"
   xz="$(nexus_cid xiaozhi-server || true)"
   [ -n "${xz:-}" ] || nexus_die "xiaozhi-server is not running; start Nexus first"
-  echo "nexus-restore: extracting chroma into xiaozhi-server"
-  docker exec "$xz" mkdir -p /opt/xiaozhi-esp32-server/.local/share/careconnect
-  docker exec -i "$xz" tar -C /opt/xiaozhi-esp32-server/.local/share/careconnect -xzf - \
+  echo "nexus-restore: extracting chroma into xiaozhi-server /root/.local/share/careconnect"
+  docker exec "$xz" mkdir -p /root/.local/share/careconnect
+  docker exec -i "$xz" tar -C /root/.local/share/careconnect -xzf - \
     < "$BACKUP/chroma/chroma.tar.gz"
   echo "nexus-restore: chroma applied"
   exit 0
