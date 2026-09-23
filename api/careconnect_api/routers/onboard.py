@@ -13,7 +13,13 @@ Endpoints
 * ``POST /api/device/attach``  — standalone Watcher attach for an existing
   client. Idempotent if the EUI is already bound to the same agent;
   ``force=true`` allows re-binding from another client.
-* ``DELETE /api/device/{deviceId}`` — unbind + hard-delete a Watcher row.
+* ``POST /api/device/{deviceId}/unbind`` — return a Watcher to the unbound
+  pool. Preserves the ``ai_device`` row, client/person, chat, assessments,
+  and reminders. Clears voice config + per-device Chroma and best-effort
+  closes the live XiaoZhi WebSocket.
+* ``DELETE /api/device/{deviceId}`` — hard-delete the Watcher row only.
+  Preserves the client/person. Also clears voice config + per-device
+  Chroma and best-effort closes the live session.
 * ``GET /api/onboard/template``    — empty wizard template (defaults).
 
 RBAC
@@ -260,6 +266,24 @@ def _device_response(dev: AiDevice, *, previous_agent_id: str | None = None) -> 
     return out
 
 
+async def _best_effort_forget_device_runtime(mac: str, device_id: str) -> None:
+    """Voice config + live WS close + per-device Chroma. Never raises."""
+    try:
+        from .voice import forget_device_voice
+
+        await forget_device_voice(mac or "")
+    except Exception as exc:
+        log.warning("voice config cleanup failed device=%s: %s", device_id, exc)
+    try:
+        from ..xiaozhi_control import notify_xiaozhi_session_close
+
+        await notify_xiaozhi_session_close(
+            mac=mac, device_id=device_id, clear_memory=True
+        )
+    except Exception as exc:
+        log.warning("xiaozhi session-close failed device=%s: %s", device_id, exc)
+
+
 # ---------- endpoints ----------
 
 @router.post("/agent/onboard", response_model=None)
@@ -495,17 +519,17 @@ async def attach_device(
     return _device_response(device, previous_agent_id=previous_agent_id)
 
 
-@router.delete("/device/{device_id}", response_model=None)
-async def detach_device(
+@router.post("/device/{device_id}/unbind", response_model=None)
+async def unbind_device(
     device_id: str,
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Hard-delete an ai_device row (no soft-delete column today).
+    """Return a Watcher to the unbound pool without deleting the row.
 
-    RBAC is checked against whichever agent the device is currently bound
-    to. Unbound devices are deletable by any authenticated user (there's
-    nothing client-scoped to gate on).
+    Preserves id, MAC, board, firmware info, telemetry, and the bound
+    client/person. Sets ``agent_id`` and ``alias`` to NULL. Does not delete
+    chat history, assessments, reminders, or ``ai_agent``.
     """
     device = (
         await db.execute(select(AiDevice).where(AiDevice.id == device_id))
@@ -516,6 +540,69 @@ async def detach_device(
     if device.agent_id:
         await assert_can_access_agent(db, user, device.agent_id)
 
+    previous_agent_id = device.agent_id
+    preserved = {
+        "id": device.id,
+        "macAddress": device.mac_address,
+        "board": device.board,
+        "deviceType": device.device_type,
+        "firmwareType": device.firmware_type,
+        "fw": device.fw,
+        "battery": device.battery,
+        "rssi": device.rssi,
+        "clientDeviceId": device.client_device_id,
+    }
+
+    try:
+        device.agent_id = None
+        device.alias = None
+        device.updater = user.id
+        device.update_date = func.now()
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
+    await _best_effort_forget_device_runtime(device.mac_address or "", device_id)
+
+    return {
+        "deviceId": device_id,
+        "eui": device.mac_address,
+        "agentId": None,
+        "previousAgentId": previous_agent_id,
+        "alias": None,
+        "unbound": True,
+        "clientPreserved": True,
+        "preserved": preserved,
+    }
+
+
+@router.delete("/device/{device_id}", response_model=None)
+async def detach_device(
+    device_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Hard-delete an ai_device row (no soft-delete column today).
+
+    RBAC is checked against whichever agent the device is currently bound
+    to. Unbound devices are deletable by any authenticated user (there's
+    nothing client-scoped to gate on). The bound client/person is never
+    deleted. Per-device voice config and Chroma/RAG are cleared; the live
+    XiaoZhi WebSocket is closed best-effort.
+    """
+    device = (
+        await db.execute(select(AiDevice).where(AiDevice.id == device_id))
+    ).scalar_one_or_none()
+    if device is None:
+        raise APIException(404, f"device {device_id} not found")
+
+    if device.agent_id:
+        await assert_can_access_agent(db, user, device.agent_id)
+
+    mac = device.mac_address or ""
+    previous_agent_id = device.agent_id
+
     try:
         await db.execute(delete(AiDevice).where(AiDevice.id == device_id))
         await db.commit()
@@ -523,18 +610,12 @@ async def detach_device(
         await db.rollback()
         raise
 
-    # Best-effort: drop the JSON voice row. Never delete the bound client.
-    try:
-        from .voice import forget_device_voice
-
-        await forget_device_voice(device.mac_address or "")
-    except Exception as exc:
-        log.warning("voice config cleanup after device delete failed: %s", exc)
+    await _best_effort_forget_device_runtime(mac, device_id)
 
     return {
         "deviceId": device_id,
-        "eui": device.mac_address,
-        "agentId": device.agent_id,
+        "eui": mac,
+        "agentId": previous_agent_id,
         "deleted": True,
         "clientPreserved": True,
     }

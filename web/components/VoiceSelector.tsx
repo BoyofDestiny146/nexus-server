@@ -3,14 +3,14 @@
 /**
  * VoiceSelector — per-device voice + speed picker.
  *
- * Renders Voice / Speed / Length, Preview, Delete, Save, plus volume,
- * an editable test message, and Test Voice. Catalog from GET /api/voices;
- * current values from GET /api/device/{mac}/voice.
+ * Renders Voice / Speed / Length, Preview, Unbind, Delete / Reset Device,
+ * Save, plus volume, an editable test message, and Test Voice. Catalog from
+ * GET /api/voices; current values from GET /api/device/{mac}/voice.
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Volume2, Loader2, Check, AlertTriangle, Wifi, Trash2, Play } from "lucide-react";
-import { apiGet, apiPut, apiBinary, apiDelete, ApiError } from "@/lib/api";
+import { Volume2, Loader2, Check, AlertTriangle, Wifi, Trash2, Play, Unlink2 } from "lucide-react";
+import { apiGet, apiPut, apiPost, apiBinary, apiDelete, ApiError } from "@/lib/api";
 import { classNames } from "@/lib/format";
 import { Modal } from "@/components/Modal";
 import type { VoiceCatalog, DeviceVoice } from "@/lib/types";
@@ -28,7 +28,7 @@ type PreviewStatus = "idle" | "loading" | "playing" | "error";
 
 const DEFAULT_TEST_MESSAGE = "Hello, this is a test message from CareConnect.";
 
-export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted }: Props) {
+export function VoiceSelector({ mac, deviceId, agentId, onDeleted }: Props) {
   const [catalog, setCatalog] = useState<VoiceCatalog | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -47,6 +47,10 @@ export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted }: 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const [unbindOpen, setUnbindOpen] = useState(false);
+  const [unbindBusy, setUnbindBusy] = useState(false);
+  const [unbindError, setUnbindError] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
@@ -153,6 +157,20 @@ export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted }: 
     }
   }
 
+  async function handleUnbind() {
+    if (unbindBusy) return;
+    setUnbindBusy(true);
+    setUnbindError(null);
+    try {
+      await apiPost(`/device/${encodeURIComponent(deviceId)}/unbind`);
+      setUnbindOpen(false);
+      onDeleted?.();
+    } catch (e) {
+      setUnbindError(e instanceof ApiError ? e.message : "Unbind failed.");
+      setUnbindBusy(false);
+    }
+  }
+
   async function handleDelete() {
     if (deleteBusy) return;
     setDeleteBusy(true);
@@ -197,7 +215,6 @@ export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted }: 
   const isEdgeVoice = selectedVoiceObj ? !selectedVoiceObj.local : false;
   const previewBusy = previewStatus === "loading" || previewStatus === "playing";
   const bound = Boolean(agentId);
-  const clientLabel = agentName || "this client";
 
   return (
     <div className="flex flex-col gap-3">
@@ -317,14 +334,26 @@ export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted }: 
             {previewStatus === "playing" ? "Playing…" : previewStatus === "loading" ? "Synthesising…" : "Preview"}
           </button>
 
+          {bound && (
+            <button
+              type="button"
+              onClick={() => { setUnbindError(null); setUnbindOpen(true); }}
+              className="btn-secondary text-[12px] px-3 py-1.5 gap-1.5"
+              aria-label="Unbind this Watcher from the current client"
+            >
+              <Unlink2 size={13} strokeWidth={1.75} />
+              Unbind
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => { setDeleteError(null); setDeleteOpen(true); }}
             className="btn-danger text-[12px] px-3 py-1.5 gap-1.5"
-            aria-label="Delete this device"
+            aria-label="Delete / Reset Device"
           >
             <Trash2 size={13} strokeWidth={1.75} />
-            Delete
+            Delete / Reset Device
           </button>
 
           <button
@@ -443,9 +472,44 @@ export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted }: 
       )}
 
       <Modal
+        open={unbindOpen}
+        onClose={() => { if (!unbindBusy) setUnbindOpen(false); }}
+        title="Unbind this Watcher?"
+        size="md"
+        footer={
+          <>
+            <button
+              onClick={() => setUnbindOpen(false)}
+              disabled={unbindBusy}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button onClick={handleUnbind} disabled={unbindBusy} className="btn-primary">
+              {unbindBusy && <Loader2 size={14} className="animate-spin" />}
+              <Unlink2 size={14} />
+              Unbind
+            </button>
+          </>
+        }
+      >
+        <div className="flex items-start gap-3 text-[14px] text-slate-deep leading-relaxed">
+          <Unlink2 size={18} className="text-teal-deep shrink-0 mt-0.5" />
+          <p>
+            This will remove the Watcher from the current client and return it to the unbound device pool. The client/person will not be deleted.
+          </p>
+        </div>
+        {unbindError && (
+          <div className="mt-4 text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">
+            {unbindError}
+          </div>
+        )}
+      </Modal>
+
+      <Modal
         open={deleteOpen}
         onClose={() => { if (!deleteBusy) setDeleteOpen(false); }}
-        title="Delete this Watcher?"
+        title="Delete / Reset Device?"
         size="md"
         footer={
           <>
@@ -459,38 +523,16 @@ export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted }: 
             <button onClick={handleDelete} disabled={deleteBusy} className="btn-danger">
               {deleteBusy && <Loader2 size={14} className="animate-spin" />}
               <Trash2 size={14} />
-              Delete device
+              Delete / Reset Device
             </button>
           </>
         }
       >
         <div className="flex items-start gap-3 text-[14px] text-slate-deep leading-relaxed">
           <AlertTriangle size={18} className="text-risk-urgent shrink-0 mt-0.5" />
-          <div>
-            {bound ? (
-              <>
-                <p>
-                  This Watcher is bound to <span className="font-medium">{clientLabel}</span>.
-                  Deleting removes the device row from CareConnect only.
-                </p>
-                <ul className="mt-3 space-y-1 text-[13px] text-slate-muted">
-                  <li>· The client/person record is <span className="text-slate-deep">kept</span>.</li>
-                  <li>· Chat history and assessments are <span className="text-slate-deep">not</span> deleted.</li>
-                  <li>· If the physical Watcher reconnects later, auto-registration may recreate an unbound device row.</li>
-                </ul>
-              </>
-            ) : (
-              <>
-                <p>
-                  This Watcher is unbound. Deleting removes it from the Devices list.
-                </p>
-                <ul className="mt-3 space-y-1 text-[13px] text-slate-muted">
-                  <li>· No client/person record is affected.</li>
-                  <li>· If the physical Watcher reconnects later, auto-registration may recreate an unbound device row.</li>
-                </ul>
-              </>
-            )}
-          </div>
+          <p>
+            This will remove the Watcher from CareConnect. The client/person will not be deleted. If the Watcher reconnects, Nexus will automatically register it again as an unbound device.
+          </p>
         </div>
         {deleteError && (
           <div className="mt-4 text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">
