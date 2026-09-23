@@ -195,6 +195,8 @@ services:
       CC_INTERNAL_TOKEN_FILE: "/run/secrets/api-internal-token"
       # Ollama LLM (native on Jetson host)
       OLLAMA_BASE_URL: "${CC_OLLAMA_URL:-http://host-gateway:11434}"
+      # Conversational Watcher model. OllamaLLM reads CC_LLM_MODEL before YAML.
+      CC_LLM_MODEL: "${CC_LLM_MODEL:-qwen2.5:3b}"
       # Multi-engine TTS (container service: piper + kokoro + edge)
       PIPER_URL: "http://piper-tts:5500/v1/audio/speech"
       # careconnect voice: 24 kHz device output (natural) + per-device voice config

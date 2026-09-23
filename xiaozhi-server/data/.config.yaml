@@ -476,7 +476,10 @@ LLM:
   OllamaLLM:
     # 定义LLM API类型
     type: ollama
-    model_name: cc-llm  # careconnect: ctx-capped variant, co-resident with cc-vision
+    # Runtime env wins: CC_LLM_MODEL then this YAML value. Production compose
+    # sets CC_LLM_MODEL=qwen2.5:3b so the xiaozhi-data volume copy of this file
+    # does not have to be edited. OLLAMA_BASE_URL overrides base_url.
+    model_name: qwen2.5:3b
     base_url: http://127.0.0.1:11434  # Ollama服务地址
   DifyLLM:
     # 定义LLM API类型

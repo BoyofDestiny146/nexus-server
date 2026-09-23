@@ -1,3 +1,4 @@
+import os
 from config.logger import setup_logging
 from openai import OpenAI
 import json
@@ -7,10 +8,35 @@ TAG = __name__
 logger = setup_logging()
 
 
+def resolve_ollama_model(config_model, environ=None):
+    """Pick the conversational Ollama model: CC_LLM_MODEL > YAML model_name."""
+    env = os.environ if environ is None else environ
+    val = (env.get("CC_LLM_MODEL") or "").strip()
+    if val:
+        return val, "CC_LLM_MODEL"
+    yaml_model = (config_model or "").strip() if isinstance(config_model, str) else None
+    return yaml_model or None, "yaml"
+
+
+def resolve_ollama_base_url(config_url, environ=None):
+    """Pick the Ollama host: OLLAMA_BASE_URL > YAML base_url."""
+    env = os.environ if environ is None else environ
+    val = (env.get("OLLAMA_BASE_URL") or "").strip()
+    if val:
+        return val.rstrip("/"), "OLLAMA_BASE_URL"
+    yaml_url = (config_url or "").strip() if isinstance(config_url, str) else ""
+    return (yaml_url or "http://localhost:11434").rstrip("/"), "yaml"
+
+
 class LLMProvider(LLMProviderBase):
     def __init__(self, config):
-        self.model_name = config.get("model_name")
-        self.base_url = config.get("base_url", "http://localhost:11434")
+        self.model_name, model_source = resolve_ollama_model(config.get("model_name"))
+        self.base_url, url_source = resolve_ollama_base_url(
+            config.get("base_url", "http://localhost:11434")
+        )
+        if self.model_name:
+            config["model_name"] = self.model_name
+        config["base_url"] = self.base_url
         # Initialize OpenAI client with Ollama base URL
         # 如果没有v1，增加v1
         if not self.base_url.endswith("/v1"):
@@ -19,6 +45,11 @@ class LLMProvider(LLMProviderBase):
         self.client = OpenAI(
             base_url=self.base_url,
             api_key="ollama",  # Ollama doesn't need an API key but OpenAI client requires one
+        )
+
+        logger.bind(tag=TAG).info(
+            f"OllamaLLM selected source={model_source} model={self.model_name} "
+            f"base_url_source={url_source} base_url={self.base_url}"
         )
 
         # 检查是否是qwen3模型
