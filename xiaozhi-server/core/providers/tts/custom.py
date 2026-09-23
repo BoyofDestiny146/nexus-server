@@ -2,6 +2,7 @@ import os
 import json
 import uuid
 import requests
+from urllib.parse import urlsplit, urlunsplit
 from config.logger import setup_logging
 from datetime import datetime
 from core.providers.tts.base import TTSProviderBase
@@ -9,10 +10,44 @@ from core.providers.tts.base import TTSProviderBase
 TAG = __name__
 logger = setup_logging()
 
+
+def resolve_custom_tts_url(config_url, environ=None):
+    """Pick the CustomTTS endpoint: CC_TTS_URL > PIPER_URL > YAML ``url``.
+
+    Empty env values are treated as unset so a blank override cannot
+    silently disable TTS. Returns ``(url, source)`` where source is
+    ``CC_TTS_URL``, ``PIPER_URL``, or ``yaml``.
+    """
+    env = os.environ if environ is None else environ
+    for key in ("CC_TTS_URL", "PIPER_URL"):
+        val = (env.get(key) or "").strip()
+        if val:
+            return val, key
+    yaml_url = (config_url or "").strip() if isinstance(config_url, str) else (config_url or None)
+    if yaml_url:
+        return yaml_url, "yaml"
+    return None, "yaml"
+
+
+def safe_tts_url_for_log(url):
+    """Host + path only — drop userinfo, query, and fragment (no secrets)."""
+    if not url:
+        return url
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        return urlunsplit((parts.scheme, host, parts.path, "", ""))
+    except Exception:
+        return "<unparseable>"
+
+
 class TTSProvider(TTSProviderBase):
     def __init__(self, config, delete_audio_file):
         super().__init__(config, delete_audio_file)
-        self.url = config.get("url")
+        yaml_url = config.get("url")
+        self.url, url_source = resolve_custom_tts_url(yaml_url)
         self.method = config.get("method", "GET")
         self.headers = config.get("headers", {})
         self.format = config.get("format", "wav")
@@ -27,6 +62,10 @@ class TTSProvider(TTSProviderBase):
                 raise ValueError("Custom TTS配置参数出错,无法将字符串解析为对象")
         elif not isinstance(self.params, dict):
             raise TypeError("Custom TTS配置参数出错, 请参考配置说明")
+
+        logger.bind(tag=TAG).info(
+            f"CustomTTS endpoint selected source={url_source} url={safe_tts_url_for_log(self.url)}"
+        )
 
     def generate_filename(self):
         return os.path.join(self.output_file, f"tts-{datetime.now().date()}@{uuid.uuid4().hex}.{self.format}")

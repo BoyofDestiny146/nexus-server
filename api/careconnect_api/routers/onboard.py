@@ -39,6 +39,7 @@ import httpx
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Literal
 
@@ -54,6 +55,7 @@ from ..models import (
 )
 from ..rbac import assert_can_access_agent
 from ..settings import settings
+from ..watcher_device import get_watcher_device
 
 
 log = logging.getLogger("onboard")
@@ -317,13 +319,11 @@ async def onboard_agent(
         db.add(agent)
         await db.flush()
 
-        # 2. Optional Watcher bind.
+        # 2. Optional Watcher bind. Lookup must match colon / stripped / case
+        #    variants of an already-registered Watcher (auto-reg stores colon
+        #    MAC). If the row exists, UPDATE it — never INSERT a duplicate PK.
         if normalized_eui is not None:
-            existing = (
-                await db.execute(
-                    select(AiDevice).where(AiDevice.mac_address == normalized_eui)
-                )
-            ).scalar_one_or_none()
+            existing = await get_watcher_device(db, normalized_eui)
 
             if existing is not None:
                 if existing.agent_id and existing.agent_id != agent_id and not force:
@@ -334,13 +334,17 @@ async def onboard_agent(
                         f"{existing.agent_id}; pass ?force=true to re-bind",
                         data={"existingAgentId": existing.agent_id, "deviceId": existing.id},
                     )
-                # Same agent (vanishingly unlikely on a fresh uuid) or force
-                # re-bind: update the existing row.
-                previous_agent_id = existing.agent_id if existing.agent_id != agent_id else None
+                # Unbound, same agent, or force re-bind: update the existing row.
+                # Preserve id, MAC spelling, battery/fw/rssi, client_device_id,
+                # and other metadata. Bind fields only: agent_id, alias if given.
+                previous_agent_id = (
+                    existing.agent_id
+                    if existing.agent_id and existing.agent_id != agent_id
+                    else None
+                )
                 existing.agent_id = agent_id
-                existing.alias = payload.deviceAlias or f"{name}'s Watcher"
-                if payload.clientDeviceId is not None:
-                    existing.client_device_id = payload.clientDeviceId
+                if payload.deviceAlias:
+                    existing.alias = payload.deviceAlias
                 existing.user_id = user.id
                 existing.updater = user.id
                 existing.update_date = func.now()
@@ -376,6 +380,14 @@ async def onboard_agent(
             await db.flush()
 
         await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise APIException(
+            409,
+            f"eui {normalized_eui} already exists as a Watcher; "
+            "retry onboard or pass ?force=true to re-bind",
+            data={"deviceId": _device_id_for(normalized_eui)} if normalized_eui else None,
+        )
     except Exception:
         await db.rollback()
         raise
@@ -412,29 +424,26 @@ async def attach_device(
     if agent_exists is None:
         raise APIException(404, f"agent {payload.agentId} not found")
 
-    existing = (
-        await db.execute(select(AiDevice).where(AiDevice.mac_address == eui))
-    ).scalar_one_or_none()
+    existing = await get_watcher_device(db, eui)
 
     previous_agent_id: str | None = None
     try:
         if existing is not None:
             if existing.agent_id == payload.agentId:
-                # Idempotent same-agent attach — update alias / client id if asked.
-                if payload.alias is not None or payload.clientDeviceId is not None:
-                    if payload.alias is not None:
-                        existing.alias = payload.alias
-                    if payload.clientDeviceId is not None:
-                        existing.client_device_id = payload.clientDeviceId
+                # Idempotent same-agent attach — update alias if asked.
+                # Preserve id, MAC spelling, battery/fw/rssi, client_device_id.
+                if payload.alias is not None:
+                    existing.alias = payload.alias
                     existing.updater = user.id
                     existing.update_date = func.now()
                     await db.commit()
                 return _device_response(existing)
 
-            # Different agent. RBAC: also confirm the user can act on the
-            # currently-bound agent (so a scoped admin can't yank a Watcher
-            # from a client they can't see). force=true is still required.
-            if not payload.force:
+            # Bound to a different agent. Unbound (agent_id NULL) auto-registered
+            # Watchers are attachable without force. force=true is required to
+            # yank a Watcher from another client. RBAC: also confirm the user
+            # can act on the currently-bound agent.
+            if existing.agent_id and not payload.force:
                 raise APIException(
                     409,
                     f"eui {eui} is already bound to agent {existing.agent_id}; "
@@ -447,8 +456,6 @@ async def attach_device(
             existing.agent_id = payload.agentId
             if payload.alias is not None:
                 existing.alias = payload.alias
-            if payload.clientDeviceId is not None:
-                existing.client_device_id = payload.clientDeviceId
             existing.user_id = user.id
             existing.updater = user.id
             existing.update_date = func.now()
@@ -473,6 +480,14 @@ async def attach_device(
             await db.flush()
 
         await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise APIException(
+            409,
+            f"eui {eui} already exists as a Watcher; retry attach "
+            "or pass force=true to re-bind",
+            data={"deviceId": _device_id_for(eui)},
+        )
     except Exception:
         await db.rollback()
         raise
