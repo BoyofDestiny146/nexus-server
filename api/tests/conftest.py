@@ -34,6 +34,10 @@ os.environ.setdefault("CC_INTERNAL_TOKEN_FILE", str(Path(_TMP_CFG) / "internal-t
 os.environ.setdefault("CC_CLIENT_API_KEY_FILE", str(Path(_TMP_CFG) / "client-api-key"))
 os.environ.setdefault("CC_ADMIN1_PASSWORD", _TEST_ADMIN1_PW)
 os.environ.setdefault("CC_ADMIN2_PASSWORD", _TEST_ADMIN2_PW)
+os.environ.setdefault(
+    "CC_INTEGRATION_SECRET_KEY_FILE",
+    str(Path(_TMP_CFG) / "integration-secret-key"),
+)
 
 # Write the API key into the secret file so the settings can read it.
 _api_key_path = Path(_TMP_CFG) / "client-api-key"
@@ -43,6 +47,13 @@ _api_key_path.chmod(0o600)
 # Write a dummy DB password (not used by SQLite, but settings reads it eagerly).
 _db_pw_path = Path(_TMP_CFG) / "mariadb-app"
 _db_pw_path.write_text("test-db-password")
+
+# Fernet key for Revel credential tests (must exist before settings import).
+from cryptography.fernet import Fernet  # noqa: E402
+
+_int_key_path = Path(_TMP_CFG) / "integration-secret-key"
+_int_key_path.write_text(Fernet.generate_key().decode())
+_int_key_path.chmod(0o600)
 
 from careconnect_api.models import Base  # noqa: E402
 from careconnect_api.db import get_db  # noqa: E402

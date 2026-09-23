@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     admin1_password_file: Path = CFG_DIR / "admin1-password"
     admin2_password_file: Path = CFG_DIR / "admin2-password"
 
+    # Fernet key for per-client Revel (and future) credentials. Docker mounts
+    # cc-secrets at /run/secrets; compose sets CC_INTEGRATION_SECRET_KEY_FILE.
+    # CareConnect secrets are bcrypt-hashed and do not use this key.
+    integration_secret_key_file: Path = CFG_DIR / "integration-secret-key"
+
     # ----- derived (lazy) -----
     @property
     def db_password(self) -> str:

@@ -142,3 +142,23 @@ export interface DeviceVoice {
   response_length?: string;
   volume?: number;
 }
+
+export type IntegrationProvider = "careconnect" | "revel" | "directed_logic";
+export type IntegrationStatus = "connected" | "disconnected" | "coming_soon";
+
+export interface ClientIntegration {
+  provider: IntegrationProvider;
+  label: string;
+  status: IntegrationStatus;
+  connected: boolean;
+  comingSoon?: boolean;
+  publicId?: string | null;
+  secretMasked?: boolean;
+  secret?: string;
+  secretOnce?: boolean;
+  secretHint?: string | null;
+  maskedKey?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  replaced?: boolean;
+}

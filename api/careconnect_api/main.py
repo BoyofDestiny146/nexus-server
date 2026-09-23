@@ -109,6 +109,7 @@ from .routers import ws as ws_router  # noqa: E402
 from .routers import public as public_router  # noqa: E402
 from .routers import health as health_router  # noqa: E402
 from .routers import voice as voice_router  # noqa: E402
+from .routers import integrations as integrations_router  # noqa: E402
 
 app.include_router(user_router.router, prefix="/api")
 app.include_router(agent_router.router, prefix="/api")
@@ -124,6 +125,7 @@ app.include_router(public_router.router, prefix="/api")
 app.include_router(ws_router.router)
 app.include_router(health_router.router, prefix="/api")
 app.include_router(voice_router.router, prefix="/api")
+app.include_router(integrations_router.router, prefix="/api")
 
 
 @app.get("/readyz")

@@ -15,6 +15,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -138,3 +139,33 @@ class AdminClientAccess(Base):
     agent_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     granted_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     granted_by: Mapped[int] = mapped_column(BigInteger)
+
+
+class ClientIntegration(Base):
+    """Per-client partner identity (CareConnect, Revel, later V6G / sensors).
+
+    Belongs to ``ai_agent``, not to a Watcher. Disconnect deletes this row only.
+    """
+
+    __tablename__ = "cc_client_integration"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "provider", name="uq_cc_integration_agent_provider"),
+        UniqueConstraint("public_id", name="uq_cc_integration_public_id"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    agent_id: Mapped[str] = mapped_column(String(32), index=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    public_id: Mapped[str | None] = mapped_column(String(32))
+    secret_hash: Mapped[str | None] = mapped_column(String(128))
+    secret_enc: Mapped[str | None] = mapped_column(Text)
+    secret_hint: Mapped[str | None] = mapped_column(String(8))
+    status: Mapped[str] = mapped_column(String(16), default="connected")
+    metadata_json: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

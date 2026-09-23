@@ -26,7 +26,8 @@ RUN pip install --no-cache-dir --upgrade pip \
         "httpx>=0.27" \
         "redis>=5.0" \
         "apscheduler>=3.10" \
-        "pyyaml>=6.0"
+        "pyyaml>=6.0" \
+        "cryptography>=42.0"
 
 # ── Runtime image ─────────────────────────────────────────────────────────────
 FROM python:3.12-slim

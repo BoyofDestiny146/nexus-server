@@ -58,6 +58,7 @@ from ..models import (
     AiAgentChatHistory,
     AiDevice,
     AiMedicalAssessment,
+    ClientIntegration,
 )
 from ..rbac import assert_can_access_agent
 from ..settings import settings
@@ -630,6 +631,7 @@ async def delete_agent(
     """Hard-delete a client (root only). Cascades:
 
       • cc_admin_client_access  — removes RBAC grants pointing at this agent
+      • cc_client_integration    — removes partner credentials (not Watchers)
       • ai_medical_assessment    — removes triage rows
       • ai_agent_chat_history    — removes conversation rows
       • ai_device                — UNBINDS (sets agent_id=NULL) so the
@@ -672,6 +674,9 @@ async def delete_agent(
         # 2. cascade deletes (RBAC grants, triage, history)
         await db.execute(
             delete(AdminClientAccess).where(AdminClientAccess.agent_id == agent_id)
+        )
+        await db.execute(
+            delete(ClientIntegration).where(ClientIntegration.agent_id == agent_id)
         )
         await db.execute(
             delete(AiMedicalAssessment).where(AiMedicalAssessment.agent_id == agent_id)

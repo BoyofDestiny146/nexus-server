@@ -21,6 +21,7 @@ import { Sparkline } from "@/components/Sparkline";
 import { EmptyState } from "@/components/EmptyState";
 import { Modal } from "@/components/Modal";
 import { ToastProvider, useToast } from "@/components/Toast";
+import { ClientIntegrations } from "@/components/ClientIntegrations";
 
 
 
@@ -367,6 +368,7 @@ function PatientDetailView({ id }: { id: string }) {
             >
               <Cpu size={14} /> Attach device
             </button>
+            <ClientIntegrations agentId={id} />
             {isRoot && (
               <button
                 onClick={() => setDeleteOpen(true)}

@@ -113,6 +113,7 @@ services:
       CC_JWT_SECRET_FILE: "/run/secrets/api-jwt-secret"
       CC_INTERNAL_TOKEN_FILE: "/run/secrets/api-internal-token"
       CC_CLIENT_API_KEY_FILE: "/run/secrets/api-client-key"
+      CC_INTEGRATION_SECRET_KEY_FILE: "/run/secrets/integration-secret-key"
       # Admin passwords MUST come from .env so the two admin accounts are
       # deterministic across container recreate/reboot. Without these the seed
       # auto-generates a new password into the container's EPHEMERAL fs each
@@ -407,7 +408,7 @@ volumes:
   cc-voice:
     driver: local
   # Secret files: mariadb-root, mariadb-app, api-jwt-secret, api-internal-token,
-  #               api-client-key, mqtt-signature-key
+  #               api-client-key, mqtt-signature-key, integration-secret-key
   # Populated by scripts/gen-secrets.sh before first compose up.
   cc-secrets:
     driver: local
