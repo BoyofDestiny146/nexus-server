@@ -3,6 +3,12 @@ import json
 from config.logger import setup_logging
 from core.utils.util import check_model_key
 from core.providers.vllm.base import VLLMProviderBase
+from core.utils.ollama_env import (
+    ON_DEMAND_KEEP_ALIVE,
+    looks_like_local_ollama,
+    ollama_v1_url,
+    resolve_ollama_base_url,
+)
 
 TAG = __name__
 logger = setup_logging()
@@ -16,6 +22,14 @@ class VLLMProvider(VLLMProviderBase):
             self.base_url = config.get("base_url")
         else:
             self.base_url = config.get("url")
+
+        if looks_like_local_ollama(self.base_url):
+            resolved, src = resolve_ollama_base_url(self.base_url)
+            self.base_url = ollama_v1_url(resolved)
+            logger.bind(tag=TAG).info(
+                f"OllamaVLLM selected source={src} model={self.model_name} "
+                f"base_url={self.base_url}"
+            )
 
         param_defaults = {
             "max_tokens": (500, int),
@@ -59,9 +73,14 @@ class VLLMProvider(VLLMProviderBase):
                 }
             ]
 
-            response = self.client.chat.completions.create(
-                model=self.model_name, messages=messages, stream=False
-            )
+            create_kwargs = {
+                "model": self.model_name,
+                "messages": messages,
+                "stream": False,
+            }
+            if looks_like_local_ollama(self.base_url):
+                create_kwargs["extra_body"] = {"keep_alive": ON_DEMAND_KEEP_ALIVE}
+            response = self.client.chat.completions.create(**create_kwargs)
 
             return response.choices[0].message.content
 

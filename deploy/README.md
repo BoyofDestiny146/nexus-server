@@ -31,7 +31,9 @@ in `deploy/docker-compose.yml`. All images are built **natively on the Jetson**
   sudo cp deploy/jetson/Modelfile.cc-llm deploy/jetson/Modelfile.cc-vision /etc/careconnect/cc-models/
   ollama create cc-llm    -f /etc/careconnect/cc-models/Modelfile.cc-llm
   ollama create cc-vision -f /etc/careconnect/cc-models/Modelfile.cc-vision
-  # keep all models resident + warm them on boot
+  ollama pull qwen2.5:3b
+  # Pin only qwen2.5:3b. Do NOT use OLLAMA_KEEP_ALIVE=-1 (that keeps every
+  # loaded model Forever and OOMs chat on the Orin).
   sudo install -m 644 deploy/jetson/ollama-cc-memory.conf /etc/systemd/system/ollama.service.d/cc-memory.conf
   sudo install -m 755 deploy/jetson/cc-warm-models.sh /usr/local/bin/cc-warm-models.sh
   sudo install -m 644 deploy/jetson/ollama-warm.service /etc/systemd/system/ollama-warm.service

@@ -17,6 +17,8 @@ def test_repo_compose_declares_cc_llm_model():
     assert "CC_LLM_MODEL:" in text
     assert "qwen2.5:3b" in text
     assert "OLLAMA_BASE_URL:" in text
+    assert "PIPER_URL:" in text
+    assert "piper-tts:5500/v1/audio/speech" in text
 
 
 def test_patcher_inserts_after_ollama_url():
@@ -33,12 +35,25 @@ services:
     new, action = patch_compose(snippet)
     assert action == "inserted"
     assert 'CC_LLM_MODEL: "${CC_LLM_MODEL:-qwen2.5:3b}"' in new
-    # Only one insertion, still after OLLAMA_BASE_URL, before PIPER_URL.
     env = new.split("environment:", 1)[1].split("  api:", 1)[0]
     assert env.index("OLLAMA_BASE_URL") < env.index("CC_LLM_MODEL") < env.index("PIPER_URL")
     again, action2 = patch_compose(new)
     assert action2 == "unchanged"
     assert again == new
+
+
+def test_patcher_inserts_missing_piper_url():
+    snippet = """
+services:
+  xiaozhi-server:
+    environment:
+      OLLAMA_BASE_URL: "${CC_OLLAMA_URL:-http://host-gateway:11434}"
+      CC_LLM_MODEL: "${CC_LLM_MODEL:-qwen2.5:3b}"
+"""
+    new, action = patch_compose(snippet)
+    assert action == "inserted"
+    assert 'PIPER_URL: "http://piper-tts:5500/v1/audio/speech"' in new
+    assert new.count("PIPER_URL:") == 1
 
 
 def test_patcher_does_not_touch_other_services():

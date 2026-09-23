@@ -1,31 +1,16 @@
-import os
 from config.logger import setup_logging
 from openai import OpenAI
 import json
 from core.providers.llm.base import LLMProviderBase
+from core.utils.ollama_env import (
+    CHAT_KEEP_ALIVE,
+    ollama_v1_url,
+    resolve_ollama_base_url,
+    resolve_ollama_model,
+)
 
 TAG = __name__
 logger = setup_logging()
-
-
-def resolve_ollama_model(config_model, environ=None):
-    """Pick the conversational Ollama model: CC_LLM_MODEL > YAML model_name."""
-    env = os.environ if environ is None else environ
-    val = (env.get("CC_LLM_MODEL") or "").strip()
-    if val:
-        return val, "CC_LLM_MODEL"
-    yaml_model = (config_model or "").strip() if isinstance(config_model, str) else None
-    return yaml_model or None, "yaml"
-
-
-def resolve_ollama_base_url(config_url, environ=None):
-    """Pick the Ollama host: OLLAMA_BASE_URL > YAML base_url."""
-    env = os.environ if environ is None else environ
-    val = (env.get("OLLAMA_BASE_URL") or "").strip()
-    if val:
-        return val.rstrip("/"), "OLLAMA_BASE_URL"
-    yaml_url = (config_url or "").strip() if isinstance(config_url, str) else ""
-    return (yaml_url or "http://localhost:11434").rstrip("/"), "yaml"
 
 
 class LLMProvider(LLMProviderBase):
@@ -37,10 +22,7 @@ class LLMProvider(LLMProviderBase):
         if self.model_name:
             config["model_name"] = self.model_name
         config["base_url"] = self.base_url
-        # Initialize OpenAI client with Ollama base URL
-        # 如果没有v1，增加v1
-        if not self.base_url.endswith("/v1"):
-            self.base_url = f"{self.base_url}/v1"
+        self.base_url = ollama_v1_url(self.base_url)
 
         self.client = OpenAI(
             base_url=self.base_url,
@@ -80,7 +62,11 @@ class LLMProvider(LLMProviderBase):
             if kwargs.get("max_tokens"):
                 _extra["max_tokens"] = int(kwargs["max_tokens"])
             responses = self.client.chat.completions.create(
-                model=self.model_name, messages=dialogue, stream=True, **_extra
+                model=self.model_name,
+                messages=dialogue,
+                stream=True,
+                extra_body={"keep_alive": CHAT_KEEP_ALIVE},
+                **_extra,
             )
             is_active = True
             # 用于处理跨chunk的标签
@@ -156,6 +142,7 @@ class LLMProvider(LLMProviderBase):
                 messages=dialogue,
                 stream=True,
                 tools=functions,
+                extra_body={"keep_alive": CHAT_KEEP_ALIVE},
                 **_extra,
             )
 

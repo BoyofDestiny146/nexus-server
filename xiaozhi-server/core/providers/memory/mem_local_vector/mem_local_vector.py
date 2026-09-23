@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from ..base import MemoryProviderBase, logger
+from core.utils.ollama_env import ON_DEMAND_KEEP_ALIVE, resolve_ollama_base_url
 
 TAG = __name__
 
@@ -81,7 +82,9 @@ class MemoryProvider(MemoryProviderBase):
             cfg.get("path", DEFAULT_PERSIST_PATH)
         )
         self.embed_model = cfg.get("embedding_model", DEFAULT_EMBED_MODEL)
-        self.ollama_base = cfg.get("ollama_base_url", DEFAULT_OLLAMA_URL).rstrip("/")
+        yaml_url = cfg.get("ollama_base_url", DEFAULT_OLLAMA_URL)
+        self.ollama_base, ollama_src = resolve_ollama_base_url(yaml_url)
+        self._embed_keep_alive = ON_DEMAND_KEEP_ALIVE
         try:
             self.top_k = int(cfg.get("top_k", DEFAULT_TOP_K))
         except (TypeError, ValueError):
@@ -96,7 +99,8 @@ class MemoryProvider(MemoryProviderBase):
             self._chroma = chromadb.PersistentClient(path=self.persist_path)
             logger.bind(tag=TAG).info(
                 f"mem_local_vector ready: path={self.persist_path}, "
-                f"model={self.embed_model}, top_k={self.top_k}"
+                f"model={self.embed_model}, top_k={self.top_k}, "
+                f"ollama_source={ollama_src} ollama={self.ollama_base}"
             )
         except Exception as e:
             logger.bind(tag=TAG).error(
@@ -134,7 +138,11 @@ class MemoryProvider(MemoryProviderBase):
         try:
             r = requests.post(
                 f"{self.ollama_base}/api/embeddings",
-                json={"model": self.embed_model, "prompt": text},
+                json={
+                    "model": self.embed_model,
+                    "prompt": text,
+                    "keep_alive": self._embed_keep_alive,
+                },
                 timeout=timeout,
             )
             r.raise_for_status()

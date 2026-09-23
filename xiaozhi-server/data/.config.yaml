@@ -270,7 +270,8 @@ Memory:
     # Persistent Chroma directory (lives outside ~/careconnect/ so it survives
     # deploys + isn't bundled). Tracked in reference_external_state.md.
     path: ~/.local/share/careconnect/chroma
-    # Ollama embedding endpoint and model.
+    # Ollama embedding endpoint. Runtime OLLAMA_BASE_URL overrides this so the
+    # xiaozhi-data volume copy of 127.0.0.1 does not have to be edited.
     ollama_base_url: http://127.0.0.1:11434
     embedding_model: nomic-embed-text
     # Number of past snippets to inject at connection time.
