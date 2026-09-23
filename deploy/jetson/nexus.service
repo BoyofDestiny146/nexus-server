@@ -1,0 +1,39 @@
+# Nexus CareConnect stack — Jetson Orin production unit
+#
+# Requires /mnt/xiaozhi (Docker Root Dir + compose files live there).
+# Starts after the SSD mount, containerd, and Docker. ExecStartPre waits
+# until `docker info` actually works — unit After= is not enough on a slow disk.
+#
+# Start:  docker compose -p nexus up -d --pull never --no-build
+# Stop:   docker compose -p nexus stop   (NOT down: keep networks, volumes,
+#         images, secrets, database files)
+#
+# Do not pull, build, or prune at boot. Do not start Ollama (native + ollama-warm).
+# Production compose and Caddy ports live in /mnt/xiaozhi/nexus-deploy — this
+# unit never copies the git compose file over that directory.
+[Unit]
+Description=Nexus CareConnect stack (compose project nexus)
+Documentation=file:///mnt/xiaozhi/nexus-server/deploy/jetson/NEXUS_RUNBOOK.md
+RequiresMountsFor=/mnt/xiaozhi
+Requires=docker.service
+After=mnt-xiaozhi.mount containerd.service docker.service
+# Stop this unit before the SSD unmounts and before dockerd goes away.
+Before=umount.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/mnt/xiaozhi/nexus-deploy
+Environment=COMPOSE_PROJECT_NAME=nexus
+Environment=DOCKER_CLI_HINTS=false
+# Do NOT EnvironmentFile=.env — systemd would expose admin/tunnel secrets.
+TimeoutStartSec=180
+# MariaDB + Redis AOF + Caddy need a clean flush. compose stop --timeout 120
+# plus slack for systemd itself.
+TimeoutStopSec=240
+ExecStartPre=/usr/local/lib/nexus/wait-docker.sh
+ExecStart=/usr/bin/docker compose -p nexus --project-directory /mnt/xiaozhi/nexus-deploy up -d --pull never --no-build
+ExecStop=/usr/bin/docker compose -p nexus --project-directory /mnt/xiaozhi/nexus-deploy stop --timeout 120
+
+[Install]
+WantedBy=multi-user.target

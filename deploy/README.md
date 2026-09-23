@@ -163,3 +163,11 @@ this repo still has 18180/18443). Patch only the web init copy with:
 ```sh
 python3 deploy/scripts/ensure_web_volume.py /mnt/xiaozhi/nexus-deploy/docker-compose.yml
 ```
+
+## 7. Production boot, backup, restore (Orin)
+
+Boot order, `nexus.service`, `nexus-status` / `nexus-backup` / `nexus-restore`,
+and disaster recovery live in [`jetson/NEXUS_RUNBOOK.md`](jetson/NEXUS_RUNBOOK.md).
+Install the package with `sudo deploy/jetson/install-nexus-ops.sh` **after**
+review; that script enables the unit but does not start, stop, or reboot
+Nexus and does not overwrite production compose.
