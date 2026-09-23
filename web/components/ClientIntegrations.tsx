@@ -17,6 +17,18 @@ interface Props {
 }
 
 type Panel = "careconnect" | "revel" | "google_calendar" | null;
+type Copied = "credentials" | "endpoint" | null;
+
+const DEFAULT_PORTAL = "https://care.nexus.warehouse-13.biz";
+const DEFAULT_ASSESSMENT_PATH = "/api/v1/integrations/careconnect/assessment";
+
+function portalOf(row: ClientIntegration | undefined): string {
+  return (row?.portal || DEFAULT_PORTAL).replace(/\/$/, "");
+}
+
+function assessmentEndpointOf(row: ClientIntegration | undefined): string {
+  return row?.assessmentEndpoint || `${portalOf(row)}${DEFAULT_ASSESSMENT_PATH}`;
+}
 
 export function ClientIntegrations({ agentId }: Props) {
   const [items, setItems] = useState<ClientIntegration[] | null>(null);
@@ -26,7 +38,7 @@ export function ClientIntegrations({ agentId }: Props) {
   const [revelKey, setRevelKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<Copied>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -52,7 +64,7 @@ export function ClientIntegrations({ agentId }: Props) {
   function openPanel(next: Panel) {
     setErr(null);
     setBusy(false);
-    setCopied(false);
+    setCopied(null);
     setConfirmDisconnect(false);
     setRevelKey("");
     setOnceSecret(null);
@@ -138,15 +150,29 @@ export function ClientIntegrations({ agentId }: Props) {
   }
 
   async function copyCredentials() {
+    const portal = portalOf(cc);
     const publicId = cc?.publicId ?? "";
-    const secret = onceSecret ?? "";
-    const text = secret
-      ? `Integration ID: ${publicId}\nSecret: ${secret}`
-      : `Integration ID: ${publicId}`;
+    const endpoint = assessmentEndpointOf(cc);
+    const lines = [
+      `Portal: ${portal}`,
+      `Client ID: ${publicId}`,
+    ];
+    if (onceSecret) {
+      lines.push(`API Secret: ${onceSecret}`);
+    }
+    lines.push(`Assessment endpoint: ${endpoint}`);
     try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setCopied("credentials");
+      setTimeout(() => setCopied(null), 1500);
+    } catch { /* ignore */ }
+  }
+
+  async function copyEndpoint() {
+    try {
+      await navigator.clipboard.writeText(assessmentEndpointOf(cc));
+      setCopied("endpoint");
+      setTimeout(() => setCopied(null), 1500);
     } catch { /* ignore */ }
   }
 
@@ -244,11 +270,15 @@ export function ClientIntegrations({ agentId }: Props) {
             {cc?.connected ? (
               <>
                 <div>
-                  <div className="label">Integration ID</div>
+                  <div className="label">Portal</div>
+                  <code className="font-mono text-[13px] break-all">{portalOf(cc)}</code>
+                </div>
+                <div>
+                  <div className="label">Client ID</div>
                   <code className="font-mono text-[13px]">{cc.publicId}</code>
                 </div>
                 <div>
-                  <div className="label">Secret</div>
+                  <div className="label">API Secret</div>
                   {onceSecret ? (
                     <code className="font-mono text-[13px] break-all">{onceSecret}</code>
                   ) : (
@@ -258,9 +288,16 @@ export function ClientIntegrations({ agentId }: Props) {
                     <p className="helper mt-1">Copy this secret now. It will not be shown again.</p>
                   )}
                 </div>
+                <div>
+                  <div className="label">Assessment endpoint</div>
+                  <code className="font-mono text-[13px] break-all">{assessmentEndpointOf(cc)}</code>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" className="btn-secondary text-[12px]" onClick={copyCredentials}>
-                    <Copy size={12} /> {copied ? "Copied" : "Copy credentials"}
+                    <Copy size={12} /> {copied === "credentials" ? "Copied" : "Copy credentials"}
+                  </button>
+                  <button type="button" className="btn-secondary text-[12px]" onClick={copyEndpoint}>
+                    <Copy size={12} /> {copied === "endpoint" ? "Copied" : "Copy endpoint"}
                   </button>
                   <button type="button" className="btn-secondary text-[12px]" disabled={busy} onClick={rotateSecret}>
                     {busy ? <Loader2 size={12} className="animate-spin" /> : <KeyRound size={12} />}

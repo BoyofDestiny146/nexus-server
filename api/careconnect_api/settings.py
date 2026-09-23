@@ -98,7 +98,19 @@ class Settings(BaseSettings):
     # CareConnect secrets are bcrypt-hashed and do not use this key.
     integration_secret_key_file: Path = CFG_DIR / "integration-secret-key"
 
+    # Public CareConnect portal (connection package + partner API base).
+    portal_base_url: str = "https://care.nexus.warehouse-13.biz"
+    # Used when serializing partner assessment timestamps. Matches compose TZ.
+    tz: str = "America/Chicago"
+
     # ----- derived (lazy) -----
+    @property
+    def careconnect_assessment_url(self) -> str:
+        return (
+            f"{self.portal_base_url.rstrip('/')}"
+            "/api/v1/integrations/careconnect/assessment"
+        )
+
     @property
     def db_password(self) -> str:
         return self.db_password_file.read_text().strip()

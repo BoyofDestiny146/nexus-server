@@ -110,6 +110,7 @@ from .routers import public as public_router  # noqa: E402
 from .routers import health as health_router  # noqa: E402
 from .routers import voice as voice_router  # noqa: E402
 from .routers import integrations as integrations_router  # noqa: E402
+from .routers import partner as partner_router  # noqa: E402
 
 app.include_router(user_router.router, prefix="/api")
 app.include_router(agent_router.router, prefix="/api")
@@ -120,6 +121,8 @@ app.include_router(onboard_router.router, prefix="/api")
 app.include_router(internal_router.router, prefix="/api")
 # Public client-facing API — X-API-Key auth, no JWT/RBAC. Mounted at /api/v1/*.
 app.include_router(public_router.router, prefix="/api")
+# CareConnect partner M2M — X-Client-Id + X-Client-Secret. Not dashboard JWT.
+app.include_router(partner_router.router, prefix="/api")
 # WebSocket router mounted at root — /ws/* is intentionally outside /api so
 # the envelope middleware skips it (websocket upgrades aren't JSON anyway).
 app.include_router(ws_router.router)

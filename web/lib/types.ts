@@ -158,6 +158,8 @@ export interface ClientIntegration {
   secretOnce?: boolean;
   secretHint?: string | null;
   maskedKey?: string | null;
+  portal?: string | null;
+  assessmentEndpoint?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
   replaced?: boolean;

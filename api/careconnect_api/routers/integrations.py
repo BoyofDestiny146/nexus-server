@@ -34,6 +34,7 @@ from ..envelope import APIException
 from ..integration_crypto import encrypt_secret, secret_hint
 from ..models import AiAgent, ClientIntegration
 from ..rbac import assert_can_access_agent
+from ..settings import settings
 
 
 log = logging.getLogger("integrations")
@@ -103,8 +104,15 @@ async def _allocate_public_id(db: AsyncSession) -> str:
     raise APIException(500, "could not allocate a unique integration id")
 
 
-def _careconnect_public(row: ClientIntegration) -> dict[str, Any]:
+def _careconnect_connection_urls() -> dict[str, str]:
     return {
+        "portal": settings.portal_base_url.rstrip("/"),
+        "assessmentEndpoint": settings.careconnect_assessment_url,
+    }
+
+
+def _careconnect_public(row: ClientIntegration) -> dict[str, Any]:
+    out = {
         "provider": PROVIDER_CARECONNECT,
         "label": "CareConnect",
         "status": row.status or "connected",
@@ -114,6 +122,8 @@ def _careconnect_public(row: ClientIntegration) -> dict[str, Any]:
         "createdAt": _iso(row.created_at),
         "updatedAt": _iso(row.updated_at),
     }
+    out.update(_careconnect_connection_urls())
+    return out
 
 
 def _revel_public(row: ClientIntegration) -> dict[str, Any]:
@@ -132,7 +142,7 @@ def _revel_public(row: ClientIntegration) -> dict[str, Any]:
 
 
 def _empty_careconnect() -> dict[str, Any]:
-    return {
+    out = {
         "provider": PROVIDER_CARECONNECT,
         "label": "CareConnect",
         "status": "disconnected",
@@ -140,6 +150,8 @@ def _empty_careconnect() -> dict[str, Any]:
         "publicId": None,
         "secretMasked": True,
     }
+    out.update(_careconnect_connection_urls())
+    return out
 
 
 def _empty_revel() -> dict[str, Any]:
