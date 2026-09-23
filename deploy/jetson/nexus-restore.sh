@@ -128,11 +128,7 @@ fi
 HELPER="$(nexus_helper_image)" || nexus_die "no local helper image; will not pull"
 
 echo "nexus-restore: stopping Nexus"
-if systemctl cat nexus.service >/dev/null 2>&1; then
-  systemctl stop nexus.service || true
-else
-  nexus_compose stop --timeout 120 || true
-fi
+nexus_do_stop || true
 
 echo "nexus-restore: restoring $NEXUS_DEPLOY (not the git repo)"
 mkdir -p "$NEXUS_DEPLOY"

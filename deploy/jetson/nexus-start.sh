@@ -1,5 +1,6 @@
 #!/bin/sh
-# sudo nexus-start — start nexus.service, wait for health, print status.
+# sudo nexus-start — start nexus.service, wait for the same health checks
+# as nexus-status, then print status.
 # --force restarts the unit (re-runs compose up -d --pull never).
 set -eu
 
@@ -40,39 +41,19 @@ else
   systemctl start nexus.service
 fi
 
-echo "nexus-start: waiting for API / XiaoZhi / Caddy health..."
-i=0
+echo "nexus-start: waiting for API / XiaoZhi / Piper / Caddy / web / DB health..."
 ready=0
-while [ "$i" -lt 60 ]; do
-  api_ok=0
-  xz_ok=0
-  caddy_ok=0
-  _api="$(nexus_cid api || true)"
-  if [ -n "${_api:-}" ] && docker exec "$_api" wget -qO- -T 4 http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
-    api_ok=1
-  fi
-  if curl -sf -m 4 http://127.0.0.1:8003/xiaozhi/ota/ >/dev/null 2>&1; then
-    xz_ok=1
-  fi
-  if curl -sf -m 4 http://127.0.0.1:2019/config/ >/dev/null 2>&1; then
-    caddy_ok=1
-  fi
-  if [ "$api_ok" = "1" ] && [ "$xz_ok" = "1" ] && [ "$caddy_ok" = "1" ]; then
-    ready=1
-    break
-  fi
-  i=$((i + 1))
-  sleep 2
-done
-
-if [ "$ready" != "1" ]; then
-  echo "nexus-start: timed out waiting for health (see status below)" >&2
+if nexus_wait_ready; then
+  ready=1
+else
+  echo "nexus-start: timed out waiting for health (see checks below)" >&2
+  nexus_stack_ready_report >&2 || true
 fi
 
-STATUS=""
-if [ -x /usr/local/sbin/nexus-status ]; then
+STATUS="${NEXUS_STATUS_BIN:-}"
+if [ -z "$STATUS" ] && [ -x /usr/local/sbin/nexus-status ]; then
   STATUS=/usr/local/sbin/nexus-status
-elif [ -x "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/nexus-status.sh" ]; then
+elif [ -z "$STATUS" ] && [ -x "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/nexus-status.sh" ]; then
   STATUS="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/nexus-status.sh"
 fi
 if [ -n "$STATUS" ]; then

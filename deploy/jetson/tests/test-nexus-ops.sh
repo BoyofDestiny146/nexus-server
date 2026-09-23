@@ -23,7 +23,8 @@ check() {
 
 for f in wait-docker.sh nexus-lib.sh nexus-status.sh nexus-start.sh \
   nexus-stop.sh nexus-backup.sh nexus-restore.sh install-nexus-ops.sh \
-  install-docker-mount-order.sh tests/test-nexus-ops.sh tests/test-chroma-backup.sh; do
+  install-docker-mount-order.sh tests/test-nexus-ops.sh tests/test-chroma-backup.sh \
+  tests/test-start-stop.sh; do
   check "bash -n $f" sh -n "$ROOT/$f"
 done
 
@@ -38,6 +39,7 @@ if command -v shellcheck >/dev/null 2>&1; then
     "$ROOT/nexus-stop.sh" \
     "$ROOT/nexus-backup.sh" \
     "$ROOT/nexus-restore.sh" \
+    "$ROOT/nexus-lib.sh" \
     "$ROOT/install-nexus-ops.sh" \
     "$ROOT/install-docker-mount-order.sh"; then
     echo "ok  shellcheck"
@@ -123,7 +125,9 @@ else
 fi
 check "wait-docker never pulls" grep -qv 'docker pull' "$ROOT/wait-docker.sh"
 check "start helper uses systemctl" grep -q 'systemctl start nexus' "$ROOT/nexus-start.sh"
-check "stop helper uses systemctl stop" grep -q 'systemctl stop nexus' "$ROOT/nexus-stop.sh"
+check "stop uses systemd when active" grep -q 'systemctl stop nexus.service' "$ROOT/nexus-lib.sh"
+check "stop uses compose stop fallback" grep -q 'stop --timeout 120' "$ROOT/nexus-lib.sh"
+check "stop never compose down" grep -qv 'compose .* down' "$ROOT/nexus-lib.sh"
 check "installer does not copy compose over production" \
   grep -q 'will NOT' "$ROOT/install-nexus-ops.sh"
 check "installer does not start nexus" grep -qv 'systemctl start nexus' "$ROOT/install-nexus-ops.sh"
@@ -167,6 +171,9 @@ fi
 rm -rf "$fake"
 
 if ! sh "$ROOT/tests/test-chroma-backup.sh"; then
+  fail=1
+fi
+if ! sh "$ROOT/tests/test-start-stop.sh"; then
   fail=1
 fi
 

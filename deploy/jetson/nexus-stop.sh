@@ -1,6 +1,7 @@
 #!/bin/sh
-# sudo nexus-stop — same graceful stop as `systemctl stop nexus`.
-# Does not shut down the Jetson.
+# sudo nexus-stop — graceful compose stop. Does not shut down the Jetson.
+# If nexus.service is inactive, systemd will not run ExecStop; we then stop
+# compose directly. Never remove networks or volumes.
 set -eu
 
 LIB=""
@@ -15,13 +16,4 @@ fi
 # shellcheck disable=SC1090
 . "$LIB"
 nexus_need_root
-
-if systemctl cat nexus.service >/dev/null 2>&1; then
-  echo "nexus-stop: systemctl stop nexus"
-  systemctl stop nexus.service
-else
-  echo "nexus-stop: nexus.service not installed; compose stop --timeout 120"
-  [ -f "$NEXUS_COMPOSE_FILE" ] || nexus_die "$NEXUS_COMPOSE_FILE missing"
-  nexus_compose stop --timeout 120
-fi
-echo "nexus-stop: containers stopped; volumes, networks, images, secrets retained"
+nexus_do_stop

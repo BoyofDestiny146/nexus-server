@@ -21,7 +21,7 @@ Ollama/Qwen stay native (`ollama.service` + `ollama-warm.service`). `nexus.servi
 ```sh
 sudo nexus-status
 sudo nexus-backup                 # /mnt/xiaozhi/backups/nexus-<UTC>/
-sudo nexus-stop                   # same as systemctl stop nexus
+sudo nexus-stop                   # systemd stop if active, else compose stop; verifies containers are down
 sudo nexus-start                  # start unit, wait for health, print status
 sudo nexus-start --force          # systemctl restart nexus (still --pull never)
 ```
@@ -39,7 +39,7 @@ sudo systemctl stop nexus         # or: sudo nexus-stop
 sudo shutdown -h now
 ```
 
-`nexus.service` uses `docker compose -p nexus stop`, not `down`. Networks, named volumes, MariaDB files, secrets, images, and compose stay on disk.
+`nexus.service` uses `docker compose -p nexus stop`, not `down`. Networks, named volumes, MariaDB files, secrets, images, and compose stay on disk. `sudo nexus-stop` stops through systemd when the unit is **active**; if the unit is inactive but containers are still Up, it runs the same `compose stop --timeout 120` and fails unless they are actually down (`web` Exited (0) is OK).
 
 `RequiresMountsFor=/mnt/xiaozhi` keeps the SSD mounted until Nexus has stopped.
 
