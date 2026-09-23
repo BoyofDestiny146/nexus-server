@@ -63,6 +63,13 @@
       hover:bg-bone-soft hover:border-slate-line/100 transition
       disabled:opacity-50 disabled:pointer-events-none;
   }
+  /* Same size/radius/border/fill as .btn-secondary, without the disabled
+     opacity fade that washes the chrome out. Text is muted; no hover. */
+  .btn-secondary-inactive {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-card
+      border border-slate-line bg-white text-slate-muted font-medium tracking-tight
+      cursor-not-allowed pointer-events-none;
+  }
   .btn-ghost {
     @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-card
       text-slate-deep hover:bg-slate-line/40 transition;

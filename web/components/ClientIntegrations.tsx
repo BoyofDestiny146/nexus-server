@@ -1,14 +1,14 @@
 "use client";
 
 /**
- * Client Detail — CareConnect / Revel / Directed Logic integration hub.
+ * Client Detail — CareConnect / Revel / Google Calendar / Directed Logic hub.
  * Identity belongs to the person (ai_agent), not a Watcher.
+ * Google Calendar is UI-only this pass (placeholder modal, no backend).
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Copy, KeyRound, Loader2, Unlink2 } from "lucide-react";
+import { AlertTriangle, Calendar, Copy, KeyRound, Loader2, Unlink2 } from "lucide-react";
 import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api";
-import { classNames } from "@/lib/format";
 import { Modal } from "@/components/Modal";
 import type { ClientIntegration } from "@/lib/types";
 
@@ -16,7 +16,7 @@ interface Props {
   agentId: string;
 }
 
-type Panel = "careconnect" | "revel" | null;
+type Panel = "careconnect" | "revel" | "google_calendar" | null;
 
 export function ClientIntegrations({ agentId }: Props) {
   const [items, setItems] = useState<ClientIntegration[] | null>(null);
@@ -48,7 +48,6 @@ export function ClientIntegrations({ agentId }: Props) {
 
   const cc = items?.find((i) => i.provider === "careconnect");
   const revel = items?.find((i) => i.provider === "revel");
-  const directed = items?.find((i) => i.provider === "directed_logic");
 
   function openPanel(next: Panel) {
     setErr(null);
@@ -183,7 +182,15 @@ export function ClientIntegrations({ agentId }: Props) {
       </button>
       <button
         type="button"
-        className="btn-secondary w-full opacity-60 cursor-not-allowed"
+        className="btn-secondary w-full"
+        onClick={() => openPanel("google_calendar")}
+      >
+        <Calendar size={14} aria-hidden="true" />
+        Connect to Google Calendar
+      </button>
+      <button
+        type="button"
+        className="btn-secondary-inactive w-full"
         disabled
         title="Coming soon"
         aria-disabled="true"
@@ -191,7 +198,7 @@ export function ClientIntegrations({ agentId }: Props) {
         Connect to Directed Logic
       </button>
       <div className="text-[11px] text-slate-muted px-1">
-        {directed?.comingSoon ? "Directed Logic — Coming soon" : "Coming soon"}
+        Directed Logic — Coming soon
       </div>
 
       <Modal
@@ -352,6 +359,22 @@ export function ClientIntegrations({ agentId }: Props) {
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={panel === "google_calendar"}
+        onClose={() => setPanel(null)}
+        title="Google Calendar"
+        size="md"
+        footer={
+          <button type="button" className="btn-secondary" onClick={() => setPanel(null)}>
+            Close
+          </button>
+        }
+      >
+        <p className="text-[14px] text-slate-deep leading-relaxed">
+          Google Calendar is not connected for this client yet. Calendar sync is not available in this release.
+        </p>
       </Modal>
     </>
   );
