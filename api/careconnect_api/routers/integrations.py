@@ -61,6 +61,15 @@ def new_careconnect_secret() -> str:
     return secrets.token_urlsafe(32)
 
 
+def _optional_secret_enc(secret: str) -> str | None:
+    """Fernet copy for later external push. Not required for GET/dashboard."""
+    try:
+        return encrypt_secret(secret)
+    except Exception:
+        log.warning("careconnect secret_enc not stored (encryption unavailable)")
+        return None
+
+
 def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt is not None else None
 
@@ -235,7 +244,7 @@ async def create_careconnect(
             provider=PROVIDER_CARECONNECT,
             public_id=public_id,
             secret_hash=hash_password(secret),
-            secret_enc=encrypt_secret(secret),
+            secret_enc=_optional_secret_enc(secret),
             secret_hint=secret_hint(secret),
             status="connected",
             created_at=_now(),
@@ -281,7 +290,7 @@ async def rotate_careconnect(
 
     secret = new_careconnect_secret()
     row.secret_hash = hash_password(secret)
-    row.secret_enc = encrypt_secret(secret)
+    row.secret_enc = _optional_secret_enc(secret)
     row.secret_hint = secret_hint(secret)
     row.updated_at = _now()
     try:

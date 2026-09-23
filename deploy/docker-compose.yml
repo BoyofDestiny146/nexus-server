@@ -130,6 +130,9 @@ services:
       # careconnect voice: TTS server + shared per-device voice config (see xiaozhi-server)
       CC_TTS_URL: "http://piper-tts:5500"
       CC_VOICE_CONFIG_PATH: "/data/voice_config.json"
+      # Empty = no outbound CareConnect HTTP. Set only to a *separate* receiver;
+      # same-host URLs (care.nexus.warehouse-13.biz) are skipped.
+      CC_CARECONNECT_INGEST_URL: "${CC_CARECONNECT_INGEST_URL:-}"
     volumes:
       - cc-secrets:/run/secrets:ro
       - cc-voice:/data

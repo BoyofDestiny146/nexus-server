@@ -93,19 +93,17 @@ class Settings(BaseSettings):
     admin1_password_file: Path = CFG_DIR / "admin1-password"
     admin2_password_file: Path = CFG_DIR / "admin2-password"
 
-    # Fernet key for per-client Revel (and future) credentials. Docker mounts
-    # cc-secrets at /run/secrets; compose sets CC_INTEGRATION_SECRET_KEY_FILE.
-    # CareConnect secrets are bcrypt-hashed and do not use this key.
+    # Fernet key for Revel credentials and optional CareConnect secret_enc
+    # (outbound push only). GET/dashboard CareConnect auth uses bcrypt hash.
     integration_secret_key_file: Path = CFG_DIR / "integration-secret-key"
 
-    # Public CareConnect portal (connection package + partner API base).
+    # Public CareConnect portal (connection package + partner GET base).
     portal_base_url: str = "https://care.nexus.warehouse-13.biz"
     # Used when serializing partner assessment timestamps. Matches compose TZ.
     tz: str = "America/Chicago"
-    # Optional override for the ingest POST URL. Empty → portal + /api/v1/.../ingest.
-    # Not stored per client; the portal host is shared.
+    # Outbound push destination. Empty (default) = no outbound HTTP.
+    # Set only to a *separate* CareConnect receiver. Same-host URLs are skipped.
     careconnect_ingest_url: str = ""
-    careconnect_push_enabled: bool = True
     careconnect_push_timeout_s: float = 5.0
 
     # ----- derived (lazy) -----
@@ -114,15 +112,6 @@ class Settings(BaseSettings):
         return (
             f"{self.portal_base_url.rstrip('/')}"
             "/api/v1/integrations/careconnect/assessment"
-        )
-
-    @property
-    def careconnect_ingest_url_resolved(self) -> str:
-        if self.careconnect_ingest_url.strip():
-            return self.careconnect_ingest_url.rstrip("/")
-        return (
-            f"{self.portal_base_url.rstrip('/')}"
-            "/api/v1/integrations/careconnect/ingest"
         )
 
     @property

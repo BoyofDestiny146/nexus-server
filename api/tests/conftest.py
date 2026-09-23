@@ -38,8 +38,7 @@ os.environ.setdefault(
     "CC_INTEGRATION_SECRET_KEY_FILE",
     str(Path(_TMP_CFG) / "integration-secret-key"),
 )
-# Partner push POSTs to the public portal; tests must not hit the network.
-os.environ.setdefault("CC_CARECONNECT_PUSH_ENABLED", "false")
+# Partner outbound push is off unless CC_CARECONNECT_INGEST_URL is set.
 
 # Write the API key into the secret file so the settings can read it.
 _api_key_path = Path(_TMP_CFG) / "client-api-key"

@@ -1,14 +1,14 @@
 """Best-effort outbound CareConnect ingest push.
 
-Nexus POSTs ``build_client_assessment_payload`` JSON to the portal ingest
-URL after an assessment is committed. Redis is pub/sub only; APScheduler is
-the daily triage cron. There is no retry/job queue — a failed push is logged
-and the ``ai_medical_assessment`` row remains the source of truth.
+Outbound HTTP runs only when ``CC_CARECONNECT_INGEST_URL`` is set to a host
+that is not this Nexus/CareConnect stack. Redis is pub/sub only; there is no
+retry queue. ``ai_medical_assessment`` remains the source of truth.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy import select
@@ -23,6 +23,34 @@ from .settings import settings
 log = logging.getLogger("partner_push")
 
 PROVIDER_CARECONNECT = "careconnect"
+
+# Hosts that are this deployment, never an external CareConnect receiver.
+_SELF_HOSTS = {
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "api",
+    "care.nexus.warehouse-13.biz",
+}
+
+
+def _hostname(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    return (parsed.hostname or "").lower().rstrip(".")
+
+
+def is_self_push_url(dest: str, portal_base: str | None = None) -> bool:
+    """True when dest is this local CareConnect/Nexus host."""
+    dest_host = _hostname(dest)
+    if not dest_host:
+        return True
+    if dest_host in _SELF_HOSTS:
+        return True
+    portal_host = _hostname(portal_base if portal_base is not None else settings.portal_base_url)
+    return bool(portal_host) and dest_host == portal_host
 
 
 def _secret_for_push(row: ClientIntegration) -> str | None:
@@ -52,8 +80,9 @@ async def push_assessment_best_effort(
     agent_id: str,
     assessment: AiMedicalAssessment,
 ) -> bool:
-    """POST the v1 payload. Never raises. Returns True only on envelope code 0."""
-    if not settings.careconnect_push_enabled:
+    """POST the v1 payload to an external receiver only. Never raises."""
+    dest = (settings.careconnect_ingest_url or "").strip().rstrip("/")
+    if not dest:
         return False
     public_id = "-"
     try:
@@ -61,6 +90,9 @@ async def push_assessment_best_effort(
         if row is None or (row.status or "connected") != "connected" or not row.public_id:
             return False
         public_id = row.public_id
+        if is_self_push_url(dest):
+            log.info("careconnect self-push skipped public_id=%s", public_id)
+            return False
         secret = _secret_for_push(row)
         if not secret:
             log.info("careconnect push skipped public_id=%s reason=no-secret", public_id)
@@ -69,7 +101,6 @@ async def push_assessment_best_effort(
             public_client_id=public_id,
             assessment=assessment,
         )
-        url = settings.careconnect_ingest_url_resolved
         timeout = httpx.Timeout(settings.careconnect_push_timeout_s)
         headers = {
             "X-Client-Id": public_id,
@@ -78,7 +109,7 @@ async def push_assessment_best_effort(
             "Accept": "application/json",
         }
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, json=payload, headers=headers)
+            resp = await client.post(dest, json=payload, headers=headers)
         try:
             body = resp.json()
         except Exception:
