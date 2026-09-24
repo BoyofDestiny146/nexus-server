@@ -12,7 +12,7 @@ import { classNames } from "@/lib/format";
 const NAV = [
   { href: "/patients", label: "Clients",       icon: Users },
   { href: "/devices",  label: "Devices",        icon: Cpu },
-  { href: "/health",   label: "Health Checks",  icon: HeartPulse },
+  { href: "/health",   label: "System Status",  icon: HeartPulse },
   { href: "/admins",   label: "Admins",          icon: Shield, rootOnly: true },
   { href: "/settings", label: "Settings",        icon: Settings },
 ];

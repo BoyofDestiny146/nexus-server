@@ -162,9 +162,10 @@ function DeviceTableRow({ d, onDeleted }: { d: DeviceRow; onDeleted: () => void 
             )}
             aria-expanded={voiceOpen}
             aria-controls={`voice-panel-${d.id}`}
+            aria-label="Control"
           >
             <Volume2 size={12} strokeWidth={1.75} />
-            Voice
+            Control
             {voiceOpen ? (
               <ChevronUp size={11} strokeWidth={1.75} />
             ) : (
@@ -232,9 +233,10 @@ function DeviceCard({ d, onDeleted }: { d: DeviceRow; onDeleted: () => void }) {
           )}
           aria-expanded={voiceOpen}
           aria-controls={`voice-panel-card-${d.id}`}
+          aria-label="Control"
         >
           <Volume2 size={12} strokeWidth={1.75} />
-          Voice
+          Control
           {voiceOpen ? (
             <ChevronUp size={11} strokeWidth={1.75} />
           ) : (
@@ -298,7 +300,7 @@ function DevicesView() {
       <PageHeader
         kicker="Hardware"
         title="Devices"
-        subtitle="Every Watcher registered on this server. The Last connected column shows online (≤5 min) at a glance. Use the Voice button on each row to configure voice and speed."
+        subtitle="Every Watcher registered on this server. The Last connected column shows online (≤5 min) at a glance. Use the Control button on each row to configure voice, speed, and other device settings."
       />
 
       <section className="px-8 md:px-12 py-8">
@@ -349,7 +351,7 @@ function DevicesView() {
                   <th className="text-left font-medium px-5 py-3">Device ID</th>
                   <th className="text-left font-medium px-5 py-3">Board</th>
                   <th className="text-left font-medium px-5 py-3">Last connected</th>
-                  <th className="text-left font-medium px-5 py-3">Voice</th>
+                  <th className="text-left font-medium px-5 py-3">Control</th>
                 </tr>
               </thead>
               <tbody>
