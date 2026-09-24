@@ -4,6 +4,7 @@ from config.logger import setup_logging
 from core.api.ota_handler import OTAHandler
 from core.api.vision_handler import VisionHandler
 from core.api.session_close_handler import handle_session_close
+from core.api.speak_handler import handle_device_speak
 
 TAG = __name__
 
@@ -62,6 +63,7 @@ class SimpleHttpServer:
                     web.post(
                         "/internal/device/session-close", handle_session_close
                     ),
+                    web.post("/internal/device/speak", handle_device_speak),
                 ]
             )
             app["websocket_server"] = self.websocket_server

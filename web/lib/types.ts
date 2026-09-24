@@ -143,8 +143,16 @@ export interface DeviceVoice {
   volume?: number;
 }
 
-export type IntegrationProvider = "careconnect" | "revel" | "directed_logic";
+export type IntegrationProvider = "careconnect" | "revel" | "directed_logic" | "google_calendar";
 export type IntegrationStatus = "connected" | "disconnected" | "coming_soon";
+
+export interface CalendarEventPreview {
+  title: string;
+  start: string;
+  end?: string | null;
+  allDay?: boolean;
+  location?: string;
+}
 
 export interface ClientIntegration {
   provider: IntegrationProvider;
@@ -163,4 +171,12 @@ export interface ClientIntegration {
   createdAt?: string | null;
   updatedAt?: string | null;
   replaced?: boolean;
+  access?: "read_only";
+  calendarHost?: string | null;
+  lastSuccessfulSync?: string | null;
+  lastSyncError?: string | null;
+  nextEvent?: CalendarEventPreview | null;
+  upcoming?: CalendarEventPreview[];
+  ok?: boolean;
+  eventCount?: number;
 }

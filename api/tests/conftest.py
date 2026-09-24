@@ -38,6 +38,8 @@ os.environ.setdefault(
     "CC_INTEGRATION_SECRET_KEY_FILE",
     str(Path(_TMP_CFG) / "integration-secret-key"),
 )
+# Do not run the 60s calendar poller during tests if FastAPI lifespan starts.
+os.environ.setdefault("CC_GCAL_POLL_SECONDS", "86400")
 # Partner outbound push is off unless CC_CARECONNECT_INGEST_URL is set.
 
 # Write the API key into the secret file so the settings can read it.

@@ -1,6 +1,6 @@
-"""Per-client partner integrations (CareConnect, Revel; Directed Logic is UI-only).
+"""Per-client partner integrations (CareConnect, Revel, Google Calendar).
 
-Mounted at /api by main.py. Identity belongs to ``ai_agent``, not a Watcher.
+Directed Logic is UI-only. Identity belongs to ``ai_agent``, not a Watcher.
 
 Endpoints
 ---------
@@ -10,12 +10,17 @@ POST   /api/agent/{agentId}/integrations/careconnect/rotate
 DELETE /api/agent/{agentId}/integrations/careconnect
 PUT    /api/agent/{agentId}/integrations/revel
 DELETE /api/agent/{agentId}/integrations/revel
+PUT    /api/agent/{agentId}/integrations/google-calendar
+POST   /api/agent/{agentId}/integrations/google-calendar/test
+DELETE /api/agent/{agentId}/integrations/google-calendar
 
 Secrets never go in logs. CareConnect plaintext is returned only on
-create/rotate. Revel plaintext is never returned after save.
+create/rotate. Revel / Google Calendar plaintext is never returned after save.
+Google Calendar is read-only (private iCal URL). Nexus never writes events.
 """
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 import string
@@ -29,9 +34,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import CurrentUser, get_current_user, hash_password
+from ..calendar_poller import load_meta
 from ..db import get_db
 from ..envelope import APIException
-from ..integration_crypto import encrypt_secret, secret_hint
+from ..gcal_ical import (
+    CalendarError,
+    calendar_host,
+    fetch_ics,
+    next_and_upcoming,
+    parse_ics,
+    validate_ical_url,
+)
+from ..integration_crypto import decrypt_secret, encrypt_secret, secret_hint
 from ..models import AiAgent, ClientIntegration
 from ..rbac import assert_can_access_agent
 from ..settings import settings
@@ -44,6 +58,7 @@ router = APIRouter(prefix="/agent", tags=["integrations"])
 PROVIDER_CARECONNECT = "careconnect"
 PROVIDER_REVEL = "revel"
 PROVIDER_DIRECTED_LOGIC = "directed_logic"
+PROVIDER_GOOGLE_CALENDAR = "google_calendar"
 
 _NX_ALPHABET = string.ascii_uppercase + string.digits
 _PUBLIC_ID_ATTEMPTS = 12
@@ -184,9 +199,60 @@ def _directed_logic() -> dict[str, Any]:
     }
 
 
+def _empty_google_calendar() -> dict[str, Any]:
+    return {
+        "provider": PROVIDER_GOOGLE_CALENDAR,
+        "label": "Google Calendar",
+        "status": "disconnected",
+        "connected": False,
+        "access": "read_only",
+        "calendarHost": None,
+        "lastSuccessfulSync": None,
+        "nextEvent": None,
+        "upcoming": [],
+    }
+
+
+def _google_calendar_public(row: ClientIntegration) -> dict[str, Any]:
+    meta = load_meta(row)
+    host = meta.get("calendarHost") or ""
+    if not isinstance(host, str):
+        host = ""
+    upcoming = meta.get("upcoming") if isinstance(meta.get("upcoming"), list) else []
+    next_event = meta.get("nextEvent") if isinstance(meta.get("nextEvent"), dict) else None
+    return {
+        "provider": PROVIDER_GOOGLE_CALENDAR,
+        "label": "Google Calendar",
+        "status": row.status or "connected",
+        "connected": True,
+        "access": "read_only",
+        "calendarHost": host or None,
+        "lastSuccessfulSync": meta.get("lastSuccessfulSync"),
+        "lastSyncError": meta.get("lastSyncError"),
+        "nextEvent": next_event,
+        "upcoming": upcoming,
+        "createdAt": _iso(row.created_at),
+        "updatedAt": _iso(row.updated_at),
+    }
+
+
 def _assert_no_secret_fields(payload: dict[str, Any]) -> None:
     """Defense in depth for public GET shapes."""
-    banned = ("secret", "apiKey", "api_key", "secretHash", "secret_hash", "secretEnc", "secret_enc")
+    banned = (
+        "secret",
+        "apiKey",
+        "api_key",
+        "secretHash",
+        "secret_hash",
+        "secretEnc",
+        "secret_enc",
+        "icalUrl",
+        "ical_url",
+        "calendarUrl",
+        "feedUrl",
+        "privateUrl",
+        "url",
+    )
     for key in banned:
         if key in payload and key != "secretMasked":
             payload.pop(key, None)
@@ -194,6 +260,10 @@ def _assert_no_secret_fields(payload: dict[str, Any]) -> None:
 
 class RevelUpsert(BaseModel):
     apiKey: str = Field(min_length=8, max_length=512)
+
+
+class GoogleCalendarUpsert(BaseModel):
+    icalUrl: str = Field(min_length=16, max_length=2048)
 
 
 @router.get("/{agent_id}/integrations", response_model=None)
@@ -207,9 +277,11 @@ async def list_integrations(
 
     cc = await _get_row(db, agent_id, PROVIDER_CARECONNECT)
     revel = await _get_row(db, agent_id, PROVIDER_REVEL)
+    gcal = await _get_row(db, agent_id, PROVIDER_GOOGLE_CALENDAR)
     items = [
         _careconnect_public(cc) if cc is not None else _empty_careconnect(),
         _revel_public(revel) if revel is not None else _empty_revel(),
+        _google_calendar_public(gcal) if gcal is not None else _empty_google_calendar(),
         _directed_logic(),
     ]
     for item in items:
@@ -414,6 +486,161 @@ async def delete_revel(
     log.info("revel integration disconnected agent=%s", agent_id)
     return {
         "provider": PROVIDER_REVEL,
+        "disconnected": True,
+        "clientPreserved": True,
+        "devicesPreserved": True,
+    }
+
+
+def _gcal_meta_for_save(url: str) -> str:
+    host = calendar_host(url)
+    meta: dict[str, Any] = {
+        "calendarHost": host or None,
+        "access": "read_only",
+        "fired": [],
+        "upcoming": [],
+        "nextEvent": None,
+        "lastSuccessfulSync": None,
+        "lastSyncError": None,
+    }
+    return json.dumps(meta)
+
+
+@router.put("/{agent_id}/integrations/google-calendar", response_model=None)
+async def upsert_google_calendar(
+    agent_id: str,
+    payload: GoogleCalendarUpsert,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    await assert_can_access_agent(db, user, agent_id)
+    await _require_agent(db, agent_id)
+
+    ical_url = validate_ical_url(payload.icalUrl)
+    ciphertext = encrypt_secret(ical_url)
+    existing = await _get_row(db, agent_id, PROVIDER_GOOGLE_CALENDAR)
+    now = _now()
+    meta = _gcal_meta_for_save(ical_url)
+    if existing is None:
+        row = ClientIntegration(
+            agent_id=agent_id,
+            provider=PROVIDER_GOOGLE_CALENDAR,
+            public_id=None,
+            secret_hash=None,
+            secret_enc=ciphertext,
+            secret_hint="gcal",
+            status="connected",
+            metadata_json=meta,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+        replaced = False
+    else:
+        existing.secret_enc = ciphertext
+        existing.secret_hint = "gcal"
+        existing.status = "connected"
+        existing.metadata_json = meta
+        existing.updated_at = now
+        row = existing
+        replaced = True
+    try:
+        await db.commit()
+        await db.refresh(row)
+    except Exception:
+        await db.rollback()
+        raise
+
+    log.info(
+        "google calendar integration %s agent=%s",
+        "replaced" if replaced else "created",
+        agent_id,
+    )
+    out = _google_calendar_public(row)
+    out["replaced"] = replaced
+    _assert_no_secret_fields(out)
+    return out
+
+
+@router.post("/{agent_id}/integrations/google-calendar/test", response_model=None)
+async def test_google_calendar(
+    agent_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    await assert_can_access_agent(db, user, agent_id)
+    row = await _get_row(db, agent_id, PROVIDER_GOOGLE_CALENDAR)
+    if row is None or not row.secret_enc:
+        raise APIException(404, "Google Calendar is not connected")
+
+    try:
+        url = decrypt_secret(row.secret_enc)
+    except Exception:
+        raise APIException(500, "stored calendar credential cannot be decrypted")
+
+    now = datetime.now(timezone.utc)
+    try:
+        ics = await fetch_ics(url)
+        occurrences = parse_ics(ics, now=now)
+    except CalendarError as exc:
+        log.warning("google calendar test failed agent=%s err=%s", agent_id, exc.code)
+        raise APIException(502, "Could not fetch the calendar feed") from exc
+    except APIException:
+        raise
+    except Exception:
+        log.warning("google calendar test failed agent=%s err=fetch_failed", agent_id)
+        raise APIException(502, "Could not fetch the calendar feed")
+
+    nxt, upcoming = next_and_upcoming(occurrences, now, limit=3)
+    meta = load_meta(row)
+    meta["lastSuccessfulSync"] = now.isoformat()
+    meta["lastSyncError"] = None
+    meta["nextEvent"] = nxt
+    meta["upcoming"] = upcoming
+    host = calendar_host(url)
+    if host:
+        meta["calendarHost"] = host
+    row.metadata_json = json.dumps(meta)
+    row.updated_at = _now()
+    try:
+        await db.commit()
+        await db.refresh(row)
+    except Exception:
+        await db.rollback()
+        raise
+
+    log.info("google calendar test ok agent=%s events=%s", agent_id, len(occurrences))
+    out = _google_calendar_public(row)
+    out["ok"] = True
+    out["eventCount"] = len(occurrences)
+    _assert_no_secret_fields(out)
+    return out
+
+
+@router.delete("/{agent_id}/integrations/google-calendar", response_model=None)
+async def delete_google_calendar(
+    agent_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    await assert_can_access_agent(db, user, agent_id)
+    row = await _get_row(db, agent_id, PROVIDER_GOOGLE_CALENDAR)
+    if row is None:
+        raise APIException(404, "Google Calendar is not connected")
+    try:
+        await db.execute(
+            delete(ClientIntegration).where(
+                ClientIntegration.agent_id == agent_id,
+                ClientIntegration.provider == PROVIDER_GOOGLE_CALENDAR,
+            )
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    log.info("google calendar integration disconnected agent=%s", agent_id)
+    return {
+        "provider": PROVIDER_GOOGLE_CALENDAR,
         "disconnected": True,
         "clientPreserved": True,
         "devicesPreserved": True,

@@ -27,7 +27,9 @@ RUN pip install --no-cache-dir --upgrade pip \
         "redis>=5.0" \
         "apscheduler>=3.10" \
         "pyyaml>=6.0" \
-        "cryptography>=42.0"
+        "cryptography>=42.0" \
+        "icalendar>=6.0" \
+        "python-dateutil>=2.9"
 
 # ── Runtime image ─────────────────────────────────────────────────────────────
 FROM python:3.12-slim

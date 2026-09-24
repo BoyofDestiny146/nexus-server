@@ -106,6 +106,15 @@ class Settings(BaseSettings):
     careconnect_ingest_url: str = ""
     careconnect_push_timeout_s: float = 5.0
 
+    # Google Calendar (read-only iCal). Poller speaks timed occurrences only.
+    gcal_poll_seconds: int = 60
+    gcal_due_lookback_seconds: int = 90
+    gcal_due_lookahead_seconds: int = 15
+    gcal_fetch_timeout_s: float = 10.0
+    gcal_max_ics_bytes: int = 2_000_000
+    gcal_fired_retain_days: int = 14
+    gcal_upcoming_days: int = 14
+
     # ----- derived (lazy) -----
     @property
     def careconnect_assessment_url(self) -> str:

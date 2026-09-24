@@ -83,6 +83,8 @@ async def test_list_empty_includes_coming_soon_directed_logic(
     items = {row["provider"]: row for row in body["data"]["list"]}
     assert items["careconnect"]["connected"] is False
     assert items["revel"]["connected"] is False
+    assert items["google_calendar"]["connected"] is False
+    assert items["google_calendar"]["access"] == "read_only"
     assert items["directed_logic"]["status"] == "coming_soon"
     assert items["directed_logic"]["comingSoon"] is True
     _assert_no_plaintext_secret_field(body)

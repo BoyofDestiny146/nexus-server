@@ -3,14 +3,16 @@
 /**
  * Client Detail — CareConnect / Revel / Google Calendar / Directed Logic hub.
  * Identity belongs to the person (ai_agent), not a Watcher.
- * Google Calendar is UI-only this pass (placeholder modal, no backend).
+ * Google Calendar is read-only (private iCal URL). Nexus never writes events.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Calendar, Copy, KeyRound, Loader2, Unlink2 } from "lucide-react";
 import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api";
 import { Modal } from "@/components/Modal";
-import type { ClientIntegration } from "@/lib/types";
+import type { CalendarEventPreview, ClientIntegration } from "@/lib/types";
+import { fargoDateTime } from "@/lib/time";
+import { relativeTime } from "@/lib/format";
 
 interface Props {
   agentId: string;
@@ -30,12 +32,37 @@ function assessmentEndpointOf(row: ClientIntegration | undefined): string {
   return row?.assessmentEndpoint || `${portalOf(row)}${DEFAULT_ASSESSMENT_PATH}`;
 }
 
+function formatCalendarWhen(ev: CalendarEventPreview): string {
+  if (ev.allDay) {
+    const parts = ev.start.split("-").map((p) => Number(p));
+    if (parts.length >= 3 && parts[0] && parts[1] && parts[2]) {
+      const label = new Date(parts[0], parts[1] - 1, parts[2]).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+      return `${label} (all day)`;
+    }
+    return `${ev.start} (all day)`;
+  }
+  return fargoDateTime(ev.start) || ev.start;
+}
+
+function formatCalendarEvent(ev: CalendarEventPreview | null | undefined): string {
+  if (!ev) return "None in the upcoming window";
+  const title = ev.title?.trim() || "(untitled)";
+  return `${title} — ${formatCalendarWhen(ev)}`;
+}
+
 export function ClientIntegrations({ agentId }: Props) {
   const [items, setItems] = useState<ClientIntegration[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [onceSecret, setOnceSecret] = useState<string | null>(null);
   const [revelKey, setRevelKey] = useState("");
+  const [icalUrl, setIcalUrl] = useState("");
+  const [showReplaceCalendar, setShowReplaceCalendar] = useState(false);
+  const [testNote, setTestNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState<Copied>(null);
@@ -60,6 +87,7 @@ export function ClientIntegrations({ agentId }: Props) {
 
   const cc = items?.find((i) => i.provider === "careconnect");
   const revel = items?.find((i) => i.provider === "revel");
+  const gcal = items?.find((i) => i.provider === "google_calendar");
 
   function openPanel(next: Panel) {
     setErr(null);
@@ -67,6 +95,9 @@ export function ClientIntegrations({ agentId }: Props) {
     setCopied(null);
     setConfirmDisconnect(false);
     setRevelKey("");
+    setIcalUrl("");
+    setShowReplaceCalendar(false);
+    setTestNote(null);
     setOnceSecret(null);
     setPanel(next);
   }
@@ -132,14 +163,57 @@ export function ClientIntegrations({ agentId }: Props) {
     }
   }
 
-  async function disconnect(provider: "careconnect" | "revel") {
+  async function saveGoogleCalendar() {
+    if (busy || !icalUrl.trim()) return;
+    setBusy(true);
+    setErr(null);
+    setTestNote(null);
+    try {
+      await apiPut(`/agent/${agentId}/integrations/google-calendar`, {
+        icalUrl: icalUrl.trim(),
+      });
+      setIcalUrl("");
+      setShowReplaceCalendar(false);
+      await refresh();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Could not save the calendar URL.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function testGoogleCalendar() {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    setTestNote(null);
+    try {
+      const result = await apiPost<ClientIntegration>(
+        `/agent/${agentId}/integrations/google-calendar/test`,
+      );
+      await refresh();
+      const n = result.eventCount ?? 0;
+      setTestNote(
+        n === 1 ? "Connection ok. 1 event in the upcoming window." : `Connection ok. ${n} events in the upcoming window.`,
+      );
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Could not test the calendar connection.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect(provider: "careconnect" | "revel" | "google_calendar") {
     if (busy) return;
     setBusy(true);
     setErr(null);
     try {
-      await apiDelete(`/agent/${agentId}/integrations/${provider}`);
+      const path = provider === "google_calendar" ? "google-calendar" : provider;
+      await apiDelete(`/agent/${agentId}/integrations/${path}`);
       setConfirmDisconnect(false);
       setOnceSecret(null);
+      setIcalUrl("");
+      setShowReplaceCalendar(false);
       setPanel(null);
       await refresh();
     } catch (e) {
@@ -212,7 +286,7 @@ export function ClientIntegrations({ agentId }: Props) {
         onClick={() => openPanel("google_calendar")}
       >
         <Calendar size={14} aria-hidden="true" />
-        Connect to Google Calendar
+        {gcal?.connected ? "Google Calendar connected" : "Connect to Google Calendar"}
       </button>
       <button
         type="button"
@@ -400,18 +474,157 @@ export function ClientIntegrations({ agentId }: Props) {
 
       <Modal
         open={panel === "google_calendar"}
-        onClose={() => setPanel(null)}
-        title="Google Calendar"
+        onClose={() => { if (!busy) setPanel(null); }}
+        title={gcal?.connected ? "Google Calendar" : "Connect to Google Calendar"}
         size="md"
         footer={
-          <button type="button" className="btn-secondary" onClick={() => setPanel(null)}>
-            Close
-          </button>
+          confirmDisconnect ? (
+            <>
+              <button className="btn-secondary" disabled={busy} onClick={() => setConfirmDisconnect(false)}>
+                Cancel
+              </button>
+              <button className="btn-danger" disabled={busy} onClick={() => disconnect("google_calendar")}>
+                {busy && <Loader2 size={14} className="animate-spin" />}
+                Disconnect
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="btn-secondary" disabled={busy} onClick={() => setPanel(null)}>
+                Close
+              </button>
+              {gcal?.connected && (
+                <button
+                  className="btn-ghost text-risk-urgent"
+                  disabled={busy}
+                  onClick={() => setConfirmDisconnect(true)}
+                >
+                  <Unlink2 size={14} /> Disconnect
+                </button>
+              )}
+            </>
+          )
         }
       >
-        <p className="text-[14px] text-slate-deep leading-relaxed">
-          Google Calendar is not connected for this client yet. Calendar sync is not available in this release.
-        </p>
+        {confirmDisconnect ? (
+          <p className="text-[14px] text-slate-deep leading-relaxed">
+            This will disconnect Google Calendar from this client. The client/person, Watchers, chat history, assessments, and other integrations will not be deleted. Nexus will stop reading this calendar.
+          </p>
+        ) : (
+          <div className="space-y-4 text-[14px] text-slate-deep">
+            {gcal?.connected ? (
+              <>
+                <div>
+                  <div className="kicker mb-1">Google Calendar connected</div>
+                  <div className="label">Status</div>
+                  <div>Connected</div>
+                </div>
+                <div>
+                  <div className="label">Access</div>
+                  <div>Read only</div>
+                </div>
+                {gcal.calendarHost ? (
+                  <div>
+                    <div className="label">Calendar host</div>
+                    <code className="font-mono text-[13px]">{gcal.calendarHost}</code>
+                  </div>
+                ) : null}
+                <div>
+                  <div className="label">Last successful sync</div>
+                  <div>
+                    {gcal.lastSuccessfulSync
+                      ? `${relativeTime(gcal.lastSuccessfulSync)} (${fargoDateTime(gcal.lastSuccessfulSync)})`
+                      : "Never"}
+                  </div>
+                </div>
+                <div>
+                  <div className="label">Next event</div>
+                  <div>{formatCalendarEvent(gcal.nextEvent)}</div>
+                </div>
+                {gcal.upcoming && gcal.upcoming.length > 0 ? (
+                  <div>
+                    <div className="label">Upcoming</div>
+                    <ul className="mt-1 space-y-1 text-[13px]">
+                      {gcal.upcoming.slice(0, 3).map((ev, idx) => (
+                        <li key={`${ev.start}-${idx}`}>
+                          <span className="text-slate-deep">{ev.title || "(untitled)"}</span>
+                          <span className="text-slate-muted"> — {formatCalendarWhen(ev)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {gcal.lastSyncError ? (
+                  <div className="text-[13px] text-slate-muted">
+                    Last sync could not reach Google. Nexus will retry on the next poll. The connection is kept.
+                  </div>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="btn-secondary text-[12px]"
+                    disabled={busy}
+                    onClick={() => void testGoogleCalendar()}
+                  >
+                    {busy ? <Loader2 size={12} className="animate-spin" /> : null}
+                    Test connection
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary text-[12px]"
+                    disabled={busy}
+                    onClick={() => { setShowReplaceCalendar((v) => !v); setErr(null); }}
+                  >
+                    Replace calendar
+                  </button>
+                </div>
+                {testNote ? (
+                  <div className="text-[13px] text-slate-deep border border-slate-200 rounded-card px-3 py-2">
+                    {testNote}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <p className="text-slate-muted leading-relaxed">
+                Paste the private Google Calendar iCal URL for this client. Nexus reads the feed only. It never creates, edits, or deletes calendar events.
+              </p>
+            )}
+            {(!gcal?.connected || showReplaceCalendar) && (
+              <div>
+                <label htmlFor="gcal-ical" className="label">
+                  Private Google Calendar iCal URL
+                </label>
+                <input
+                  id="gcal-ical"
+                  className="input font-mono"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"
+                  value={icalUrl}
+                  onChange={(e) => setIcalUrl(e.target.value)}
+                />
+                <div className="helper">
+                  Stored encrypted. Nexus will not show this URL again after save.
+                </div>
+                <button
+                  type="button"
+                  className="btn-primary text-[12px] mt-3"
+                  disabled={busy || icalUrl.trim().length < 16}
+                  onClick={() => void saveGoogleCalendar()}
+                >
+                  {busy && <Loader2 size={12} className="animate-spin" />}
+                  {gcal?.connected ? "Replace calendar" : "Connect calendar"}
+                </button>
+              </div>
+            )}
+            {err && (
+              <div className="flex items-start gap-2 text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                {err}
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
     </>
   );

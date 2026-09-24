@@ -78,3 +78,70 @@ async def notify_xiaozhi_session_close(
             exc,
         )
         return {"attempted": True, "ok": False, "error": str(exc)}
+
+
+def speak_url() -> str:
+    return (
+        f"http://{settings.xiaozhi_server_host}:{settings.xiaozhi_ota_port}"
+        "/internal/device/speak"
+    )
+
+
+async def notify_xiaozhi_speak(
+    *,
+    mac: str | None,
+    device_id: str | None,
+    text: str,
+) -> dict[str, Any]:
+    """Ask XiaoZhi to speak ``text`` on a live Watcher WebSocket.
+
+    Uses existing ``ConnectionHandler._cc_speak_now`` (no LLM, no firmware
+    change). Returns a small status dict. Never raises.
+    """
+    payload = {
+        "mac": mac or "",
+        "deviceId": device_id or "",
+        "text": text or "",
+    }
+    url = speak_url()
+    try:
+        headers = {"X-Internal-Token": settings.internal_token}
+        async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+        if resp.status_code != 200:
+            log.warning(
+                "xiaozhi speak HTTP %s for device=%s",
+                resp.status_code,
+                device_id,
+            )
+            return {
+                "attempted": True,
+                "ok": False,
+                "spoken": 0,
+                "status": resp.status_code,
+            }
+        body: Any
+        try:
+            body = resp.json()
+        except Exception:
+            body = {}
+        spoken = 0
+        if isinstance(body, dict):
+            try:
+                spoken = int(body.get("spoken") or 0)
+            except (TypeError, ValueError):
+                spoken = 0
+        return {
+            "attempted": True,
+            "ok": bool(spoken),
+            "spoken": spoken,
+            "status": 200,
+        }
+    except Exception as exc:
+        log.warning(
+            "xiaozhi speak failed (best-effort) device=%s mac=%s err=%s",
+            device_id,
+            mac,
+            type(exc).__name__,
+        )
+        return {"attempted": True, "ok": False, "spoken": 0, "error": type(exc).__name__}
