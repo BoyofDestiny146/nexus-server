@@ -80,8 +80,11 @@ export function Sparkline({
 
   return (
     <svg
-      width={width}
+      width="100%"
       height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="xMinYMid meet"
+      className="max-w-full"
       role="img"
       aria-label={`14-day risk trend, ${points.length} assessment${points.length === 1 ? "" : "s"}`}
     >

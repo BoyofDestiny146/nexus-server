@@ -7,12 +7,12 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Calendar, Copy, KeyRound, Loader2, Unlink2 } from "lucide-react";
+import { AlertTriangle, Calendar, Check, CircuitBoard, Copy, KeyRound, Link2, Loader2, Unlink2, type LucideIcon } from "lucide-react";
 import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import type { CalendarEventPreview, ClientIntegration } from "@/lib/types";
 import { fargoDateTime } from "@/lib/time";
-import { relativeTime } from "@/lib/format";
+import { relativeTime, classNames } from "@/lib/format";
 
 interface Props {
   agentId: string;
@@ -52,6 +52,63 @@ function formatCalendarEvent(ev: CalendarEventPreview | null | undefined): strin
   if (!ev) return "None in the upcoming window";
   const title = ev.title?.trim() || "(untitled)";
   return `${title} — ${formatCalendarWhen(ev)}`;
+}
+
+function ConnectionRow({
+  name,
+  icon: Icon,
+  connected,
+  status,
+  detail,
+  disabled,
+  busy,
+  onClick,
+}: {
+  name: string;
+  icon: LucideIcon;
+  connected?: boolean;
+  status: string;
+  detail?: string | null;
+  disabled?: boolean;
+  busy?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || busy}
+      aria-label={`${name}, ${status}`}
+      className={classNames(
+        "w-full flex items-start gap-2.5 px-2 py-2 rounded-card text-left transition",
+        disabled
+          ? "text-slate-muted cursor-not-allowed"
+          : "hover:bg-white/90",
+      )}
+    >
+      <Icon size={14} className="mt-0.5 text-slate-muted shrink-0" aria-hidden={true} />
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] tracking-tight text-slate-deep leading-snug">
+          {name}
+        </span>
+        {detail ? (
+          <span className="block text-[11px] text-slate-muted mt-0.5 leading-snug">
+            {detail}
+          </span>
+        ) : null}
+      </span>
+      <span
+        className={classNames(
+          "shrink-0 inline-flex items-center gap-1 text-[11px] tracking-tight mt-0.5",
+          connected ? "text-teal-deep" : "text-slate-muted",
+        )}
+      >
+        {busy ? <Loader2 size={11} className="animate-spin" /> : null}
+        {connected ? <Check size={11} strokeWidth={2.25} aria-hidden="true" /> : null}
+        {status}
+      </span>
+    </button>
+  );
 }
 
 export function ClientIntegrations({ agentId }: Props) {
@@ -252,53 +309,45 @@ export function ClientIntegrations({ agentId }: Props) {
 
   if (loadError) {
     return (
-      <div className="text-[12px] text-risk-urgent">{loadError}</div>
+      <div className="text-[12px] text-risk-urgent px-2">{loadError}</div>
     );
   }
 
   if (!items) {
-    return <div className="skeleton h-10 w-full rounded-card" />;
+    return <div className="skeleton h-24 w-full rounded-card" />;
   }
 
   return (
     <>
-      <button
-        type="button"
-        className="btn-secondary w-full"
-        onClick={onCareConnectClick}
-        disabled={busy && panel === "careconnect" && !cc?.connected}
-      >
-        {busy && panel === "careconnect" && !cc?.connected ? (
-          <Loader2 size={14} className="animate-spin" />
-        ) : null}
-        {cc?.connected ? "CareConnect connected" : "Connect to CareConnect"}
-      </button>
-      <button
-        type="button"
-        className="btn-secondary w-full"
-        onClick={() => openPanel("revel")}
-      >
-        {revel?.connected ? "Revel connected" : "Connect to Revel"}
-      </button>
-      <button
-        type="button"
-        className="btn-secondary w-full"
-        onClick={() => openPanel("google_calendar")}
-      >
-        <Calendar size={14} aria-hidden="true" />
-        {gcal?.connected ? "Google Calendar connected" : "Connect to Google Calendar"}
-      </button>
-      <button
-        type="button"
-        className="btn-secondary-inactive w-full"
-        disabled
-        title="Coming soon"
-        aria-disabled="true"
-      >
-        Connect to Directed Logic
-      </button>
-      <div className="text-[11px] text-slate-muted px-1">
-        Directed Logic — Coming soon
+      <div className="-mx-1">
+        <ConnectionRow
+          name="CareConnect"
+          icon={Link2}
+          connected={!!cc?.connected}
+          status={cc?.connected ? "Connected" : "Connect →"}
+          busy={busy && panel === "careconnect" && !cc?.connected}
+          onClick={onCareConnectClick}
+        />
+        <ConnectionRow
+          name="Google Calendar"
+          icon={Calendar}
+          connected={!!gcal?.connected}
+          status={gcal?.connected ? "Connected · Read only" : "Connect →"}
+          onClick={() => openPanel("google_calendar")}
+        />
+        <ConnectionRow
+          name="Revel"
+          icon={KeyRound}
+          connected={!!revel?.connected}
+          status={revel?.connected ? "Connected" : "Connect →"}
+          onClick={() => openPanel("revel")}
+        />
+        <ConnectionRow
+          name="Directed Logic"
+          icon={CircuitBoard}
+          status="Coming soon"
+          disabled
+        />
       </div>
 
       <Modal

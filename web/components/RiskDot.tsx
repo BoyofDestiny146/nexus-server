@@ -49,11 +49,20 @@ export function RiskDot({
   );
 }
 
-export function RiskBadge({ level }: { level: RiskLevel | null | undefined }) {
+export function RiskBadge({
+  level,
+  className,
+}: {
+  level: RiskLevel | null | undefined;
+  className?: string;
+}) {
   const label = level ? LABELS[level] : "Not assessed";
   if (!level) {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-chip text-[11px] tracking-tight bg-bone-soft border border-slate-line/70 text-slate-muted">
+      <span className={classNames(
+        "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-chip text-[11px] tracking-tight bg-bone-soft border border-slate-line/70 text-slate-muted",
+        className,
+      )}>
         <span className="w-1.5 h-1.5 rounded-full bg-slate-line" /> {label}
       </span>
     );
@@ -65,6 +74,7 @@ export function RiskBadge({ level }: { level: RiskLevel | null | undefined }) {
       level === "moderate" && "bg-risk-moderate/10 border-risk-moderate/40 text-risk-moderate",
       level === "elevated" && "bg-risk-elevated/10 border-risk-elevated/40 text-risk-elevated",
       level === "urgent"   && "bg-risk-urgent/10 border-risk-urgent/40 text-risk-urgent",
+      className,
     )}>
       <span className={classNames("w-1.5 h-1.5 rounded-full", COLORS[level].split(" ")[0])} />
       {label}

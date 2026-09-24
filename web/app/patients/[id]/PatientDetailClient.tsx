@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ChevronLeft, MessageCircle, Cpu, Loader2, RefreshCw, Trash2, AlertTriangle, Copy,
-  Pencil, Check, X,
+  Pencil, Check, X, Plus, type LucideIcon,
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete, ApiError, getCurrentUser } from "@/lib/api";
 import type {
@@ -14,15 +14,64 @@ import type {
 import { deviceSetupUrl } from "@/lib/serverConfig";
 import { classNames, dayLabel, relativeTime, shortTime } from "@/lib/format";
 import { useLiveChat } from "@/lib/useLiveChat";
-import { AppShell, PageHeader } from "@/components/AppShell";
+import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
-import { RiskBadge, RiskDot } from "@/components/RiskDot";
+import { RiskBadge } from "@/components/RiskDot";
 import { Sparkline } from "@/components/Sparkline";
 import { EmptyState } from "@/components/EmptyState";
 import { Modal } from "@/components/Modal";
 import { ToastProvider, useToast } from "@/components/Toast";
 import { ClientIntegrations } from "@/components/ClientIntegrations";
 
+const WATCHER_ONLINE_MS = 5 * 60_000;
+
+function isWatcherOnline(lastConnectedAt: string | null | undefined): boolean {
+  if (!lastConnectedAt) return false;
+  const t = new Date(lastConnectedAt).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t < WATCHER_ONLINE_MS;
+}
+
+function deviceTitle(d: DeviceRow): string {
+  const alias = d.alias?.trim();
+  if (alias) return alias;
+  const board = (d.board || "").toLowerCase();
+  if (d.deviceType === "W1-A" || board.includes("sensecap") || d.firmwareType === "xiaozhi") {
+    return "SenseCAP Watcher";
+  }
+  return "Watcher";
+}
+
+function shortSessionId(id: string): string {
+  const compact = id.replace(/-/g, "");
+  if (compact.length <= 10) return id;
+  return `${id.slice(0, 8)}…`;
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return <div className="kicker px-2 mb-1.5">{children}</div>;
+}
+
+function PanelAction({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: LucideIcon;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full flex items-center gap-2.5 px-2 py-2 rounded-card text-[13px] tracking-tight text-slate-deep hover:bg-white/90 transition"
+    >
+      <Icon size={14} className="text-slate-muted shrink-0" />
+      {label}
+    </button>
+  );
+}
 
 
 function PatientDetailView({ id }: { id: string }) {
@@ -277,55 +326,123 @@ function PatientDetailView({ id }: { id: string }) {
 
   return (
     <>
-      <header className="px-8 md:px-12 pt-8 pb-6 border-b border-slate-line/70">
+      <header className="px-6 md:px-10 pt-7 pb-5 border-b border-slate-line/70">
         <button
           onClick={() => router.push("/patients")}
-          className="inline-flex items-center gap-1.5 text-[12px] uppercase tracking-[0.12em] text-slate-muted hover:text-slate-deep transition mb-3"
+          className="inline-flex items-center gap-1.5 text-[12px] uppercase tracking-[0.12em] text-slate-muted hover:text-slate-deep transition mb-4"
         >
           <ChevronLeft size={14} /> Roster
         </button>
-        <div className="flex items-end justify-between gap-6">
+        <div className="flex items-start justify-between gap-6 min-w-0">
           <div className="min-w-0">
-            <div className="flex items-center gap-3 mb-1">
-              <RiskDot level={latest?.riskLevel ?? null} size="lg" pulse={live.assessmentTick > 0} />
+            <div className="flex items-center gap-2.5 mb-2">
               <span className="kicker">Client detail</span>
               <LiveBadge status={live.status} />
             </div>
-            <h1 className="display-1 text-slate-deep">{agent.agentName}</h1>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-slate-muted">
-              <RiskBadge level={latest?.riskLevel ?? null} />
+            <h1 className="display-1 text-slate-deep leading-[1.05]">{agent.agentName}</h1>
+            <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[12px] text-slate-muted">
+              <RiskBadge
+                level={latest?.riskLevel ?? null}
+                className="px-2.5 py-1 text-[12px]"
+              />
               {latest?.confidence != null && (
-                <span className="num">confidence {(latest.confidence * 100).toFixed(0)}%</span>
+                <>
+                  <span className="text-slate-line" aria-hidden="true">·</span>
+                  <span className="num">confidence {(latest.confidence * 100).toFixed(0)}%</span>
+                </>
               )}
               {agent.langCode && (
-                <span className="font-mono uppercase">{agent.langCode}</span>
+                <>
+                  <span className="text-slate-line" aria-hidden="true">·</span>
+                  <span className="font-mono uppercase text-slate-muted">{agent.langCode}</span>
+                </>
               )}
-              <span className="font-mono text-slate-muted/80 truncate">id {agent.id.slice(0, 14)}…</span>
+              <span className="text-slate-line" aria-hidden="true">·</span>
+              <span className="font-mono text-[11px] text-slate-muted/70 truncate" title={agent.id}>
+                id {agent.id.slice(0, 12)}…
+              </span>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Three-pane layout */}
-      <section className="grid grid-cols-12 gap-0 min-h-[calc(100vh-180px)] lg:h-[calc(100vh-180px)] lg:overflow-hidden">
-        {/* Left: sessions + actions */}
-        <aside className="col-span-12 lg:col-span-3 border-r border-slate-line/70 bg-bone-soft/60 flex flex-col lg:h-full lg:min-h-0">
-          <div className="px-6 pt-6 pb-3 flex items-center justify-between">
+      {/* Three-pane layout: controls | conversation | assessment */}
+      <section className="flex flex-col xl:flex-row min-h-[calc(100vh-11.5rem)] xl:h-[calc(100vh-11.5rem)] xl:overflow-hidden">
+        {/* Left: client controls + sessions */}
+        <aside className="w-full xl:w-[17.5rem] xl:shrink-0 border-b xl:border-b-0 xl:border-r border-slate-line/70 bg-bone-soft/60 flex flex-col xl:h-full xl:min-h-0">
+          <div className="px-3 pt-5 pb-4 space-y-5 border-b border-slate-line/70">
+            <div>
+              <SectionLabel>Client</SectionLabel>
+              <PanelAction icon={Pencil} label="Edit client" onClick={() => setEditOpen(true)} />
+              <PanelAction icon={Plus} label="Attach device" onClick={() => setAttachOpen(true)} />
+            </div>
+            <div>
+              <SectionLabel>Connections</SectionLabel>
+              <ClientIntegrations agentId={id} />
+            </div>
+            <div>
+              <SectionLabel>Devices</SectionLabel>
+              {devices.length === 0 ? (
+                <p className="px-2 py-1.5 text-[12px] text-slate-muted leading-relaxed">
+                  No Watcher bound to this client.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {devices.map((d) => {
+                    const online = isWatcherOnline(d.lastConnectedAt);
+                    return (
+                      <li
+                        key={d.id}
+                        className="rounded-card border border-slate-line/70 bg-white/80 px-2.5 py-2"
+                      >
+                        <div className="text-[13px] tracking-tight text-slate-deep leading-snug">
+                          {deviceTitle(d)}
+                        </div>
+                        <div className="mt-0.5 font-mono text-[11px] text-slate-muted truncate">
+                          {d.macAddress}
+                        </div>
+                        <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
+                          <span
+                            className={classNames(
+                              "w-1.5 h-1.5 rounded-full",
+                              online ? "bg-teal" : "bg-slate-line",
+                            )}
+                            aria-hidden="true"
+                          />
+                          <span className={online ? "text-teal-deep" : "text-slate-muted"}>
+                            {online ? "Online" : "Bound"}
+                          </span>
+                          {!online && d.lastConnectedAt ? (
+                            <span className="text-slate-muted/80">
+                              · {relativeTime(d.lastConnectedAt)}
+                            </span>
+                          ) : null}
+                        </div>
+                        <DeviceIdEditor device={d} onSaved={refreshAgentAndDevices} />
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <div className="px-3 pt-4 pb-2 flex items-baseline justify-between gap-2">
             <div className="kicker">Sessions</div>
             <span className="text-[11px] tracking-tight text-slate-muted num">
               {sessions?.length ?? 0}
             </span>
           </div>
-          <div className="px-3 flex-1 overflow-y-auto">
+          <div className="px-2 pb-3 flex-1 overflow-y-auto min-h-[8rem]">
             {!sessions && (
-              <div className="px-3 py-4 text-[12px] text-slate-muted">Loading…</div>
+              <div className="px-2 py-3 text-[12px] text-slate-muted">Loading…</div>
             )}
             {sessions && sessions.length === 0 && (
-              <div className="px-3 py-4 text-[13px] text-slate-muted">
+              <div className="px-2 py-3 text-[13px] text-slate-muted leading-relaxed">
                 No conversations yet. The first will appear here when the Watcher is used.
               </div>
             )}
-            <ul className="space-y-1">
+            <ul className="space-y-0.5">
               {sessions?.map((s) => {
                 const active = s.sessionId === activeSession;
                 return (
@@ -333,20 +450,22 @@ function PatientDetailView({ id }: { id: string }) {
                     <button
                       onClick={() => setActiveSession(s.sessionId)}
                       className={classNames(
-                        "w-full text-left px-3 py-2.5 rounded-card border transition",
+                        "w-full text-left px-2.5 py-2 rounded-card border transition",
                         active
                           ? "bg-white border-slate-line text-slate-deep"
-                          : "border-transparent text-slate hover:bg-white/70 hover:border-slate-line/60",
+                          : "border-transparent text-slate hover:bg-white/70",
                       )}
                     >
-                      <div className="flex items-center justify-between text-[13px] tracking-tight">
-                        <span>{relativeTime(s.createdAt)}</span>
-                        <span className="text-[11px] text-slate-muted num">
+                      <div className="flex items-baseline justify-between gap-2 text-[13px] tracking-tight">
+                        <span className={active ? "text-slate-deep" : ""}>
+                          {relativeTime(s.createdAt)}
+                        </span>
+                        <span className="text-[11px] text-slate-muted num shrink-0">
                           {s.messageCount}
                         </span>
                       </div>
-                      <div className="mt-1 font-mono text-[10px] tracking-tight text-slate-muted/90 truncate">
-                        {s.sessionId}
+                      <div className="mt-0.5 font-mono text-[10px] tracking-tight text-slate-muted/80 truncate">
+                        {shortSessionId(s.sessionId)}
                       </div>
                     </button>
                   </li>
@@ -355,58 +474,26 @@ function PatientDetailView({ id }: { id: string }) {
             </ul>
           </div>
 
-          <div className="px-6 py-5 border-t border-slate-line/70 space-y-2">
-            <button
-              className="btn-secondary w-full"
-              onClick={() => setEditOpen(true)}
-            >
-              Edit client
-            </button>
-            <button
-              className="btn-secondary w-full"
-              onClick={() => setAttachOpen(true)}
-            >
-              <Cpu size={14} /> Attach device
-            </button>
-            <ClientIntegrations agentId={id} />
-            {isRoot && (
+          {isRoot && (
+            <div className="mt-auto px-3 py-3 border-t border-slate-line/70">
               <button
+                type="button"
                 onClick={() => setDeleteOpen(true)}
-                className="btn-ghost w-full text-risk-urgent hover:bg-risk-urgent/10 hover:text-risk-urgent"
+                className="text-[12px] text-slate-muted hover:text-risk-urgent transition px-2 py-1"
               >
-                <Trash2 size={14} /> Delete client
+                Delete client
               </button>
-            )}
-            {devices.length > 0 && (
-              <div className="pt-3">
-                <div className="kicker mb-2">Bound devices</div>
-                <ul className="space-y-1.5">
-                  {devices.map((d) => (
-                    <li key={d.id} className="text-[12px]">
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono text-slate-deep truncate">
-                          {d.macAddress}
-                        </span>
-                        <span className="text-slate-muted">
-                          {d.lastConnectedAt ? relativeTime(d.lastConnectedAt) : "—"}
-                        </span>
-                      </div>
-                      <DeviceIdEditor device={d} onSaved={refreshAgentAndDevices} />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </aside>
 
         {/* Center: chat transcript */}
         <div
           ref={scrollerRef}
-          className="col-span-12 lg:col-span-6 px-8 md:px-10 py-8 overflow-y-auto bg-white lg:h-full lg:min-h-0"
+          className="flex-1 min-w-0 px-6 md:px-10 py-7 overflow-y-auto bg-white xl:h-full xl:min-h-0"
         >
           {loadingMsgs && (
-            <div className="space-y-3">
+            <div className="space-y-3 max-w-2xl">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="skeleton h-12 w-2/3" />
               ))}
@@ -422,12 +509,12 @@ function PatientDetailView({ id }: { id: string }) {
           )}
 
           {!loadingMsgs && grouped.map((group, gi) => (
-            <div key={gi} className="mb-8">
-              <div className="flex items-center gap-3 mb-4">
+            <div key={gi} className="mb-7 max-w-2xl mx-auto">
+              <div className="flex items-center gap-3 mb-3.5">
                 <div className="kicker">{group.day}</div>
                 <div className="flex-1 h-px grid-rule" />
               </div>
-              <ol className="space-y-3">
+              <ol className="space-y-4">
                 {group.items.map((m) => {
                   const fromCaregiver = m.chatType === 2;
                   return (
@@ -436,18 +523,17 @@ function PatientDetailView({ id }: { id: string }) {
                           "flex",
                           fromCaregiver ? "justify-end" : "justify-start",
                         )}>
-                      <div className={classNames("max-w-[78%] flex flex-col gap-1",
-                                                  fromCaregiver ? "items-end" : "items-start")}>
+                      <div className={classNames(
+                        "max-w-[min(100%,22rem)] sm:max-w-[70%] flex flex-col gap-1",
+                        fromCaregiver ? "items-end" : "items-start",
+                      )}>
                         <div className={classNames(
-                          "px-4 py-2.5 rounded-2xl text-[14.5px] leading-relaxed",
+                          "px-3.5 py-2 rounded-2xl text-[14px] leading-[1.45]",
                           fromCaregiver
                             ? "bg-teal-tint border border-teal/15 text-slate-deep rounded-tr-sm"
                             : "bg-bone-soft border border-slate-line/70 text-slate-deep rounded-tl-sm",
                         )}>
                           {(() => {
-                            // Camera turns carry a [[photo:/photos/xxx.jpg]] marker
-                            // written by the Watcher vision capture — render the
-                            // image inline above any caption text.
                             const ph = m.content.match(/^\s*\[\[photo:([^\]]+)\]\]\s*([\s\S]*)$/);
                             if (ph) {
                               return (
@@ -456,7 +542,7 @@ function PatientDetailView({ id }: { id: string }) {
                                   <img
                                     src={ph[1]}
                                     alt="Captured by the Watcher camera"
-                                    className="rounded-lg mb-1.5 max-h-60 w-auto border border-slate-line/60"
+                                    className="rounded-lg mb-1.5 max-h-56 w-auto border border-slate-line/60"
                                   />
                                   {ph[2] ? <div>{ph[2]}</div> : null}
                                 </>
@@ -466,7 +552,7 @@ function PatientDetailView({ id }: { id: string }) {
                           })()}
                         </div>
                         <div className={classNames(
-                          "text-[10px] uppercase tracking-[0.12em] text-slate-muted/80 num px-1.5",
+                          "text-[10px] uppercase tracking-[0.12em] text-slate-muted px-1",
                           fromCaregiver ? "text-right" : "text-left",
                         )}>
                           {fromCaregiver ? "caregiver" : "client"} · {shortTime(m.createdAt)}
@@ -483,35 +569,34 @@ function PatientDetailView({ id }: { id: string }) {
         {/* Right: risk panel */}
         <aside
           className={classNames(
-            "col-span-12 lg:col-span-3 border-l border-slate-line/70 bg-bone-soft/60 px-6 py-7 transition lg:h-full lg:min-h-0 lg:overflow-y-auto",
+            "w-full xl:w-[16.5rem] xl:shrink-0 border-t xl:border-t-0 xl:border-l border-slate-line/70 bg-bone-soft/60 px-5 py-6 transition xl:h-full xl:min-h-0 xl:overflow-y-auto",
             live.assessmentTick > 0 && "ring-1 ring-teal/30",
           )}
         >
-          <div className="kicker mb-3">14-day risk</div>
-          <Sparkline data={history} width={232} height={56} />
+          <div className="kicker mb-2">14-day risk</div>
+          <Sparkline data={history} width={232} height={48} />
 
-          <div className="mt-7">
+          <div className="mt-6">
             <div className="kicker mb-3">Latest assessment</div>
             {latest ? (
               <>
-                <div className="flex items-baseline justify-between gap-4">
-                  <div>
-                    <div className="display-2 text-slate-deep capitalize">
-                      {latest.riskLevel}
-                    </div>
-                    <div className="text-[12px] tracking-tight text-slate-muted num mt-1">
-                      {relativeTime(latest.generatedAt)} · {latest.sourceMsgCount} msg
-                    </div>
+                <div className="flex items-center gap-3">
+                  <div className="display-2 text-slate-deep capitalize leading-none">
+                    {latest.riskLevel}
                   </div>
                   {latest.confidence != null && (
                     <ConfidenceRing value={latest.confidence} level={latest.riskLevel} />
                   )}
                 </div>
+                <div className="text-[12px] tracking-tight text-slate-muted num mt-2">
+                  {relativeTime(latest.generatedAt)} · {latest.sourceMsgCount}{" "}
+                  {latest.sourceMsgCount === 1 ? "message" : "messages"}
+                </div>
 
                 {latest.concerns.length > 0 && (
-                  <div className="mt-7">
+                  <div className="mt-6">
                     <div className="kicker mb-2">Concerns</div>
-                    <ul className="space-y-1.5 text-[14px] text-slate-deep leading-relaxed">
+                    <ul className="space-y-1.5 text-[13.5px] text-slate-deep leading-relaxed">
                       {latest.concerns.map((c, i) => (
                         <li key={i} className="flex gap-2">
                           <span className="text-slate-muted">·</span>
@@ -523,12 +608,12 @@ function PatientDetailView({ id }: { id: string }) {
                 )}
 
                 {latest.recommendations.length > 0 && (
-                  <div className="mt-7">
+                  <div className="mt-6">
                     <div className="kicker mb-2">Recommendations</div>
-                    <ul className="space-y-1.5 text-[14px] text-slate-deep leading-relaxed">
+                    <ul className="space-y-1.5 text-[13.5px] text-slate-deep leading-relaxed">
                       {latest.recommendations.map((r, i) => (
                         <li key={i} className="flex gap-2">
-                          <span className="text-teal">→</span>
+                          <span className="text-teal shrink-0">→</span>
                           <span>{r}</span>
                         </li>
                       ))}
@@ -540,7 +625,7 @@ function PatientDetailView({ id }: { id: string }) {
                   <button
                     onClick={regenerate}
                     disabled={regenBusy}
-                    className="btn-ghost w-full mt-7 text-[12px] uppercase tracking-[0.12em]"
+                    className="btn-ghost mt-6 text-[12px] text-slate-muted hover:text-slate-deep px-0"
                   >
                     {regenBusy
                       ? <><Loader2 size={12} className="animate-spin" /> Regenerating…</>
