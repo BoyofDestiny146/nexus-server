@@ -24,7 +24,19 @@ from careconnect_api.gcal_ical import (
     validate_ical_url,
 )
 from careconnect_api.integration_crypto import decrypt_secret
-from careconnect_api.models import AiAgent, AiDevice, ClientIntegration, SysUser
+from careconnect_api.chat_events import (
+    CHAT_TYPE_SYSTEM,
+    encode_gcal_timeline,
+    parse_gcal_timeline,
+)
+from careconnect_api.models import (
+    AiAgent,
+    AiAgentChatHistory,
+    AiDevice,
+    ClientIntegration,
+    SysUser,
+)
+from careconnect_api.triage.runner import _render_dialogue
 from careconnect_api.watcher_device import device_id_for_mac
 
 
@@ -49,6 +61,17 @@ def _public_google_dns(monkeypatch):
     monkeypatch.setattr(
         "careconnect_api.gcal_ical.resolve_host_ips",
         lambda host: ["142.250.72.110"],
+    )
+
+
+@pytest.fixture(autouse=True)
+def _quiet_timeline_notify(monkeypatch):
+    async def _noop(_payload):
+        return None
+
+    monkeypatch.setattr(
+        "careconnect_api.calendar_poller.notify_timeline_best_effort",
+        _noop,
     )
 
 
@@ -118,6 +141,19 @@ def _med_ics(start: str = "20260924T160000", *, rrule: str | None = None) -> str
             title="Afternoon Medication Reminder",
             rrule=rrule,
         )
+    )
+
+
+async def _timeline(db: AsyncSession, agent_id: str) -> list[AiAgentChatHistory]:
+    db.expire_all()
+    return list(
+        (
+            await db.execute(
+                select(AiAgentChatHistory)
+                .where(AiAgentChatHistory.agent_id == agent_id)
+                .order_by(AiAgentChatHistory.id.asc())
+            )
+        ).scalars().all()
     )
 
 
@@ -397,6 +433,24 @@ async def test_bound_watcher_receives_description_once(
     assert summary2["delivered"] == 0
     assert len(speak.calls) == 1
 
+    rows = await _timeline(db_session, agent_id)
+    assert len(rows) == 1
+    assert rows[0].chat_type == CHAT_TYPE_SYSTEM
+    parsed = parse_gcal_timeline(rows[0].content)
+    assert parsed is not None
+    assert parsed["provider"] == "google_calendar"
+    assert parsed["event_uid"] == "med-afternoon@example.com"
+    assert parsed["spoken_text"] == _SPOKEN
+    assert parsed["title"] == "Afternoon Medication Reminder"
+    assert "2016" not in (parsed["occurrence_start"] or "")
+    assert "T16:00" in parsed["occurrence_start"] or "T21:00" in parsed["occurrence_start"]
+    assert parsed["delivered_at"]
+    blob = rows[0].content or ""
+    assert _ICAL_URL not in blob
+    assert _TOKEN not in blob
+    assert "ical" not in blob.lower()
+    assert "completed" not in blob.lower()
+
 
 @pytest.mark.asyncio
 async def test_title_fallback_is_spoken(
@@ -424,6 +478,11 @@ async def test_title_fallback_is_spoken(
         session_factory=factory, now=now, fetch_fn=fetch, speak_fn=speak
     )
     assert speak.calls[0]["text"] == "Afternoon Medication Reminder"
+    rows = await _timeline(db_session, agent_id)
+    assert len(rows) == 1
+    parsed = parse_gcal_timeline(rows[0].content)
+    assert parsed is not None
+    assert parsed["spoken_text"] == "Afternoon Medication Reminder"
 
 
 @pytest.mark.asyncio
@@ -508,7 +567,7 @@ async def test_unrelated_client_never_receives_message(
 
 @pytest.mark.asyncio
 async def test_no_bound_watcher_safe_skip(
-    client: AsyncClient, admin_token: str, db_engine, caplog
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, db_engine, caplog
 ):
     agent_id = await _onboard(client, admin_token)
     await _connect_gcal(client, admin_token, agent_id)
@@ -528,6 +587,7 @@ async def test_no_bound_watcher_safe_skip(
     assert "no_bound_watcher" in caplog.text
     assert _TOKEN not in caplog.text
     assert _ICAL_URL not in caplog.text
+    assert await _timeline(db_session, agent_id) == []
 
 
 @pytest.mark.asyncio
@@ -548,12 +608,16 @@ async def test_watcher_offline_safe_skip_not_fired(
         session_factory=factory, now=now, fetch_fn=fetch, speak_fn=speak
     )
     assert len(speak.calls) == 1
+    assert await _timeline(db_session, agent_id) == []
     speak.spoken = 1
     await poll_google_calendars(
         session_factory=factory, now=now, fetch_fn=fetch, speak_fn=speak
     )
     assert len(speak.calls) == 2
     assert speak.calls[1]["text"] == _SPOKEN
+    rows = await _timeline(db_session, agent_id)
+    assert len(rows) == 1
+    assert rows[0].chat_type == CHAT_TYPE_SYSTEM
 
 
 @pytest.mark.asyncio
@@ -611,6 +675,9 @@ async def test_multiple_bound_watchers_all_receive(
     macs = {c["mac"] for c in speak.calls}
     assert macs == {_COLON_MAC, _OTHER_MAC}
     assert all(c["text"] == _SPOKEN for c in speak.calls)
+    rows = await _timeline(db_session, agent_id)
+    assert len(rows) == 1
+    assert rows[0].chat_type == CHAT_TYPE_SYSTEM
 
 
 @pytest.mark.asyncio
@@ -631,6 +698,7 @@ async def test_stale_occurrence_is_not_spoken(
         session_factory=factory, now=now, fetch_fn=fetch, speak_fn=speak
     )
     assert speak.calls == []
+    assert await _timeline(db_session, agent_id) == []
 
 
 def test_ical_url_not_in_module_log_format():
@@ -644,3 +712,118 @@ def test_ical_url_not_in_module_log_format():
         assert "log.info(url" not in src
         assert "log.warning(url" not in src
         assert "log.error(url" not in src
+
+
+# ---------- timeline / assessment ----------
+
+
+def test_gcal_encode_omits_url_and_keeps_spoken_in_body():
+    content = encode_gcal_timeline(
+        _SPOKEN,
+        event_uid="med-afternoon@example.com",
+        occurrence_start="2026-09-24T16:00:00-05:00",
+        title="Afternoon Medication Reminder",
+        delivered_at="2026-09-24T16:00:05-05:00",
+    )
+    assert content.startswith("[[gcal]]")
+    assert len(content) <= 1024
+    parsed = parse_gcal_timeline(content)
+    assert parsed is not None
+    assert parsed["provider"] == "google_calendar"
+    assert parsed["event_uid"] == "med-afternoon@example.com"
+    assert parsed["spoken_text"] == _SPOKEN
+    assert parsed["title"] == "Afternoon Medication Reminder"
+    assert "calendar.google.com" not in content
+    assert "private-" not in content
+    assert "icalUrl" not in content
+    header = content.split("\n", 1)[0]
+    assert "spoken_text" not in header
+
+
+def test_triage_renders_calendar_as_system_not_person():
+    content = encode_gcal_timeline(
+        "Hi, please take your medication with food.",
+        event_uid="med-afternoon@example.com",
+        occurrence_start="2026-09-24T16:00:00-05:00",
+        title="Afternoon Medication Reminder",
+        delivered_at="2026-09-24T16:00:05-05:00",
+    )
+    dialogue = _render_dialogue(
+        [
+            AiAgentChatHistory(chat_type=3, content=content),
+            AiAgentChatHistory(chat_type=1, content="I took it with lunch."),
+            AiAgentChatHistory(chat_type=2, content="Thank you for telling me."),
+        ]
+    )
+    assert "calendar_reminder: Hi, please take your medication with food." in dialogue
+    assert "client: Hi, please take your medication" not in dialogue
+    assert "caregiver: Hi, please take your medication" not in dialogue
+    assert "client: I took it with lunch." in dialogue
+    assert "caregiver: Thank you for telling me." in dialogue
+    assert "[[gcal]]" not in dialogue
+    prompt = (
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "careconnect_api"
+        / "triage"
+        / "prompt.md"
+    ).read_text(encoding="utf-8")
+    assert "calendar_reminder" in prompt
+    assert "not proof that the medication or task was completed" in prompt
+
+
+@pytest.mark.asyncio
+async def test_timeline_attaches_to_latest_session_and_chat_history_api(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, db_engine, monkeypatch
+):
+    agent_id = await _onboard(client, admin_token)
+    await _connect_gcal(client, admin_token, agent_id)
+    await _bind_watcher(db_session, agent_id)
+    db_session.add(
+        AiAgentChatHistory(
+            id=501,
+            mac_address=_COLON_MAC,
+            agent_id=agent_id,
+            session_id="live-session-1",
+            chat_type=1,
+            content="Good afternoon.",
+        )
+    )
+    await db_session.commit()
+    speak = _SpeakCapture()
+    now = datetime(2026, 9, 24, 16, 0, tzinfo=_TZ)
+    factory = async_sessionmaker(db_engine, expire_on_commit=False, class_=AS)
+
+    async def fetch(_url, **_k):
+        return _med_ics()
+
+    captured: list[dict] = []
+
+    async def capture(payload):
+        captured.append(payload)
+
+    monkeypatch.setattr(
+        "careconnect_api.calendar_poller.notify_timeline_best_effort",
+        capture,
+    )
+
+    await poll_google_calendars(
+        session_factory=factory, now=now, fetch_fn=fetch, speak_fn=speak
+    )
+    rows = await _timeline(db_session, agent_id)
+    system = [r for r in rows if r.chat_type == CHAT_TYPE_SYSTEM]
+    assert len(system) == 1
+    assert system[0].session_id == "live-session-1"
+    assert system[0].mac_address is None
+    hist = await client.get(
+        f"/api/agent/{agent_id}/chat-history/live-session-1",
+        headers=_auth(admin_token),
+    )
+    body = hist.json()
+    assert body["code"] == 0, body
+    items = body["data"]
+    gcal_msg = next(m for m in items if m["chatType"] == CHAT_TYPE_SYSTEM)
+    assert gcal_msg["content"].startswith("[[gcal]]")
+    assert _SPOKEN.split("\n")[0] in gcal_msg["content"]
+    assert _ICAL_URL not in _blob(body)
+    assert captured and captured[0]["chatType"] == CHAT_TYPE_SYSTEM
+    assert captured[0]["sessionId"] == "live-session-1"

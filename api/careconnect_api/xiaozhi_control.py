@@ -95,8 +95,10 @@ async def notify_xiaozhi_speak(
 ) -> dict[str, Any]:
     """Ask XiaoZhi to speak ``text`` on a live Watcher WebSocket.
 
-    Uses existing ``ConnectionHandler._cc_speak_now`` (no LLM, no firmware
-    change). Returns a small status dict. Never raises.
+    Uses existing ``ConnectionHandler._cc_speak_now`` with ``log_turn=False``
+    on the HTTP path (no LLM, no firmware change). CareConnect API persists
+    the system timeline row after a successful speak. Returns a small status
+    dict. Never raises.
     """
     payload = {
         "mac": mac or "",

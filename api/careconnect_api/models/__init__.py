@@ -105,7 +105,9 @@ class AiAgentChatHistory(Base):
     mac_address: Mapped[str | None] = mapped_column(String(50))
     agent_id: Mapped[str | None] = mapped_column(String(32))
     session_id: Mapped[str | None] = mapped_column(String(50))
-    chat_type: Mapped[int | None] = mapped_column(SmallInteger)  # 1=user, 2=assistant
+    chat_type: Mapped[int | None] = mapped_column(
+        SmallInteger
+    )  # 1=client, 2=caregiver/assistant, 3=system_event (e.g. google_calendar)
     content: Mapped[str | None] = mapped_column(String(1024))
     audio_id: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())

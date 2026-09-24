@@ -62,9 +62,9 @@ class ChatTurnNotify(BaseModel):
 
     agentId: str = Field(min_length=1, max_length=64)
     sessionId: str = Field(min_length=1, max_length=64)
-    chatType: int = Field(ge=1, le=2)  # 1=user, 2=assistant (matches DB convention)
+    chatType: int = Field(ge=1, le=3)  # 1=client, 2=caregiver, 3=system_event
     content: str = Field(min_length=1)
-    macAddress: str = Field(min_length=1, max_length=64)
+    macAddress: str = Field(default="", max_length=64)
     createdAt: int | None = None  # epoch ms; filled in if absent
     id: int | None = None  # DB row id so the live WS push dedups vs polled rows
 

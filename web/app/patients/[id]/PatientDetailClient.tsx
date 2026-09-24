@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  ChevronLeft, MessageCircle, Cpu, Loader2, RefreshCw, Trash2, AlertTriangle, Copy,
+  Calendar, ChevronLeft, MessageCircle, Cpu, Loader2, RefreshCw, Trash2, AlertTriangle, Copy,
   Pencil, Check, X, Plus, type LucideIcon,
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete, ApiError, getCurrentUser } from "@/lib/api";
@@ -13,6 +13,7 @@ import type {
 } from "@/lib/types";
 import { deviceSetupUrl } from "@/lib/serverConfig";
 import { classNames, dayLabel, relativeTime, shortTime } from "@/lib/format";
+import { isSystemChat, parseGcalTimeline } from "@/lib/calendarTimeline";
 import { useLiveChat } from "@/lib/useLiveChat";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -516,6 +517,26 @@ function PatientDetailView({ id }: { id: string }) {
               </div>
               <ol className="space-y-4">
                 {group.items.map((m) => {
+                  const gcal = parseGcalTimeline(m.content);
+                  if (isSystemChat(m.chatType) || gcal) {
+                    const when = shortTime(gcal?.occurrenceStart || m.createdAt);
+                    const spoken = (gcal?.spokenText || m.content || "").trim();
+                    return (
+                      <li key={m.id} className="flex justify-center">
+                        <div className="w-full max-w-[min(100%,28rem)] border border-dashed border-slate-line bg-bone-soft/70 rounded-card px-3.5 py-2.5">
+                          <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-muted">
+                            <Calendar size={12} className="shrink-0 text-slate-muted" aria-hidden />
+                            <span>Calendar reminder{when ? ` · ${when}` : ""}</span>
+                          </div>
+                          {spoken ? (
+                            <div className="mt-1.5 text-[13.5px] leading-relaxed text-slate-deep whitespace-pre-wrap">
+                              {spoken}
+                            </div>
+                          ) : null}
+                        </div>
+                      </li>
+                    );
+                  }
                   const fromCaregiver = m.chatType === 2;
                   return (
                     <li key={m.id}

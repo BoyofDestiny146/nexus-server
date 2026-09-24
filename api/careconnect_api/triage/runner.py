@@ -34,6 +34,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..chat_events import CHAT_TYPE_CAREGIVER, CHAT_TYPE_SYSTEM, calendar_dialogue_line
 from ..db import async_session_factory
 from ..models import AiAgent, AiAgentChatHistory, AiMedicalAssessment
 from ..settings import settings
@@ -71,15 +72,23 @@ class TriageResult:
 # ---------- helpers ----------
 
 def _render_dialogue(messages: list[AiAgentChatHistory]) -> str:
-    """Format chat history compactly. chat_type 1 = client, 2 = caregiver voice.
+    """Format chat history compactly.
 
-    Matches Java :meth:`MedicalAssessmentServiceImpl#renderDialogue` exactly:
-    role label is the literal word, content is trimmed, blank rows are dropped.
+    chat_type 1 = client, 2 = caregiver voice, 3 = system_event (calendar
+    reminders are labelled ``calendar_reminder``). A calendar row is a
+    spoken reminder, not evidence the medication/task was completed.
     """
     parts: list[str] = []
     for m in messages:
-        role = "caregiver" if m.chat_type == 2 else "client"
-        text = (m.content or "").strip()
+        if m.chat_type == CHAT_TYPE_SYSTEM:
+            role = "calendar_reminder"
+            text = calendar_dialogue_line(m.content)
+        elif m.chat_type == CHAT_TYPE_CAREGIVER:
+            role = "caregiver"
+            text = (m.content or "").strip()
+        else:
+            role = "client"
+            text = (m.content or "").strip()
         if not text:
             continue
         parts.append(f"{role}: {text}\n")
@@ -155,7 +164,8 @@ async def _invoke_llm(dialogue: str) -> TriageResult:
             {
                 "role": "user",
                 "content": (
-                    "Caregiver-client dialogue from the last 24 hours follows. "
+                    "Caregiver-client dialogue from the last 24 hours follows "
+                    "(including any calendar_reminder system events). "
                     "Return ONLY a JSON object as specified. This is a triage signal, "
                     "NOT a diagnosis.\n\n" + dialogue
                 ),

@@ -5,8 +5,10 @@ Body: {"mac"|"deviceId", "text"}
 Auth: X-Internal-Token (same secret as CareConnect internal API)
 
 Looks up ``WebSocketServer.active_connections`` and calls
-``ConnectionHandler._cc_speak_now(text)`` — existing TTS / audio path,
-no LLM, no firmware, no MCP. Offline Watchers return spoken=0.
+``ConnectionHandler._cc_speak_now(text, log_turn=False)`` — existing TTS
+/ audio path, no LLM, no firmware, no MCP. Offline Watchers return
+spoken=0. Chat persistence is owned by CareConnect API (system timeline
+row after a successful speak), not by this handler.
 """
 from __future__ import annotations
 
@@ -50,7 +52,7 @@ def speak_on_matching_handlers(
         if not callable(speak):
             continue
         try:
-            speak(text)
+            speak(text, log_turn=False)
             spoken += 1
         except Exception as exc:
             log.warning(

@@ -34,12 +34,14 @@ class FakeHandler:
     def __init__(self, device_id: str, *, fail: bool = False):
         self.device_id = device_id
         self.spoken: list[str] = []
+        self.log_turns: list[bool] = []
         self.fail = fail
 
     def _cc_speak_now(self, text: str, log_turn: bool = True):
         if self.fail:
             raise RuntimeError("tts down")
         self.spoken.append(text)
+        self.log_turns.append(log_turn)
 
 
 class FakeServer:
@@ -85,6 +87,7 @@ async def test_speak_matching_handler_gets_verbatim_text(monkeypatch):
     assert body["ok"] is True
     assert body["spoken"] == 1
     assert target.spoken == [SPOKEN]
+    assert target.log_turns == [False]
     assert keep.spoken == []
     assert "This is your reminder" not in target.spoken[0]
 
@@ -109,6 +112,7 @@ async def test_speak_offline_is_zero(monkeypatch):
 def test_speak_uses_cc_speak_now_not_reminder_wrapper():
     src = inspect.getsource(speak_on_matching_handlers)
     assert "_cc_speak_now" in src
+    assert "log_turn=False" in src
     assert "This is your reminder" not in src
     tree = ast.parse(Path(ROOT / "core/api/speak_handler.py").read_text())
     dumped = ast.dump(tree)

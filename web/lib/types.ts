@@ -2,7 +2,7 @@
 // All fields are camelCase per the envelope contract.
 
 export type RiskLevel = "low" | "moderate" | "elevated" | "urgent";
-export type ChatType = 1 | 2; // 1 = client, 2 = caregiver
+export type ChatType = 1 | 2 | 3; // 1 = client, 2 = caregiver, 3 = system_event
 
 export interface AgentSummary {
   id: string;

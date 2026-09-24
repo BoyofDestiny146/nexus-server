@@ -2,7 +2,9 @@
 
 One broken calendar never aborts the rest. All-day DATE events are listed in
 upcoming metadata but never generate Watcher TTS. Delivery de-dup lives in
-``cc_client_integration.metadata_json`` (no new table).
+``cc_client_integration.metadata_json`` (no new table). A successfully spoken
+occurrence also writes one ``ai_agent_chat_history`` system_event row
+(chat_type=3) for assessment — never CLIENT or CAREGIVER.
 """
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ from typing import Any, Awaitable, Callable, Iterable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from .chat_events import notify_timeline_best_effort, persist_google_calendar_timeline
 from .db import async_session_factory
 from .gcal_ical import (
     CalendarError,
@@ -178,6 +181,7 @@ async def poll_one(
     fired_set = set(fired)
     delivered = 0
     skipped = 0
+    pending_notifies: list[dict[str, Any]] = []
 
     for occ in occurrences:
         if not eligible_for_speech(occ):
@@ -190,6 +194,11 @@ async def poll_one(
             continue
         ok = await deliver_occurrence(db, row.agent_id, occ, speak_fn=speak_fn)
         if ok:
+            payload = await persist_google_calendar_timeline(
+                db, agent_id=row.agent_id, occ=occ, delivered_at=now
+            )
+            if payload:
+                pending_notifies.append(payload)
             fired.append(key)
             fired_set.add(key)
             delivered += 1
@@ -206,6 +215,8 @@ async def poll_one(
         meta["calendarHost"] = host
     dump_meta(row, meta)
     await db.commit()
+    for payload in pending_notifies:
+        await notify_timeline_best_effort(payload)
     stats["delivered"] = delivered
     stats["skipped"] = skipped
     return stats
@@ -236,6 +247,7 @@ async def poll_google_calendars(
             return summary
         for row in rows:
             summary["processed"] += 1
+            agent_id = getattr(row, "agent_id", None) or "?"
             try:
                 stats = await poll_one(
                     db, row, now=now, fetch_fn=fetch_fn, speak_fn=speak_fn
@@ -247,7 +259,7 @@ async def poll_google_calendars(
                 summary["errors"] += 1
                 log.warning(
                     "google calendar poll skipped agent=%s err=%s",
-                    getattr(row, "agent_id", "?"),
+                    agent_id,
                     type(exc).__name__,
                 )
                 try:
