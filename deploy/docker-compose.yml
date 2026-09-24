@@ -122,6 +122,9 @@ services:
       CC_ADMIN2_PASSWORD: "${CC_ADMIN2_PASSWORD}"
       CC_OLLAMA_URL: "${CC_OLLAMA_URL:-http://host-gateway:11434}"
       CC_OLLAMA_TRIAGE_MODEL: "${CC_OLLAMA_TRIAGE_MODEL:-cc-llm}"
+      # Conversational model name for System Status (xiaozhi-server uses the
+      # same value). Does not change triage; that stays on CC_OLLAMA_TRIAGE_MODEL.
+      CC_LLM_MODEL: "${CC_LLM_MODEL:-qwen2.5:3b}"
       CC_XIAOZHI_INGEST_ENABLED: "true"
       # No bridge service — W1-A only
       CC_BRIDGE_ENABLED: "false"

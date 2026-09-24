@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw, CheckCircle2, AlertTriangle, XCircle, Minus } from "lucide-react";
+import { RefreshCw, CheckCircle2, AlertTriangle, XCircle, Minus, Info } from "lucide-react";
 import { AppShell, PageHeader } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
 import { apiGet } from "@/lib/api";
@@ -9,7 +9,7 @@ import { classNames } from "@/lib/format";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type HopStatus = "ok" | "warn" | "fail";
+type HopStatus = "ok" | "warn" | "fail" | "info";
 
 interface Hop {
   key: string;
@@ -28,15 +28,13 @@ interface ChecksResponse {
 
 const AUTO_REFRESH_MS = 10_000;
 
-// Hops that are marked informational (router/wifi can't be probed from server)
-const INFORMATIONAL_KEYS = new Set(["router"]);
-
 // ── Status helpers ────────────────────────────────────────────────────────────
 
 function StatusIcon({ status, size = 18 }: { status: HopStatus | "idle"; size?: number }) {
   if (status === "ok")   return <CheckCircle2  size={size} className="text-teal shrink-0" strokeWidth={1.75} />;
   if (status === "warn") return <AlertTriangle size={size} className="text-risk-moderate shrink-0" strokeWidth={1.75} />;
   if (status === "fail") return <XCircle       size={size} className="text-risk-urgent shrink-0" strokeWidth={1.75} />;
+  if (status === "info") return <Info          size={size} className="text-slate-muted shrink-0" strokeWidth={1.75} />;
   return                        <Minus         size={size} className="text-slate-muted shrink-0" strokeWidth={1.75} />;
 }
 
@@ -44,11 +42,12 @@ function statusBg(status: HopStatus | "idle"): string {
   if (status === "ok")   return "bg-teal-tint border-teal/20 text-teal-deep";
   if (status === "warn") return "bg-amber-50 border-amber-200 text-amber-800";
   if (status === "fail") return "bg-risk-urgent/8 border-risk-urgent/25 text-risk-urgent";
+  if (status === "info") return "bg-bone-soft border-slate-line/70 text-slate-muted";
   return "bg-bone-soft border-slate-line/70 text-slate-muted";
 }
 
 function StatusBadge({ status }: { status: HopStatus }) {
-  const label = status === "ok" ? "ok" : status === "warn" ? "warn" : "fail";
+  const label = status;
   return (
     <span className={classNames(
       "inline-flex items-center px-2 py-0.5 rounded-chip text-[11px] font-medium tracking-tight border",
@@ -62,7 +61,6 @@ function StatusBadge({ status }: { status: HopStatus }) {
 // ── Pipeline visualisation ────────────────────────────────────────────────────
 
 function HopRow({ hop, index }: { hop: Hop; index: number }) {
-  const informational = INFORMATIONAL_KEYS.has(hop.key);
   const isE2e = hop.key === "e2e";
 
   return (
@@ -96,9 +94,6 @@ function HopRow({ hop, index }: { hop: Hop; index: number }) {
             {hop.label}
           </span>
           <StatusBadge status={hop.status} />
-          {informational && (
-            <span className="text-[11px] text-slate-muted italic">informational</span>
-          )}
         </div>
         <p className="mt-1 text-[12.5px] text-slate-muted leading-relaxed">
           {hop.detail}
@@ -128,11 +123,13 @@ function OverallBanner({ overall }: { overall: HopStatus }) {
     ok:   "bg-teal-tint border-teal/25 text-teal-deep",
     warn: "bg-amber-50 border-amber-200 text-amber-800",
     fail: "bg-risk-urgent/8 border-risk-urgent/25 text-risk-urgent",
+    info: "bg-bone-soft border-slate-line/70 text-slate-muted",
   };
   const labels: Record<HopStatus, string> = {
     ok:   "All critical hops healthy",
     warn: "One or more hops have warnings",
     fail: "One or more critical hops are failing",
+    info: "Informational only",
   };
 
   return (
@@ -186,8 +183,8 @@ function HealthView() {
     <>
       <PageHeader
         kicker="Diagnostics"
-        title="Health Checks"
-        subtitle="Every hop in the voice pipeline. Run manually or wait for the 10-second auto-refresh. Red = investigate; amber = degraded but functional; green = all clear."
+        title="System Status"
+        subtitle="Live checks against this Nexus install. Red = a critical hop failed; amber = degraded or a Watcher is offline; green = the voice pipeline is healthy. Router / Wi-Fi is informational only."
         actions={
           <button
             onClick={run}
@@ -270,11 +267,11 @@ function HealthView() {
             </div>
 
             {/* Legend */}
-            <div className="mt-5 flex items-center gap-5 text-[12px] text-slate-muted">
-              <span className="flex items-center gap-1.5"><CheckCircle2 size={13} className="text-teal" strokeWidth={1.75} /> Healthy</span>
-              <span className="flex items-center gap-1.5"><AlertTriangle size={13} className="text-risk-moderate" strokeWidth={1.75} /> Warning / degraded</span>
-              <span className="flex items-center gap-1.5"><XCircle size={13} className="text-risk-urgent" strokeWidth={1.75} /> Failing</span>
-              <span className="flex items-center gap-1.5 text-slate-muted italic">Informational = not probeable from server</span>
+            <div className="mt-5 flex flex-wrap items-center gap-5 text-[12px] text-slate-muted">
+              <span className="flex items-center gap-1.5"><CheckCircle2 size={13} className="text-teal" strokeWidth={1.75} /> ok — confirmed healthy</span>
+              <span className="flex items-center gap-1.5"><AlertTriangle size={13} className="text-risk-moderate" strokeWidth={1.75} /> warn — degraded or expected unavailable</span>
+              <span className="flex items-center gap-1.5"><XCircle size={13} className="text-risk-urgent" strokeWidth={1.75} /> fail — critical component failed</span>
+              <span className="flex items-center gap-1.5"><Info size={13} className="text-slate-muted" strokeWidth={1.75} /> info — not directly probeable</span>
             </div>
           </>
         )}

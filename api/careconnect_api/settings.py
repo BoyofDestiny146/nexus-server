@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_triage_model: str = "llama3.1:8b-instruct-q4_K_M"
     ollama_timeout_s: float = 60.0
+    # Conversational Watcher model (xiaozhi-server OllamaLLM). Health probes
+    # this, not the triage model. Compose default is qwen2.5:3b.
+    llm_model: str = "qwen2.5:3b"
 
     # Service endpoints probed by /api/health/checks
     # Defaults match docker-compose service names; override via CC_* env vars.
@@ -69,6 +72,9 @@ class Settings(BaseSettings):
     mqtt_admin_port: int = 8007
     piper_host: str = "piper-tts"
     piper_port: int = 5500
+    # Public OTA hostname for display only — never the primary health probe
+    # (hairpin NAT from the Orin would false-fail). Matches Caddy + firmware.
+    ota_public_url: str = "https://ota.nexus.warehouse-13.biz/xiaozhi/ota/"
     # Probe timeouts (seconds)
     health_probe_timeout_s: float = 3.0
     health_total_timeout_s: float = 5.0
