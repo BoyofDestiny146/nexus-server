@@ -48,7 +48,7 @@ from ..gcal_ical import (
 from ..integration_crypto import decrypt_secret, encrypt_secret, secret_hint
 from ..models import AiAgent, ClientIntegration
 from ..rbac import assert_can_access_agent
-from ..revel_client import list_devices
+from ..revel_client import list_devices, sanitize_revel_api_key
 from ..revel_config import (
     apply_public_config,
     dump_meta,
@@ -451,7 +451,7 @@ async def upsert_revel(
     await assert_can_access_agent(db, user, agent_id)
     await _require_agent(db, agent_id)
 
-    api_key = (payload.apiKey or "").strip()
+    api_key = sanitize_revel_api_key(payload.apiKey)
     existing = await _get_row(db, agent_id, PROVIDER_REVEL)
     if existing is None and not api_key:
         raise APIException(400, "apiKey is required")
@@ -526,7 +526,17 @@ async def discover_revel(
     try:
         api_key = decrypt_secret(row.secret_enc)
     except Exception:
+        log.warning(
+            "revel auth diagnostic: key_present=%s decrypted=%s header_name=%s",
+            bool(row.secret_enc),
+            False,
+            "X-RevelDigital-ApiKey",
+        )
         raise APIException(500, "stored Revel credential cannot be decrypted")
+
+    api_key = sanitize_revel_api_key(api_key)
+    if not api_key:
+        raise APIException(400, "stored Revel API key is empty")
 
     meta = load_revel_meta(row)
     devices = await list_devices(api_key, meta.get("apiBaseUrl"))

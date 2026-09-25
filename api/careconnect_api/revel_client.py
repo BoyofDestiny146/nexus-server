@@ -6,7 +6,10 @@ after discovery approval. Voice/command code must not call ``apply_device_tags``
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
+from urllib.parse import parse_qs, urlparse
+from uuid import UUID
 
 import httpx
 
@@ -16,18 +19,89 @@ from .revel_config import DEFAULT_API_BASE, EXECUTE_ENABLED, tags_from_devices
 log = logging.getLogger("revel_client")
 
 _TIMEOUT_S = 15.0
+AUTH_HEADER = "X-RevelDigital-ApiKey"
+_SAFE_ERROR_MAX = 180
+_SECRET_SNIPPETS = (
+    "api_key=",
+    "apikey",
+    "authorization",
+    "bearer ",
+    "x-reveldigital-apikey",
+)
 
 
 class RevelMutationDisabled(RuntimeError):
     """Raised if a caller tries to mutate Revel while execute is off."""
 
 
-def _headers(api_key: str) -> dict[str, str]:
-    return {
+def sanitize_revel_api_key(raw: str | None) -> str:
+    """Strip paste artifacts. Never used as a log value."""
+    text = (raw or "").replace("\ufeff", "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        text = text[1:-1].strip()
+    if any(ch in text for ch in "\r\n\t"):
+        text = "".join(ch for ch in text if ch not in "\r\n\t").strip()
+    lower = text.casefold()
+    if lower.startswith("bearer "):
+        text = text[7:].strip()
+        lower = text.casefold()
+    for prefix in ("x-reveldigital-apikey:", "api_key:"):
+        if lower.startswith(prefix):
+            text = text.split(":", 1)[1].strip()
+            lower = text.casefold()
+            break
+    if "://" in text or lower.startswith("api_key="):
+        parsed = urlparse(text if "://" in text else f"https://unused/?{text}")
+        qs = parse_qs(parsed.query)
+        extracted = (qs.get("api_key") or [None])[0]
+        if extracted:
+            text = extracted.strip()
+    return text
+
+
+def key_shape(text: str) -> str:
+    """Coarse class of the secret. Never includes the secret itself."""
+    if not text:
+        return "empty"
+    if any(ch.isspace() for ch in text):
+        return "has_whitespace"
+    if text.count(".") == 2 and text.startswith("eyJ"):
+        return "jwt_like"
+    compact = text.replace("-", "")
+    if len(text) == 36:
+        try:
+            UUID(text)
+            return "uuid"
+        except Exception:
+            pass
+    if compact.isalnum() and all(c in "0123456789abcdefABCDEF" for c in compact):
+        if len(compact) in (32, 40, 64):
+            return "hex"
+    if text.isalnum():
+        return "alnum"
+    return "mixed"
+
+
+def _safe_revel_error(body: str | None) -> str:
+    raw = " ".join((body or "").split())
+    if not raw:
+        return ""
+    lower = raw.casefold()
+    if any(token in lower for token in _SECRET_SNIPPETS):
+        return "(redacted)"
+    if re.search(r"[A-Za-z0-9_-]{24,}", raw):
+        return "(redacted)"
+    return raw[:_SAFE_ERROR_MAX]
+
+
+def _headers(api_key: str, *, json_body: bool = False) -> dict[str, str]:
+    headers = {
         "Accept": "application/json",
-        "Content-Type": "application/json",
-        "X-RevelDigital-ApiKey": api_key,
+        AUTH_HEADER: api_key,
     }
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    return headers
 
 
 def _base(url: str | None) -> str:
@@ -81,24 +155,68 @@ def _extract_device_list(payload: Any) -> list[Any]:
     return []
 
 
+def _auth_diagnostic(
+    *,
+    key: str,
+    decrypted: bool,
+    base: str,
+    status: int | None,
+    revel_error: str = "",
+) -> None:
+    log.warning(
+        "revel auth diagnostic: key_present=%s decrypted=%s key_length=%s "
+        "key_shape=%s header_name=%s auth_header_count=%s query_api_key=%s "
+        "authorization_header=%s base_url=%s status=%s revel_error=%s",
+        bool(key),
+        decrypted,
+        len(key),
+        key_shape(key),
+        AUTH_HEADER,
+        1,
+        False,
+        False,
+        base,
+        status,
+        revel_error or "",
+    )
+
+
 async def list_devices(api_key: str, api_base_url: str | None = None) -> list[dict[str, Any]]:
     """GET /devices then GraphQL ``device`` fallback. Never logs the API key."""
-    if not api_key.strip():
+    key = sanitize_revel_api_key(api_key)
+    if not key:
         raise APIException(400, "Revel API key is missing")
     base = _base(api_base_url)
-    headers = _headers(api_key.strip())
+    headers = _headers(key)
     devices: list[dict[str, Any]] = []
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_S, follow_redirects=True) as client:
             resp = await client.get(f"{base}/devices", headers=headers)
     except httpx.HTTPError:
         log.warning("revel list devices transport failed host=%s", url_host(base))
         raise APIException(502, "Could not reach Revel")
     if resp.status_code in (401, 403):
-        log.warning("revel auth failed status=%s", resp.status_code)
-        raise APIException(401, "Revel rejected the API key")
+        revel_error = _safe_revel_error(resp.text)
+        _auth_diagnostic(
+            key=key,
+            decrypted=True,
+            base=base,
+            status=resp.status_code,
+            revel_error=revel_error,
+        )
+        raise APIException(
+            401,
+            "Revel authentication failed (401). Use the Developer API key from "
+            "Revel Account → Developer API, not a device registration key.",
+            data={"revelStatus": resp.status_code, "revelError": revel_error or None},
+        )
     if resp.status_code >= 400:
-        log.warning("revel list devices failed status=%s", resp.status_code)
+        revel_error = _safe_revel_error(resp.text)
+        log.warning(
+            "revel list devices failed status=%s revel_error=%s",
+            resp.status_code,
+            revel_error,
+        )
         raise APIException(502, "Could not list Revel devices")
     try:
         payload = resp.json()
@@ -110,7 +228,7 @@ async def list_devices(api_key: str, api_base_url: str | None = None) -> list[di
             devices.append(norm)
 
     if not devices:
-        gql = await _graphql_devices(api_key, base)
+        gql = await _graphql_devices(key, base)
         devices = gql
 
     log.info("revel discover devices=%s host=%s", len(devices), url_host(base))
@@ -122,10 +240,10 @@ async def _graphql_devices(api_key: str, base: str) -> list[dict[str, Any]]:
         "{ device(limit: 50) { id name isOnline tags "
         "pingData { timestamp } } }"
     )
-    headers = _headers(api_key.strip())
+    headers = _headers(sanitize_revel_api_key(api_key), json_body=True)
     url = f"{base}/graphql"
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_S, follow_redirects=True) as client:
             resp = await client.post(url, headers=headers, json={"query": query})
     except httpx.HTTPError:
         log.warning("revel graphql devices transport failed host=%s", url_host(base))
@@ -152,12 +270,13 @@ async def get_device(
     api_key: str, device_id: str, api_base_url: str | None = None
 ) -> dict[str, Any] | None:
     """GET /devices/{id} — read-only verification helper. Not used to mutate."""
-    if not api_key.strip() or not device_id.strip():
+    key = sanitize_revel_api_key(api_key)
+    if not key or not device_id.strip():
         return None
     base = _base(api_base_url)
-    headers = _headers(api_key.strip())
+    headers = _headers(key)
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT_S, follow_redirects=True) as client:
             resp = await client.get(f"{base}/devices/{device_id.strip()}", headers=headers)
     except httpx.HTTPError:
         log.warning("revel get device transport failed")

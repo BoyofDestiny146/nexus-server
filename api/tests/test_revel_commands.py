@@ -21,7 +21,16 @@ from careconnect_api.chat_events import (
 )
 from careconnect_api.integration_crypto import decrypt_secret
 from careconnect_api.models import AiAgent, AiAgentChatHistory, ClientIntegration, SysUser
-from careconnect_api.revel_client import RevelMutationDisabled, apply_device_tags, _normalize_device
+from careconnect_api.envelope import APIException
+from careconnect_api.revel_client import (
+    AUTH_HEADER,
+    RevelMutationDisabled,
+    apply_device_tags,
+    key_shape,
+    list_devices,
+    sanitize_revel_api_key,
+    _normalize_device,
+)
 from careconnect_api.revel_config import EXECUTE_ENABLED
 from careconnect_api.revel_match import (
     match_enabled_action,
@@ -475,3 +484,108 @@ async def test_persist_revel_timeline_system_event(
     parsed = parse_revel_timeline(payload["content"])
     assert parsed["result"] == "failed"
     assert parsed["intent"] == "display_calendar"
+
+
+def test_sanitize_revel_api_key_strips_paste_artifacts():
+    raw = '  \ufeff"secret-key-value"  \n'
+    assert sanitize_revel_api_key(raw) == "secret-key-value"
+    assert sanitize_revel_api_key("Bearer secret-key-value") == "secret-key-value"
+    assert sanitize_revel_api_key("X-RevelDigital-ApiKey: secret-key-value") == "secret-key-value"
+    assert (
+        sanitize_revel_api_key("https://api.reveldigital.com/account?api_key=secret-key-value")
+        == "secret-key-value"
+    )
+    assert key_shape("eyJhbGciOiJIUzI1NiJ9.e30.abc") == "jwt_like"
+
+
+@pytest.mark.asyncio
+async def test_list_devices_401_uses_documented_header_and_safe_error(monkeypatch, caplog):
+    captured: dict = {}
+
+    class FakeResp:
+        status_code = 401
+        text = "Unauthorized"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, headers=None):
+            captured["url"] = url
+            captured["headers"] = dict(headers or {})
+            return FakeResp()
+
+    monkeypatch.setattr("careconnect_api.revel_client.httpx.AsyncClient", FakeClient)
+    secret = "super-secret-key-value-XXXX"
+    caplog.set_level("WARNING")
+    with pytest.raises(APIException) as exc:
+        await list_devices(secret, "https://api.reveldigital.com")
+    assert exc.value.code == 401
+    assert exc.value.msg.startswith("Revel authentication failed (401)")
+    assert captured["url"] == "https://api.reveldigital.com/devices"
+    assert captured["headers"][AUTH_HEADER] == secret
+    assert "Authorization" not in captured["headers"]
+    assert "api_key=" not in captured["url"]
+    blob = caplog.text
+    assert "header_name=X-RevelDigital-ApiKey" in blob
+    assert "base_url=https://api.reveldigital.com" in blob
+    assert "key_present=True" in blob
+    assert "decrypted=True" in blob
+    assert secret not in blob
+    assert secret not in (exc.value.msg or "")
+    assert secret not in json.dumps(exc.value.data)
+
+
+@pytest.mark.asyncio
+async def test_put_quoted_key_decrypts_trimmed(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession
+):
+    agent_id = await _onboard(client, admin_token)
+    quoted = '"revel-live-key-XXXX7F2A"'
+    saved = await client.put(
+        f"/api/agent/{agent_id}/integrations/revel",
+        json={"apiKey": quoted},
+        headers=_auth(admin_token),
+    )
+    assert saved.json()["code"] == 0, saved.json()
+    db_session.expire_all()
+    row = (
+        await db_session.execute(
+            select(ClientIntegration).where(
+                ClientIntegration.agent_id == agent_id,
+                ClientIntegration.provider == "revel",
+            )
+        )
+    ).scalar_one()
+    assert row.secret_enc
+    assert decrypt_secret(row.secret_enc) == "revel-live-key-XXXX7F2A"
+    assert quoted not in (row.secret_enc or "")
+
+
+@pytest.mark.asyncio
+async def test_discover_401_is_admin_visible(client: AsyncClient, admin_token: str, monkeypatch):
+    agent_id = await _onboard(client, admin_token)
+    await client.put(
+        f"/api/agent/{agent_id}/integrations/revel",
+        json={"apiKey": "revel-live-key-XXXX7F2A"},
+        headers=_auth(admin_token),
+    )
+
+    async def _boom(*_a, **_k):
+        raise APIException(401, "Revel authentication failed (401)")
+
+    monkeypatch.setattr("careconnect_api.routers.integrations.list_devices", _boom)
+    resp = await client.post(
+        f"/api/agent/{agent_id}/integrations/revel/discover",
+        headers=_auth(admin_token),
+    )
+    body = resp.json()
+    assert body["code"] == 401
+    assert "Revel authentication failed (401)" in body["msg"]
+    _assert_no_secrets(body)

@@ -563,7 +563,10 @@ export function ClientIntegrations({ agentId, botName }: Props) {
                 value={revelKey}
                 onChange={(e) => setRevelKey(e.target.value)}
               />
-              <div className="helper">The full key is stored encrypted and is never shown again.</div>
+              <div className="helper">
+                Paste the Developer API key from Revel Account → Developer API.
+                A device registration key will not work. The full key is stored encrypted and is never shown again.
+              </div>
             </div>
             <button
               type="button"
