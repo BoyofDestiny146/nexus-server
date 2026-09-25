@@ -25,6 +25,13 @@ export interface AgentDetail extends AgentSummary {
   memModelId: string | null;
   intentModelId: string | null;
   vllmModelId?: string | null;
+  dob?: string | null;
+  age?: number | null;
+  condition?: string | null;
+  tags?: string[];
+  escalationPhrases?: string[];
+  topicsToAvoid?: string[];
+  personaOverride?: string | null;
 }
 
 export interface ChatSession {
@@ -101,6 +108,7 @@ export interface OnboardRequest {
   escalationPhrases?: string[];
   topicsToAvoid?: string[];
   personaOverride?: string | null;
+  botName?: string | null;
   eui?: string | null;
   deviceAlias?: string | null;
   clientDeviceId?: string | null; // optional external id from the client's system

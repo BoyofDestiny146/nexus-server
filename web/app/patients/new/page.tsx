@@ -5,31 +5,36 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ChevronLeft, ChevronRight, Check, Loader2, RefreshCw,
-  Wand2, AlertCircle, Info, Copy,
+  Info, Copy,
 } from "lucide-react";
 import { ApiError, apiGet, apiPost } from "@/lib/api";
 import type { OnboardRequest, UnboundDevice } from "@/lib/types";
-import { classNames, ageFromDob, relativeTime } from "@/lib/format";
+import { ageFromDob, classNames, relativeTime } from "@/lib/format";
 import { deviceSetupUrl } from "@/lib/serverConfig";
-import { AppShell, PageHeader } from "@/components/AppShell";
+import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
-import { ChipInput } from "@/components/ChipInput";
 import { WizardStepper } from "@/components/Wizard";
 import { ToastProvider, useToast } from "@/components/Toast";
+import { ProfileFields } from "@/components/clientForm/ProfileFields";
+import { GuardrailsFields } from "@/components/clientForm/GuardrailsFields";
+import { ProfileReview, ReviewRow } from "@/components/clientForm/ReviewFields";
+import {
+  CLIENT_FORM_STEPS,
+  EMPTY_CLIENT_DRAFT,
+  type ClientFormDraft,
+} from "@/lib/clientForm";
 
-interface DraftState extends OnboardRequest {
+interface DraftState extends ClientFormDraft {
+  eui: string | null;
+  deviceAlias: string;
+  clientDeviceId: string;
+  deviceType: OnboardRequest["deviceType"];
+  firmwareType: OnboardRequest["firmwareType"];
   deviceMode: "auto" | "paste" | "skip";
 }
 
 const EMPTY_DRAFT: DraftState = {
-  name: "",
-  dob: null,
-  age: null,
-  condition: "",
-  tags: [],
-  escalationPhrases: [],
-  topicsToAvoid: [],
-  personaOverride: "",
+  ...EMPTY_CLIENT_DRAFT,
   eui: null,
   deviceAlias: "",
   clientDeviceId: "",
@@ -38,23 +43,7 @@ const EMPTY_DRAFT: DraftState = {
   deviceMode: "auto",
 };
 
-const TAG_SUGGESTIONS = [
-  "exercise-recommended", "low-sodium", "fall-risk",
-  "mobility-aid", "medication-reminder", "hearing-impaired",
-];
-
-const ESCALATION_SUGGESTIONS = [
-  "I cannot breathe", "I fell", "Chest pain", "I want to hurt myself",
-];
-
 const DRAFT_KEY = "careconnect.onboard.draft";
-
-const STEPS = [
-  { key: "profile",    label: "Profile" },
-  { key: "guardrails", label: "Guardrails" },
-  { key: "device",     label: "Device" },
-  { key: "review",     label: "Review" },
-];
 
 function normalizeEui(raw: string): string {
   return raw.replace(/[\s:\-]/g, "").toUpperCase();
@@ -163,6 +152,7 @@ function OnboardWizard() {
       escalationPhrases: draft.escalationPhrases ?? [],
       topicsToAvoid: draft.topicsToAvoid ?? [],
       personaOverride: draft.personaOverride?.trim() || null,
+      botName: draft.botName?.trim() || null,
       eui,
       deviceAlias: eui ? (draft.deviceAlias?.trim() || `${draft.name.trim()}'s Watcher`) : null,
       clientDeviceId: eui ? (draft.clientDeviceId?.trim() || null) : null,
@@ -209,7 +199,7 @@ function OnboardWizard() {
       <section className="px-8 md:px-12 py-8">
         <div className="card p-2 mb-8">
           <WizardStepper
-            steps={STEPS}
+            steps={[...CLIENT_FORM_STEPS]}
             current={step}
             onJump={(i) => i <= step && setStep(i)}
           />
@@ -218,8 +208,8 @@ function OnboardWizard() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
           <div className="xl:col-span-2">
             <div className="card p-8 md:p-10 min-h-[420px]">
-              {step === 0 && <ProfileStep draft={draft} update={update} />}
-              {step === 1 && <GuardrailsStep draft={draft} update={update} setDraft={setDraft} />}
+              {step === 0 && <ProfileFields draft={draft} update={update} autoFocusName />}
+              {step === 1 && <GuardrailsFields draft={draft} update={update} />}
               {step === 2 && (
                 <DeviceStep
                   draft={draft} update={update}
@@ -247,10 +237,10 @@ function OnboardWizard() {
               >
                 <ChevronLeft size={14} /> Back
               </button>
-              {step < STEPS.length - 1 ? (
+              {step < CLIENT_FORM_STEPS.length - 1 ? (
                 <button
                   disabled={!stepValid}
-                  onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
+                  onClick={() => setStep((s) => Math.min(CLIENT_FORM_STEPS.length - 1, s + 1))}
                   className="btn-primary"
                 >
                   Next <ChevronRight size={14} />
@@ -268,7 +258,7 @@ function OnboardWizard() {
           {/* Editorial helper column */}
           <aside className="xl:col-span-1">
             <div className="sticky top-8 card p-6 bg-bone-soft/70">
-              <div className="kicker mb-3">{STEPS[step].label}</div>
+              <div className="kicker mb-3">{CLIENT_FORM_STEPS[step].label}</div>
               <p className="text-[13.5px] leading-relaxed text-slate-deep">
                 {step === 0 && "Names appear on every dashboard card. The condition note feeds the caregiver persona's awareness."}
                 {step === 1 && "Guard rules tell the AI when to escalate (press-button-for-staff cues) and what topics to skip. Most clients need only a few."}
@@ -280,176 +270,6 @@ function OnboardWizard() {
         </div>
       </section>
     </>
-  );
-}
-
-/* ───── steps ───── */
-
-function ProfileStep({ draft, update }: { draft: DraftState; update: <K extends keyof DraftState>(k: K, v: DraftState[K]) => void }) {
-  const age = useMemo(() => draft.age ?? ageFromDob(draft.dob), [draft.dob, draft.age]);
-  return (
-    <div className="space-y-7">
-      <div>
-        <label htmlFor="name" className="label">Client name</label>
-        <input
-          id="name" className="input text-[16px]" placeholder="e.g. Jane Smith"
-          value={draft.name}
-          onChange={(e) => update("name", e.target.value)}
-          autoFocus
-          required
-        />
-        <div className="helper">As shown on the roster card and dashboard headings.</div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <div>
-          <label htmlFor="dob" className="label">Date of birth</label>
-          <input
-            id="dob" type="date" className="input" max={new Date().toISOString().slice(0, 10)}
-            value={draft.dob ?? ""}
-            onChange={(e) => update("dob", e.target.value || null)}
-          />
-          {age != null && (
-            <div className="helper num">{age} years old</div>
-          )}
-        </div>
-        <div>
-          <label htmlFor="age" className="label">Age (override)</label>
-          <input
-            id="age" type="number" className="input num" placeholder="optional"
-            value={draft.age ?? ""}
-            onChange={(e) => update("age", e.target.value ? Number(e.target.value) : null)}
-            min={0} max={130}
-          />
-          <div className="helper">Use only if DOB is unknown.</div>
-        </div>
-      </div>
-
-      <div>
-        <label htmlFor="condition" className="label">Condition or context</label>
-        <textarea
-          id="condition" rows={3}
-          className="input"
-          placeholder="e.g. Recovering from hip replacement; reminders for evening medication; lives alone."
-          value={draft.condition ?? ""}
-          onChange={(e) => update("condition", e.target.value)}
-        />
-        <div className="helper">A short note that frames the caregiver's awareness.</div>
-      </div>
-
-      <div>
-        <label className="label">Tags</label>
-        <ChipInput
-          value={draft.tags ?? []}
-          onChange={(v) => update("tags", v)}
-          placeholder="Press Enter to add"
-          suggestions={TAG_SUGGESTIONS}
-          ariaLabel="Client tags"
-        />
-      </div>
-    </div>
-  );
-}
-
-function GuardrailsStep({
-  draft, update, setDraft,
-}: {
-  draft: DraftState;
-  update: <K extends keyof DraftState>(k: K, v: DraftState[K]) => void;
-  setDraft: React.Dispatch<React.SetStateAction<DraftState>>;
-}) {
-  const toast = useToast();
-  const [aiBusy, setAiBusy] = useState(false);
-
-  async function generateWithAi() {
-    if (aiBusy) return;
-    setAiBusy(true);
-    try {
-      const res = await apiPost<{
-        personaOverride?: string | null;
-        escalationPhrases?: string[];
-        topicsToAvoid?: string[];
-      }>("/agent/draft-guardrails", {
-        name: draft.name,
-        age: draft.age ?? ageFromDob(draft.dob),
-        condition: draft.condition,
-        tags: draft.tags ?? [],
-      });
-      setDraft((d) => ({
-        ...d,
-        personaOverride: res.personaOverride ?? d.personaOverride ?? "",
-        escalationPhrases: Array.isArray(res.escalationPhrases)
-          ? res.escalationPhrases
-          : (d.escalationPhrases ?? []),
-        topicsToAvoid: Array.isArray(res.topicsToAvoid)
-          ? res.topicsToAvoid
-          : (d.topicsToAvoid ?? []),
-      }));
-      toast.push("Drafted guardrails — review and edit before continuing.", "success");
-    } catch {
-      toast.push("Could not draft guardrails — please write them manually.", "error");
-    } finally {
-      setAiBusy(false);
-    }
-  }
-
-  return (
-    <div className="space-y-7">
-      <div className="flex items-center justify-between gap-4 -mt-2">
-        <p className="text-[12.5px] text-slate-muted leading-relaxed max-w-md">
-          Let the model propose a starting set based on the client's profile.
-          You can edit anything it suggests.
-        </p>
-        <button
-          type="button"
-          onClick={generateWithAi}
-          disabled={aiBusy || !draft.name?.trim()}
-          className="btn-secondary shrink-0"
-          title={!draft.name?.trim() ? "Add a client name on the previous step first" : "Draft guardrails from the profile (~10–25s)"}
-        >
-          {aiBusy
-            ? <><Loader2 size={14} className="animate-spin" /> Drafting…</>
-            : <><Wand2 size={14} /> Generate with AI</>}
-        </button>
-      </div>
-      <div>
-        <label className="label">Escalation phrases</label>
-        <ChipInput
-          value={draft.escalationPhrases ?? []}
-          onChange={(v) => update("escalationPhrases", v)}
-          placeholder="Phrases that should alert staff"
-          suggestions={ESCALATION_SUGGESTIONS}
-          ariaLabel="Escalation phrases"
-        />
-        <div className="helper">If the client says one of these, the caregiver will gently direct them to press the device button.</div>
-      </div>
-
-      <div>
-        <label className="label">Topics to avoid</label>
-        <ChipInput
-          value={draft.topicsToAvoid ?? []}
-          onChange={(v) => update("topicsToAvoid", v)}
-          placeholder="Subjects the caregiver should sidestep"
-          ariaLabel="Topics to avoid"
-        />
-      </div>
-
-      <div>
-        <label htmlFor="persona" className="label flex items-center gap-2">
-          Persona override (optional)
-          <span title="Phase 2 deferred — this value is stored but not yet honored per-client." className="text-slate-muted">
-            <AlertCircle size={12} />
-          </span>
-        </label>
-        <textarea
-          id="persona" rows={4} className="input"
-          placeholder="e.g. Speak slower than usual. Avoid medical jargon."
-          value={draft.personaOverride ?? ""}
-          onChange={(e) => update("personaOverride", e.target.value)}
-        />
-        <div className="helper">Stored on the agent row; per-client persona delivery is a Phase 2 feature.</div>
-      </div>
-    </div>
   );
 }
 
@@ -607,13 +427,7 @@ function ReviewStep({
               draft.deviceMode === "paste" ? normalizeEui(euiText) : null;
   return (
     <div className="space-y-6">
-      <ReviewRow label="Name" value={draft.name || "—"} display />
-      <ReviewRow label="DOB / Age" value={draft.dob ? `${draft.dob} (${ageFromDob(draft.dob)} yrs)` : (draft.age ? `${draft.age} yrs` : "—")} />
-      <ReviewRow label="Condition" value={draft.condition || "—"} />
-      <ReviewRow label="Tags" value={draft.tags?.length ? draft.tags.join(", ") : "—"} />
-      <ReviewRow label="Escalation" value={draft.escalationPhrases?.length ? draft.escalationPhrases.join(", ") : "—"} />
-      <ReviewRow label="Avoid topics" value={draft.topicsToAvoid?.length ? draft.topicsToAvoid.join(", ") : "—"} />
-      <ReviewRow label="Persona override" value={draft.personaOverride ? "(provided)" : "—"} />
+      <ProfileReview draft={draft} />
       <div className="border-t border-slate-line/70 pt-6">
         <ReviewRow label="Device" value={
           draft.deviceMode === "skip" ? "Skipped — bind later" :
@@ -632,20 +446,6 @@ function ReviewStep({
           {submitError}
         </div>
       )}
-    </div>
-  );
-}
-
-function ReviewRow({ label, value, mono = false, display = false }: { label: string; value: string; mono?: boolean; display?: boolean }) {
-  return (
-    <div className="grid grid-cols-12 gap-4 items-baseline">
-      <div className="col-span-3 kicker">{label}</div>
-      <div className={classNames(
-        "col-span-9 text-slate-deep",
-        display ? "display-3" : mono ? "font-mono text-[14px]" : "text-[14px]",
-      )}>
-        {value}
-      </div>
     </div>
   );
 }

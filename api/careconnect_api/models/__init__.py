@@ -49,6 +49,7 @@ class AiAgent(Base):
     agent_code: Mapped[str | None] = mapped_column(String(36))
     agent_name: Mapped[str | None] = mapped_column(String(64))
     bot_name: Mapped[str | None] = mapped_column(String(64))
+    profile_json: Mapped[str | None] = mapped_column(Text)
     asr_model_id: Mapped[str | None] = mapped_column(String(32))
     vad_model_id: Mapped[str | None] = mapped_column(String(64))
     llm_model_id: Mapped[str | None] = mapped_column(String(32))

@@ -18,7 +18,7 @@ export function Modal({
   title?: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
-  size?: "sm" | "md" | "lg";
+  size?: "sm" | "md" | "lg" | "workspace";
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -47,14 +47,24 @@ export function Modal({
   if (!open) return null;
   if (typeof document === "undefined") return null;
 
-  const widthCls = size === "sm" ? "max-w-md" : size === "lg" ? "max-w-3xl" : "max-w-xl";
+  const widthCls =
+    size === "sm" ? "max-w-md"
+    : size === "lg" ? "max-w-3xl"
+    : size === "workspace" ? "max-w-5xl"
+    : "max-w-xl";
+  const overlayPad = size === "workspace" ? "pt-6 sm:pt-10 pb-6" : "pt-24";
+  const panelExtra = size === "workspace" ? "max-h-[min(92vh,58rem)] flex flex-col" : "";
+  const bodyExtra = size === "workspace" ? "overflow-y-auto min-h-0 flex-1" : "";
 
   return createPortal(
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby={title ? "modal-title" : undefined}
-      className="fixed inset-0 z-[80] flex items-start justify-center pt-24 px-4"
+      className={classNames(
+        "fixed inset-0 z-[80] flex items-start justify-center px-4",
+        overlayPad,
+      )}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onCloseRef.current(); }}
     >
       {/* Must not intercept clicks. The overlay parent handles outside-click close. */}
@@ -68,6 +78,7 @@ export function Modal({
         className={classNames(
           "relative z-10 pointer-events-auto w-full bg-white border border-slate-line rounded-card outline-none toast-in",
           widthCls,
+          panelExtra,
         )}
         onMouseDown={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
@@ -89,7 +100,7 @@ export function Modal({
             </button>
           </div>
         )}
-        <div className="px-6 py-5">{children}</div>
+        <div className={classNames("px-6 py-5", bodyExtra)}>{children}</div>
         {footer && (
           <div className="px-6 py-4 border-t border-slate-line/70 bg-bone-soft rounded-b-card flex items-center justify-end gap-3">
             {footer}

@@ -28,6 +28,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import CurrentUser, get_current_user, require_root
+from ..client_profile import effective_profile, public_profile
 from ..db import get_db
 from ..envelope import APIException
 from ..models import AiAgent, AiAgentChatHistory, AiDevice, AiMedicalAssessment
@@ -78,6 +79,7 @@ def _agent_summary(
 
 def _agent_info(agent: AiAgent) -> dict[str, Any]:
     """Shape used by /agent/{id} — matches Java's AgentInfoVO (extends AgentEntity)."""
+    profile = public_profile(effective_profile(agent.profile_json, agent.system_prompt))
     return {
         "id": agent.id,
         "userId": agent.user_id,
@@ -102,6 +104,13 @@ def _agent_info(agent: AiAgent) -> dict[str, Any]:
         "createdAt": agent.created_at,
         "updater": agent.updater,
         "updatedAt": agent.updated_at,
+        "dob": profile.get("dob"),
+        "age": profile.get("age"),
+        "condition": profile.get("condition"),
+        "tags": profile.get("tags") or [],
+        "escalationPhrases": profile.get("escalationPhrases") or [],
+        "topicsToAvoid": profile.get("topicsToAvoid") or [],
+        "personaOverride": profile.get("personaOverride"),
         # AgentInfoVO carries a `functions` plugin list. We don't have an
         # ai_agent_plugin_mapping ORM model yet; ship empty for now so the
         # dashboard's null-checks still pass.

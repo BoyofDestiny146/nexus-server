@@ -50,6 +50,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Literal
 
 from ..auth import ROLE_ROOT, CurrentUser, get_current_user, require_root
+from ..client_profile import (
+    PROFILE_KEYS,
+    build_system_prompt,
+    dump_profile,
+    effective_profile,
+    merge_profile,
+    profile_from_onboard,
+)
 from ..db import get_db
 from ..envelope import APIException
 from ..models import (
@@ -111,6 +119,7 @@ class OnboardRequest(BaseModel):
     escalationPhrases: list[str] = Field(default_factory=list)
     topicsToAvoid: list[str] = Field(default_factory=list)
     personaOverride: str | None = None
+    botName: str | None = None
     # Optional device attach in same call (the wizard's last step)
     eui: str | None = None
     deviceAlias: str | None = None
@@ -169,87 +178,18 @@ def _device_id_for(eui: str) -> str:
     return f"watcher-{eui.lower()[:24]}"
 
 
-# careconnect: the deployed voice (Piper) is English-only. Pin EVERY persona to
-# English so a slip into Chinese/other scripts can never reach the speaker. The
-# marker "ENGLISH-ONLY" is also used by the DB re-pin migration to detect which
-# existing agents still need this prepended.
-_ENGLISH_ONLY_PIN = (
-    "# ENGLISH-ONLY (ABSOLUTE RULE)\n"
-    "ALWAYS reply in English. Never reply in Chinese, Japanese, Korean, or any "
-    "other language or script, even if the user writes in another language. "
-    "Do not use emoji or non-Latin characters. This rule overrides everything "
-    "below."
-)
+def _sanitize_bot_name(raw: str | None) -> str | None:
+    cleaned = " ".join((raw or "").split())
+    if any(ord(ch) < 32 for ch in cleaned):
+        raise APIException(400, "botName cannot contain control characters")
+    if len(cleaned) > 64:
+        raise APIException(400, "botName must be 64 characters or fewer")
+    return cleaned or None
 
 
 def _build_persona_prompt(req: OnboardRequest) -> str:
-    """Compose the agent's ``system_prompt`` from wizard fields.
-
-    The bridge currently ignores per-agent ``system_prompt`` (Phase 2 deferred —
-    the global caregiver persona in xiaozhi-server's ``data/.config.yaml`` is
-    what actually frames every chat). We still write a useful prompt now so
-    that when per-agent personas land we don't need to backfill anything.
-
-    Section legend:
-      * ``# Client context``         — name + condition + tags (clinical hints)
-      * ``# Escalation triggers``     — phrases that should bump risk_level
-      * ``# Topics to avoid``         — soft content guard for the model
-      * ``# Operator override``       — verbatim ``personaOverride`` body if set
-    """
-    if req.personaOverride and req.personaOverride.strip():
-        # When an override is supplied it wins outright — operator knows best.
-        # We still annotate the file so it's obvious downstream that this was
-        # a wizard-authored override (vs a hand-edited ai_agent.system_prompt).
-        return (
-            f"{_ENGLISH_ONLY_PIN}\n\n"
-            "# Operator override (custom persona)\n"
-            f"# Client: {req.name}\n\n"
-            f"{req.personaOverride.strip()}\n"
-        )
-
-    # Every generated persona starts with the absolute English-only pin so no
-    # onboard can ever produce an agent that the (English-only) Piper voice
-    # would garble.
-    parts: list[str] = [_ENGLISH_ONLY_PIN]
-
-    # Client context
-    ctx_lines = [f"Client name: {req.name}."]
-    if req.condition and req.condition.strip():
-        ctx_lines.append(f"Clinical context: {req.condition.strip()}")
-    if req.tags:
-        ctx_lines.append("Tags: " + ", ".join(t.strip() for t in req.tags if t.strip()))
-    parts.append("# Client context\n" + "\n".join(ctx_lines))
-
-    # Escalation triggers
-    if req.escalationPhrases:
-        phrases = "\n".join(f"- {p.strip()}" for p in req.escalationPhrases if p.strip())
-        parts.append(
-            "# Escalation triggers\n"
-            "If the client mentions any of the following, raise the assessment "
-            "risk_level and surface a clear concern in your reply:\n"
-            f"{phrases}"
-        )
-
-    # Topics to avoid
-    if req.topicsToAvoid:
-        topics = "\n".join(f"- {t.strip()}" for t in req.topicsToAvoid if t.strip())
-        parts.append(
-            "# Topics to avoid\n"
-            "Steer the conversation away from these topics; do not volunteer them:\n"
-            f"{topics}"
-        )
-
-    # Always-on caregiver framing tail so a minimal wizard input still gets a
-    # complete prompt (the bridge will eventually merge this with the global
-    # persona, but the per-agent block has to stand on its own too).
-    parts.append(
-        "# Caregiver framing\n"
-        "You are a soothing, plain-language companion for an elderly client. "
-        "Keep replies short. Confirm what you heard before recommending action. "
-        "If anything indicates a medical emergency, recommend calling for help."
-    )
-
-    return "\n\n".join(parts) + "\n"
+    """Compose the agent's ``system_prompt`` from wizard fields."""
+    return build_system_prompt(name=req.name.strip(), profile=profile_from_onboard(req))
 
 
 def _device_response(dev: AiDevice, *, previous_agent_id: str | None = None) -> dict[str, Any]:
@@ -325,6 +265,8 @@ async def onboard_agent(
             user_id=user.id,
             agent_code=agent_code,
             agent_name=name,
+            bot_name=_sanitize_bot_name(payload.botName) if payload.botName is not None else None,
+            profile_json=dump_profile(profile_from_onboard(payload)),
             asr_model_id="ASR_FunASR",
             vad_model_id="VAD_SileroVAD",
             llm_model_id="LLM_OllamaLLM",
@@ -732,6 +674,7 @@ async def onboard_template(
         ],
         "topicsToAvoid": [],
         "personaOverride": None,
+        "botName": None,
         "eui": None,
         "deviceAlias": None,
         "clientDeviceId": None,
@@ -765,6 +708,13 @@ class ClientPatchRequest(BaseModel):
     name: str | None = None
     systemPrompt: str | None = None
     botName: str | None = None
+    dob: str | None = None
+    age: int | None = None
+    condition: str | None = None
+    tags: list[str] | None = None
+    escalationPhrases: list[str] | None = None
+    topicsToAvoid: list[str] | None = None
+    personaOverride: str | None = None
 
 
 _GUARDRAIL_FALLBACK = {
@@ -888,25 +838,31 @@ async def patch_agent(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Update a subset of fields on ai_agent. Supports renaming the client,
-    the voice command bot name, and overriding the system prompt. RBAC-checked:
-    scoped admins can only edit clients they have access to."""
+    """Update client identity, bot name, and structured profile/guardrails.
+
+    Profile fields merge into ``ai_agent.profile_json`` so unknown keys and
+    omitted fields are not erased. Integrations, devices, chat, and
+    assessments are not touched.
+    """
     await assert_can_access_agent(db, user, agent_id)
 
+    provided = payload.model_fields_set
     name = payload.name.strip() if payload.name is not None else None
     system_prompt = payload.systemPrompt if payload.systemPrompt is not None else None
-    bot_name_provided = payload.botName is not None
-    bot_name = None
-    if bot_name_provided:
-        cleaned = " ".join((payload.botName or "").split())
-        if any(ord(ch) < 32 for ch in cleaned):
-            raise APIException(400, "botName cannot contain control characters")
-        if len(cleaned) > 64:
-            raise APIException(400, "botName must be 64 characters or fewer")
-        bot_name = cleaned or None
+    bot_name_provided = "botName" in provided
+    bot_name = _sanitize_bot_name(payload.botName) if bot_name_provided else None
+    profile_keys_provided = [k for k in PROFILE_KEYS if k in provided]
 
-    if not name and system_prompt is None and not bot_name_provided:
-        raise APIException(400, "at least one of name, botName, or systemPrompt is required")
+    if (
+        not name
+        and system_prompt is None
+        and not bot_name_provided
+        and not profile_keys_provided
+    ):
+        raise APIException(
+            400,
+            "at least one editable client field is required",
+        )
     if payload.name is not None and not name:
         raise APIException(400, "name cannot be blank")
 
@@ -920,12 +876,29 @@ async def patch_agent(
     if name is not None and name != agent.agent_name:
         agent.agent_name = name
         fields_changed.append("name")
-    if system_prompt is not None and system_prompt != agent.system_prompt:
-        agent.system_prompt = system_prompt
-        fields_changed.append("systemPrompt")
     if bot_name_provided and bot_name != agent.bot_name:
         agent.bot_name = bot_name
         fields_changed.append("botName")
+
+    rebuilt_prompt = False
+    if profile_keys_provided:
+        existing = effective_profile(agent.profile_json, agent.system_prompt)
+        patch = {k: getattr(payload, k) for k in profile_keys_provided}
+        merged = merge_profile(existing, patch)
+        dumped = dump_profile(merged)
+        if dumped != (agent.profile_json or dump_profile({})):
+            agent.profile_json = dumped
+            fields_changed.extend(k for k in profile_keys_provided if k not in fields_changed)
+        prompt_name = name or agent.agent_name or ""
+        new_prompt = build_system_prompt(name=prompt_name, profile=merged)
+        if new_prompt != agent.system_prompt:
+            agent.system_prompt = new_prompt
+            fields_changed.append("systemPrompt")
+        rebuilt_prompt = True
+
+    if system_prompt is not None and not rebuilt_prompt and system_prompt != agent.system_prompt:
+        agent.system_prompt = system_prompt
+        fields_changed.append("systemPrompt")
 
     if fields_changed:
         agent.updater = user.id

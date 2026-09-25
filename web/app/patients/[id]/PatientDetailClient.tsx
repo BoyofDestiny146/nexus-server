@@ -24,6 +24,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { Modal } from "@/components/Modal";
 import { ToastProvider, useToast } from "@/components/Toast";
 import { ClientIntegrations } from "@/components/ClientIntegrations";
+import { EditClientWorkspace } from "@/components/EditClientWorkspace";
 
 const WATCHER_ONLINE_MS = 5 * 60_000;
 
@@ -708,10 +709,15 @@ function PatientDetailView({ id }: { id: string }) {
         }}
       />
 
-      <EditPatientModal
+      <EditClientWorkspace
         open={editOpen}
         onClose={() => setEditOpen(false)}
         agent={agent}
+        devices={devices}
+        onAttachDevice={() => {
+          setEditOpen(false);
+          setAttachOpen(true);
+        }}
         onSaved={async () => {
           setEditOpen(false);
           toast.push("Client updated.", "success");
@@ -767,110 +773,6 @@ function LiveBadge({ status }: { status: import("@/lib/useLiveChat").LiveChatSta
     <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-slate-muted">
       <Loader2 size={10} className="animate-spin" /> Connecting
     </span>
-  );
-}
-
-function EditPatientModal({
-  open, onClose, agent, onSaved,
-}: {
-  open: boolean;
-  onClose: () => void;
-  agent: AgentDetail;
-  onSaved: () => void;
-}) {
-  const [name, setName] = useState(agent.agentName ?? "");
-  const [botName, setBotName] = useState(agent.botName ?? "");
-  const [persona, setPersona] = useState(agent.systemPrompt ?? "");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (open) {
-      setName(agent.agentName ?? "");
-      setBotName(agent.botName ?? "");
-      setPersona(agent.systemPrompt ?? "");
-      setErr(null);
-      setBusy(false);
-    }
-  }, [open, agent]);
-
-  const dirty =
-    (name.trim() !== (agent.agentName ?? "").trim()) ||
-    ((botName ?? "").trim() !== (agent.botName ?? "").trim()) ||
-    ((persona ?? "") !== (agent.systemPrompt ?? ""));
-
-  async function submit() {
-    if (busy || !dirty) return;
-    setBusy(true); setErr(null);
-    const body: { name?: string; systemPrompt?: string; botName?: string } = {};
-    if (name.trim() !== (agent.agentName ?? "").trim()) body.name = name.trim();
-    if ((botName ?? "").trim() !== (agent.botName ?? "").trim()) body.botName = botName.trim();
-    if ((persona ?? "") !== (agent.systemPrompt ?? "")) body.systemPrompt = persona;
-    try {
-      await apiPatch<{ agentId: string; updated: number; fields: string[] }>(
-        `/agent/${agent.id}`,
-        body,
-      );
-      onSaved();
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Update failed.");
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal
-      open={open} onClose={onClose} title="Edit client" size="lg"
-      footer={
-        <>
-          <button onClick={onClose} className="btn-secondary">Cancel</button>
-          <button onClick={submit} disabled={!dirty || busy} className="btn-primary">
-            {busy && <Loader2 size={14} className="animate-spin" />}
-            Save changes
-          </button>
-        </>
-      }
-    >
-      <div className="space-y-5">
-        <div>
-          <label htmlFor="edit-name" className="label">Client name</label>
-          <input
-            id="edit-name" className="input text-[16px]"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            autoFocus
-          />
-        </div>
-        <div>
-          <label htmlFor="edit-bot-name" className="label">Bot name</label>
-          <input
-            id="edit-bot-name" className="input text-[16px]"
-            value={botName}
-            onChange={(e) => setBotName(e.target.value)}
-            placeholder="Bob"
-          />
-          <div className="helper">
-            Used to start device-control commands, for example: “Bob, show my calendar.”
-            This is a deliberate-command prefix, not a security credential.
-          </div>
-        </div>
-        <div>
-          <label htmlFor="edit-persona" className="label">Persona override</label>
-          <textarea
-            id="edit-persona" rows={10} className="input"
-            placeholder="System prompt that frames the caregiver. Leave blank to use the global persona."
-            value={persona}
-            onChange={(e) => setPersona(e.target.value)}
-          />
-          <div className="helper">Stored on the agent row. Affects the LLM's tone for every conversation with this client.</div>
-        </div>
-        {err && (
-          <div className="text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">
-            {err}
-          </div>
-        )}
-      </div>
-    </Modal>
   );
 }
 
