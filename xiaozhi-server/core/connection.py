@@ -152,6 +152,10 @@ class ConnectionHandler:
         self.load_function_plugin = False
         self.intent_type = "nointent"
 
+        # careconnect: per-client Revel command prefix (ai_agent.bot_name)
+        self.cc_agent_id = None
+        self.cc_bot_name = None
+
         self.timeout_seconds = (
             int(self.config.get("close_connection_no_voice_time", 120)) + 60
         )  # 在原来第一道关闭的基础上加60秒，进行二道关闭
@@ -407,6 +411,9 @@ class ConnectionHandler:
                 try:
                     from config.careconnect_db import lookup_agent_persona
                     persona = lookup_agent_persona(self.device_id or "")
+                    if persona:
+                        self.cc_agent_id = persona.get("agent_id")
+                        self.cc_bot_name = (persona.get("bot_name") or "").strip() or None
                     if persona and persona.get("system_prompt"):
                         per_agent = persona["system_prompt"].strip()
                         first = persona.get("first_name")

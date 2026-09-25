@@ -14,6 +14,7 @@ import type {
 import { deviceSetupUrl } from "@/lib/serverConfig";
 import { classNames, dayLabel, relativeTime, shortTime } from "@/lib/format";
 import { isSystemChat, parseGcalTimeline } from "@/lib/calendarTimeline";
+import { parseRevelTimeline } from "@/lib/revelTimeline";
 import { useLiveChat } from "@/lib/useLiveChat";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -379,7 +380,7 @@ function PatientDetailView({ id }: { id: string }) {
             </div>
             <div>
               <SectionLabel>Connections</SectionLabel>
-              <ClientIntegrations agentId={id} />
+              <ClientIntegrations agentId={id} botName={agent.botName} />
             </div>
             <div>
               <SectionLabel>Devices</SectionLabel>
@@ -517,7 +518,28 @@ function PatientDetailView({ id }: { id: string }) {
               </div>
               <ol className="space-y-4">
                 {group.items.map((m) => {
+                  const revel = parseRevelTimeline(m.content);
                   const gcal = parseGcalTimeline(m.content);
+                  if (revel) {
+                    const when = shortTime(revel.deliveredAt || m.createdAt);
+                    return (
+                      <li key={m.id} className="flex justify-center">
+                        <div className="w-full max-w-[min(100%,28rem)] border border-dashed border-slate-line bg-bone-soft/70 rounded-card px-3.5 py-2.5">
+                          <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-muted">
+                            <span>Display action{when ? ` · ${when}` : ""}</span>
+                          </div>
+                          <div className="mt-1.5 text-[13.5px] leading-relaxed text-slate-deep space-y-0.5">
+                            {revel.requested ? (
+                              <div>Requested: “{revel.requested}”</div>
+                            ) : null}
+                            {revel.intent ? <div>Action: {revel.intent}</div> : null}
+                            {revel.deviceName ? <div>Display: {revel.deviceName}</div> : null}
+                            <div>Result: {revel.result}</div>
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  }
                   if (isSystemChat(m.chatType) || gcal) {
                     const when = shortTime(gcal?.occurrenceStart || m.createdAt);
                     const spoken = (gcal?.spokenText || m.content || "").trim();
@@ -757,6 +779,7 @@ function EditPatientModal({
   onSaved: () => void;
 }) {
   const [name, setName] = useState(agent.agentName ?? "");
+  const [botName, setBotName] = useState(agent.botName ?? "");
   const [persona, setPersona] = useState(agent.systemPrompt ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -764,6 +787,7 @@ function EditPatientModal({
   useEffect(() => {
     if (open) {
       setName(agent.agentName ?? "");
+      setBotName(agent.botName ?? "");
       setPersona(agent.systemPrompt ?? "");
       setErr(null);
       setBusy(false);
@@ -772,13 +796,15 @@ function EditPatientModal({
 
   const dirty =
     (name.trim() !== (agent.agentName ?? "").trim()) ||
+    ((botName ?? "").trim() !== (agent.botName ?? "").trim()) ||
     ((persona ?? "") !== (agent.systemPrompt ?? ""));
 
   async function submit() {
     if (busy || !dirty) return;
     setBusy(true); setErr(null);
-    const body: { name?: string; systemPrompt?: string } = {};
+    const body: { name?: string; systemPrompt?: string; botName?: string } = {};
     if (name.trim() !== (agent.agentName ?? "").trim()) body.name = name.trim();
+    if ((botName ?? "").trim() !== (agent.botName ?? "").trim()) body.botName = botName.trim();
     if ((persona ?? "") !== (agent.systemPrompt ?? "")) body.systemPrompt = persona;
     try {
       await apiPatch<{ agentId: string; updated: number; fields: string[] }>(
@@ -814,6 +840,19 @@ function EditPatientModal({
             onChange={(e) => setName(e.target.value)}
             autoFocus
           />
+        </div>
+        <div>
+          <label htmlFor="edit-bot-name" className="label">Bot name</label>
+          <input
+            id="edit-bot-name" className="input text-[16px]"
+            value={botName}
+            onChange={(e) => setBotName(e.target.value)}
+            placeholder="Bob"
+          />
+          <div className="helper">
+            Used to start device-control commands, for example: “Bob, show my calendar.”
+            This is a deliberate-command prefix, not a security credential.
+          </div>
         </div>
         <div>
           <label htmlFor="edit-persona" className="label">Persona override</label>

@@ -26,9 +26,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..db import get_db
 from ..envelope import APIException
 from ..pubsub import publish_chat_turn
+from ..revel_command import evaluate_voice_command
 from ..settings import settings
 
 
@@ -108,3 +111,31 @@ async def notify_chat_turn(payload: ChatTurnNotify) -> dict[str, Any]:
         payload.agentId, payload.sessionId, payload.chatType, subscribers, len(content),
     )
     return {"published": True, "subscribers": int(subscribers)}
+
+
+class RevelCommandIn(BaseModel):
+    agentId: str = Field(min_length=1, max_length=64)
+    utterance: str = Field(default="", max_length=1024)
+    remainder: str = Field(min_length=1, max_length=1024)
+
+
+@router.post("/revel/command", response_model=None, dependencies=[Depends(require_internal_token)])
+async def revel_command(
+    payload: RevelCommandIn,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Allowlisted Revel phrase match. Does not mutate Revel in V1."""
+    result = await evaluate_voice_command(
+        db,
+        agent_id=payload.agentId,
+        utterance=payload.utterance,
+        remainder=payload.remainder,
+    )
+    log.info(
+        "revel command agent=%s matched=%s executed=%s reason=%s",
+        payload.agentId,
+        result.get("matched"),
+        result.get("executed"),
+        result.get("reason"),
+    )
+    return result

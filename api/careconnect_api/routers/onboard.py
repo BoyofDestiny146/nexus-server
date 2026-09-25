@@ -764,6 +764,7 @@ class DraftGuardrailsRequest(BaseModel):
 class ClientPatchRequest(BaseModel):
     name: str | None = None
     systemPrompt: str | None = None
+    botName: str | None = None
 
 
 _GUARDRAIL_FALLBACK = {
@@ -887,16 +888,25 @@ async def patch_agent(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Update a subset of fields on ai_agent. Currently supports renaming the
-    client and overriding the system prompt verbatim. RBAC-checked: scoped
-    admins can only edit clients they have access to."""
+    """Update a subset of fields on ai_agent. Supports renaming the client,
+    the voice command bot name, and overriding the system prompt. RBAC-checked:
+    scoped admins can only edit clients they have access to."""
     await assert_can_access_agent(db, user, agent_id)
 
     name = payload.name.strip() if payload.name is not None else None
     system_prompt = payload.systemPrompt if payload.systemPrompt is not None else None
+    bot_name_provided = payload.botName is not None
+    bot_name = None
+    if bot_name_provided:
+        cleaned = " ".join((payload.botName or "").split())
+        if any(ord(ch) < 32 for ch in cleaned):
+            raise APIException(400, "botName cannot contain control characters")
+        if len(cleaned) > 64:
+            raise APIException(400, "botName must be 64 characters or fewer")
+        bot_name = cleaned or None
 
-    if not name and system_prompt is None:
-        raise APIException(400, "at least one of name or systemPrompt is required")
+    if not name and system_prompt is None and not bot_name_provided:
+        raise APIException(400, "at least one of name, botName, or systemPrompt is required")
     if payload.name is not None and not name:
         raise APIException(400, "name cannot be blank")
 
@@ -913,6 +923,9 @@ async def patch_agent(
     if system_prompt is not None and system_prompt != agent.system_prompt:
         agent.system_prompt = system_prompt
         fields_changed.append("systemPrompt")
+    if bot_name_provided and bot_name != agent.bot_name:
+        agent.bot_name = bot_name
+        fields_changed.append("botName")
 
     if fields_changed:
         agent.updater = user.id

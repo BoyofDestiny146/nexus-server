@@ -34,7 +34,12 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..chat_events import CHAT_TYPE_CAREGIVER, CHAT_TYPE_SYSTEM, calendar_dialogue_line
+from ..chat_events import (
+    CHAT_TYPE_CAREGIVER,
+    CHAT_TYPE_SYSTEM,
+    parse_revel_timeline,
+    system_dialogue_line,
+)
 from ..db import async_session_factory
 from ..models import AiAgent, AiAgentChatHistory, AiMedicalAssessment
 from ..settings import settings
@@ -75,14 +80,18 @@ def _render_dialogue(messages: list[AiAgentChatHistory]) -> str:
     """Format chat history compactly.
 
     chat_type 1 = client, 2 = caregiver voice, 3 = system_event (calendar
-    reminders are labelled ``calendar_reminder``). A calendar row is a
-    spoken reminder, not evidence the medication/task was completed.
+    reminders are labelled ``calendar_reminder``; Revel display actions are
+    ``display_action``). A calendar row is a spoken reminder, not evidence
+    the medication/task was completed.
     """
     parts: list[str] = []
     for m in messages:
         if m.chat_type == CHAT_TYPE_SYSTEM:
-            role = "calendar_reminder"
-            text = calendar_dialogue_line(m.content)
+            if parse_revel_timeline(m.content):
+                role = "display_action"
+            else:
+                role = "calendar_reminder"
+            text = system_dialogue_line(m.content)
         elif m.chat_type == CHAT_TYPE_CAREGIVER:
             role = "caregiver"
             text = (m.content or "").strip()

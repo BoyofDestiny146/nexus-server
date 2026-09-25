@@ -50,6 +50,7 @@ def _agent_summary(
     return {
         "id": agent.id,
         "agentName": agent.agent_name,
+        "botName": agent.bot_name,
         "agentCode": agent.agent_code,
         "asrModelId": agent.asr_model_id,
         "vadModelId": agent.vad_model_id,
@@ -82,6 +83,7 @@ def _agent_info(agent: AiAgent) -> dict[str, Any]:
         "userId": agent.user_id,
         "agentCode": agent.agent_code,
         "agentName": agent.agent_name,
+        "botName": agent.bot_name,
         "asrModelId": agent.asr_model_id,
         "vadModelId": agent.vad_model_id,
         "llmModelId": agent.llm_model_id,

@@ -82,6 +82,9 @@ def _find_secret(name: str) -> Path:
 NOTIFY_URL = os.environ.get(
     "CC_NOTIFY_URL", "http://127.0.0.1:8080/api/internal/notify/chat-turn"
 )
+REVEL_COMMAND_URL = os.environ.get(
+    "CC_REVEL_COMMAND_URL", "http://127.0.0.1:8080/api/internal/revel/command"
+)
 DB_HOST = os.environ.get("CC_DB_HOST", "127.0.0.1")
 DB_PORT = int(os.environ.get("CC_DB_PORT", "3306"))
 DB_USER = os.environ.get("CC_DB_USER", "xiaozhi")
@@ -290,40 +293,64 @@ def lookup_agent_id(mac_address: str) -> Optional[str]:
 
 
 def lookup_agent_persona(mac_address: str) -> Optional[dict]:
-    """Return ``{"agent_id", "agent_name", "system_prompt", "first_name"}`` for
-    the device's MAC, or None. Used by ``connection.py`` to override the
-    global prompt with the per-client persona at session start.
-    """
+    """Return agent persona including optional ``bot_name`` command prefix."""
     if not mac_address:
         return None
     candidates = _mac_lookup_candidates(mac_address)
     if not candidates:
         return None
+    sql_with = """
+        SELECT a.id, a.agent_name, a.system_prompt, a.bot_name
+          FROM ai_device d
+          JOIN ai_agent a ON a.id = d.agent_id
+         WHERE d.mac_address = %s
+         LIMIT 1
+    """
+    sql_without = """
+        SELECT a.id, a.agent_name, a.system_prompt
+          FROM ai_device d
+          JOIN ai_agent a ON a.id = d.agent_id
+         WHERE d.mac_address = %s
+         LIMIT 1
+    """
     try:
         conn = _connect()
         try:
             with conn.cursor() as cur:
                 for cand in candidates:
-                    cur.execute(
-                        """
-                        SELECT a.id, a.agent_name, a.system_prompt
-                          FROM ai_device d
-                          JOIN ai_agent a ON a.id = d.agent_id
-                         WHERE d.mac_address = %s
-                         LIMIT 1
-                        """,
-                        (cand,),
-                    )
-                    row = cur.fetchone()
-                    if row:
-                        agent_id, agent_name, system_prompt = row
-                        first_name = (agent_name or "").strip().split()[0] if agent_name else None
-                        return {
-                            "agent_id": agent_id,
-                            "agent_name": agent_name,
-                            "system_prompt": system_prompt,
-                            "first_name": first_name,
-                        }
+                    row = None
+                    try:
+                        cur.execute(sql_with, (cand,))
+                        row = cur.fetchone()
+                        if row:
+                            agent_id, agent_name, system_prompt, bot_name = row
+                            first_name = (
+                                (agent_name or "").strip().split()[0] if agent_name else None
+                            )
+                            return {
+                                "agent_id": agent_id,
+                                "agent_name": agent_name,
+                                "system_prompt": system_prompt,
+                                "first_name": first_name,
+                                "bot_name": (bot_name or "").strip() or None,
+                            }
+                    except Exception as col_err:
+                        if "bot_name" not in str(col_err):
+                            raise
+                        cur.execute(sql_without, (cand,))
+                        row = cur.fetchone()
+                        if row:
+                            agent_id, agent_name, system_prompt = row
+                            first_name = (
+                                (agent_name or "").strip().split()[0] if agent_name else None
+                            )
+                            return {
+                                "agent_id": agent_id,
+                                "agent_name": agent_name,
+                                "system_prompt": system_prompt,
+                                "first_name": first_name,
+                                "bot_name": None,
+                            }
                 return None
         finally:
             conn.close()
@@ -395,6 +422,39 @@ def notify_chat_turn(
         )
     except Exception as e:
         log.debug("careconnect_db.notify_chat_turn failed (non-fatal): %s", e)
+
+
+def post_revel_command(
+    agent_id: str,
+    utterance: str,
+    remainder: str,
+) -> dict | None:
+    """Synchronous POST to CareConnect allowlisted Revel matcher. No secrets."""
+    token = _token()
+    if not token or not agent_id or not remainder:
+        return None
+    try:
+        resp = httpx.post(
+            REVEL_COMMAND_URL,
+            json={
+                "agentId": agent_id,
+                "utterance": (utterance or "")[:1024],
+                "remainder": remainder[:1024],
+            },
+            headers={"X-Internal-Token": token},
+            timeout=2.5,
+        )
+        if resp.status_code >= 400:
+            log.warning("revel command http=%s", resp.status_code)
+            return None
+        data = resp.json()
+        if isinstance(data, dict) and isinstance(data.get("data"), dict):
+            data = data["data"]
+        if isinstance(data, dict):
+            return data
+    except Exception as e:
+        log.debug("careconnect_db.post_revel_command failed (non-fatal): %s", e)
+    return None
 
 
 def report(

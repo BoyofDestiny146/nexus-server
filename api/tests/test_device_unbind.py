@@ -30,6 +30,7 @@ from careconnect_api.models import (
     AiAgentChatHistory,
     AiDevice,
     AiMedicalAssessment,
+    ClientIntegration,
 )
 from careconnect_api.settings import settings
 from careconnect_api.watcher_device import (
@@ -287,6 +288,16 @@ async def test_unbind_keeps_same_device_row_and_clears_binding(
     xiaozhi_ok,
 ):
     agent_id = await _onboard_client(client, admin_token)
+    await client.patch(
+        f"/api/agent/{agent_id}",
+        json={"botName": "Bob"},
+        headers=_auth(admin_token),
+    )
+    await client.put(
+        f"/api/agent/{agent_id}/integrations/revel",
+        json={"apiKey": "revel-live-key-XXXX7F2A"},
+        headers=_auth(admin_token),
+    )
     await _auto_register(client)
     attached = await _attach(client, admin_token, agent_id)
     assert attached["code"] == 0, attached
@@ -334,6 +345,16 @@ async def test_unbind_keeps_same_device_row_and_clears_binding(
     agent = await db_session.get(AiAgent, agent_id)
     assert agent is not None
     assert agent.agent_name == "George"
+    assert agent.bot_name == "Bob"
+    revel = (
+        await db_session.execute(
+            select(ClientIntegration).where(
+                ClientIntegration.agent_id == agent_id,
+                ClientIntegration.provider == "revel",
+            )
+        )
+    ).scalar_one_or_none()
+    assert revel is not None
 
     chats = (
         await db_session.execute(

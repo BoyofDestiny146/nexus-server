@@ -48,6 +48,15 @@ from ..gcal_ical import (
 from ..integration_crypto import decrypt_secret, encrypt_secret, secret_hint
 from ..models import AiAgent, ClientIntegration
 from ..rbac import assert_can_access_agent
+from ..revel_client import list_devices
+from ..revel_config import (
+    apply_public_config,
+    dump_meta,
+    empty_meta,
+    load_meta as load_revel_meta,
+    public_meta,
+    tags_from_devices,
+)
 from ..settings import settings
 
 
@@ -153,7 +162,8 @@ def _careconnect_public(row: ClientIntegration) -> dict[str, Any]:
 def _revel_public(row: ClientIntegration) -> dict[str, Any]:
     hint = row.secret_hint or ""
     masked = ("•" * 12 + hint) if hint else ("•" * 12)
-    return {
+    meta = public_meta(load_revel_meta(row))
+    out = {
         "provider": PROVIDER_REVEL,
         "label": "Revel",
         "status": row.status or "connected",
@@ -163,6 +173,8 @@ def _revel_public(row: ClientIntegration) -> dict[str, Any]:
         "createdAt": _iso(row.created_at),
         "updatedAt": _iso(row.updated_at),
     }
+    out.update(meta)
+    return out
 
 
 def _empty_careconnect() -> dict[str, Any]:
@@ -179,7 +191,8 @@ def _empty_careconnect() -> dict[str, Any]:
 
 
 def _empty_revel() -> dict[str, Any]:
-    return {
+    meta = public_meta(empty_meta())
+    out = {
         "provider": PROVIDER_REVEL,
         "label": "Revel",
         "status": "disconnected",
@@ -187,6 +200,8 @@ def _empty_revel() -> dict[str, Any]:
         "secretHint": None,
         "maskedKey": None,
     }
+    out.update(meta)
+    return out
 
 
 def _directed_logic() -> dict[str, Any]:
@@ -252,14 +267,30 @@ def _assert_no_secret_fields(payload: dict[str, Any]) -> None:
         "feedUrl",
         "privateUrl",
         "url",
+        "registrationKey",
+        "registration_key",
+        "registrationKeyEnc",
     )
     for key in banned:
         if key in payload and key != "secretMasked":
             payload.pop(key, None)
 
 
+class RevelActionIn(BaseModel):
+    intent: str = Field(min_length=1, max_length=64)
+    label: str | None = Field(default=None, max_length=80)
+    revelTag: str | None = Field(default=None, max_length=64)
+    enabled: bool | None = None
+    phrases: list[str] | None = None
+
+
 class RevelUpsert(BaseModel):
-    apiKey: str = Field(min_length=8, max_length=512)
+    apiKey: str | None = Field(default=None, max_length=512)
+    apiBaseUrl: str | None = Field(default=None, max_length=512)
+    deviceId: str | None = Field(default=None, max_length=128)
+    deviceName: str | None = Field(default=None, max_length=128)
+    registrationKey: str | None = Field(default=None, max_length=512)
+    actions: list[RevelActionIn] | None = None
 
 
 class GoogleCalendarUpsert(BaseModel):
@@ -420,35 +451,53 @@ async def upsert_revel(
     await assert_can_access_agent(db, user, agent_id)
     await _require_agent(db, agent_id)
 
-    api_key = payload.apiKey.strip()
-    if not api_key:
+    api_key = (payload.apiKey or "").strip()
+    existing = await _get_row(db, agent_id, PROVIDER_REVEL)
+    if existing is None and not api_key:
+        raise APIException(400, "apiKey is required")
+    if api_key and len(api_key) < 8:
         raise APIException(400, "apiKey is required")
 
-    ciphertext = encrypt_secret(api_key)
-    hint = secret_hint(api_key)
-    existing = await _get_row(db, agent_id, PROVIDER_REVEL)
     now = _now()
     if existing is None:
+        meta = empty_meta()
         row = ClientIntegration(
             agent_id=agent_id,
             provider=PROVIDER_REVEL,
             public_id=None,
             secret_hash=None,
-            secret_enc=ciphertext,
-            secret_hint=hint,
+            secret_enc=encrypt_secret(api_key),
+            secret_hint=secret_hint(api_key),
             status="connected",
+            metadata_json=dump_meta(meta),
             created_at=now,
             updated_at=now,
         )
         db.add(row)
         replaced = False
     else:
-        existing.secret_enc = ciphertext
-        existing.secret_hint = hint
+        meta = load_revel_meta(existing)
+        if api_key:
+            existing.secret_enc = encrypt_secret(api_key)
+            existing.secret_hint = secret_hint(api_key)
         existing.status = "connected"
         existing.updated_at = now
         row = existing
         replaced = True
+
+    apply_public_config(
+        meta,
+        api_base_url=payload.apiBaseUrl,
+        device_id=payload.deviceId,
+        device_name=payload.deviceName,
+        actions=[a.model_dump() for a in payload.actions] if payload.actions is not None else None,
+    )
+    reg = (payload.registrationKey or "").strip()
+    if reg:
+        meta["registrationKeyEnc"] = encrypt_secret(reg)
+        meta["registrationKeyHint"] = secret_hint(reg)
+    row.metadata_json = dump_meta(meta)
+
     try:
         await db.commit()
         await db.refresh(row)
@@ -459,6 +508,49 @@ async def upsert_revel(
     log.info("revel integration %s agent=%s", "replaced" if replaced else "created", agent_id)
     out = _revel_public(row)
     out["replaced"] = replaced
+    _assert_no_secret_fields(out)
+    return out
+
+
+@router.post("/{agent_id}/integrations/revel/discover", response_model=None)
+async def discover_revel(
+    agent_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Read-only Revel device/tag discovery. Never mutates Revel."""
+    await assert_can_access_agent(db, user, agent_id)
+    row = await _get_row(db, agent_id, PROVIDER_REVEL)
+    if row is None or not row.secret_enc:
+        raise APIException(404, "Revel integration is not connected")
+    try:
+        api_key = decrypt_secret(row.secret_enc)
+    except Exception:
+        raise APIException(500, "stored Revel credential cannot be decrypted")
+
+    meta = load_revel_meta(row)
+    devices = await list_devices(api_key, meta.get("apiBaseUrl"))
+    meta["discoveredDevices"] = devices
+    meta["discoveredTags"] = tags_from_devices(devices)
+    meta["lastDiscoverAt"] = _now().isoformat()
+    selected = meta.get("deviceId")
+    ids = {d["id"] for d in devices}
+    if selected and selected not in ids:
+        meta["deviceId"] = None
+        meta["deviceName"] = None
+    row.metadata_json = dump_meta(meta)
+    row.updated_at = _now()
+    try:
+        await db.commit()
+        await db.refresh(row)
+    except Exception:
+        await db.rollback()
+        raise
+
+    log.info("revel discover ok agent=%s devices=%s", agent_id, len(devices))
+    out = _revel_public(row)
+    out["ok"] = True
+    _assert_no_secret_fields(out)
     return out
 
 

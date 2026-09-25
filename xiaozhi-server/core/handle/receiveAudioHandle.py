@@ -78,16 +78,57 @@ async def startToChat(conn, text):
     if conn.client_is_speaking:
         await handleAbortMessage(conn)
 
+    from core.revel_wake import strip_wake_prefix, utterance_from_asr_text
+
+    utterance = utterance_from_asr_text(actual_text)
+    prefix_hit, remainder = strip_wake_prefix(
+        utterance, getattr(conn, "cc_bot_name", None)
+    )
+    chat_text = actual_text
+    if prefix_hit and remainder:
+        command = None
+        try:
+            from config.careconnect_db import post_revel_command
+
+            command = post_revel_command(
+                getattr(conn, "cc_agent_id", None) or "",
+                utterance,
+                remainder,
+            )
+        except Exception as exc:
+            conn.logger.bind(tag=TAG).debug(f"revel command lookup failed: {exc}")
+            command = None
+        if command and command.get("matched"):
+            conn.logger.bind(tag=TAG).info(
+                "revel command matched intent=%s execute=%s",
+                command.get("intent"),
+                command.get("executed"),
+            )
+            await send_stt_message(conn, utterance)
+            speak = getattr(conn, "_cc_speak_now", None)
+            if callable(speak):
+                try:
+                    speak(
+                        "That display command isn't available yet.",
+                        log_turn=False,
+                    )
+                except Exception:
+                    pass
+            return
+        # Wake prefix hit, no enabled Revel phrase: Qwen gets the remainder.
+        chat_text = remainder
+    # Empty remainder ("Bob" / "Bob!") keeps the original conversation path.
+
     # 首先进行意图分析，使用实际文本内容
-    intent_handled = await handle_user_intent(conn, actual_text)
+    intent_handled = await handle_user_intent(conn, chat_text)
 
     if intent_handled:
         # 如果意图已被处理，不再进行聊天
         return
 
     # 意图未被处理，继续常规聊天流程，使用实际文本内容
-    await send_stt_message(conn, actual_text)
-    conn.executor.submit(conn.chat, actual_text)
+    await send_stt_message(conn, chat_text)
+    conn.executor.submit(conn.chat, chat_text)
 
 
 async def no_voice_close_connect(conn, have_voice):

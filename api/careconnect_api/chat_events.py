@@ -33,6 +33,8 @@ CHAT_TYPE_CAREGIVER = 2
 CHAT_TYPE_SYSTEM = 3
 SOURCE_GOOGLE_CALENDAR = "google_calendar"
 GCAL_MARKER = "[[gcal]]"
+REVEL_MARKER = "[[revel]]"
+SOURCE_REVEL = "revel"
 GCAL_SESSION_FALLBACK = "google_calendar"
 CONTENT_MAX = 1024
 
@@ -48,6 +50,11 @@ _FORBIDDEN_HEADER_KEYS = frozenset(
         "credential",
         "credentials",
         "password",
+        "apiKey",
+        "api_key",
+        "registrationKey",
+        "registration_key",
+        "registrationKeyEnc",
     }
 )
 
@@ -124,6 +131,70 @@ def parse_gcal_timeline(content: str | None) -> dict[str, Any] | None:
     }
 
 
+def encode_revel_timeline(
+    *,
+    requested: str,
+    intent: str,
+    device_name: str,
+    result: str,
+    delivered_at: str,
+    provider: str = SOURCE_REVEL,
+) -> str:
+    """Pack a display-action system row. No secrets, no device UUID, no API host."""
+    allowed_result = result if result in ("delivered", "failed") else "failed"
+    header = {
+        "provider": provider or SOURCE_REVEL,
+        "intent": (intent or "")[:64],
+        "deviceName": (device_name or "")[:80],
+        "result": allowed_result,
+        "requested": (requested or "")[:180],
+        "delivered_at": delivered_at or "",
+    }
+    for key in _FORBIDDEN_HEADER_KEYS:
+        header.pop(key, None)
+    raw = json.dumps(header, separators=(",", ":"), ensure_ascii=False)
+    prefix = f"{REVEL_MARKER}{raw}\n"
+    body = "DISPLAY ACTION"
+    budget = CONTENT_MAX - len(prefix)
+    if budget < 0:
+        return (prefix[: CONTENT_MAX - 1] + "\n")[:CONTENT_MAX]
+    return prefix + body[:budget]
+
+
+def parse_revel_timeline(content: str | None) -> dict[str, Any] | None:
+    if not content:
+        return None
+    text = content.lstrip()
+    if not text.startswith(REVEL_MARKER):
+        return None
+    rest = text[len(REVEL_MARKER) :]
+    nl = rest.find("\n")
+    if nl < 0:
+        header_raw, _body = rest, ""
+    else:
+        header_raw, _body = rest[:nl], rest[nl + 1 :]
+    try:
+        header = json.loads(header_raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(header, dict):
+        return None
+    provider = str(header.get("provider") or SOURCE_REVEL)
+    if provider != SOURCE_REVEL:
+        return None
+    result = str(header.get("result") or "")
+    if result not in ("delivered", "failed"):
+        result = "failed"
+    return {
+        "provider": provider,
+        "intent": str(header.get("intent") or ""),
+        "deviceName": str(header.get("deviceName") or ""),
+        "result": result,
+        "requested": str(header.get("requested") or ""),
+        "delivered_at": str(header.get("delivered_at") or ""),
+    }
+
+
 def calendar_dialogue_line(content: str | None) -> str:
     """Compact line for triage: spoken text only, never the JSON header."""
     parsed = parse_gcal_timeline(content)
@@ -132,6 +203,18 @@ def calendar_dialogue_line(content: str | None) -> str:
         title = (parsed.get("title") or "").strip()
         return spoken or title
     return (content or "").strip()
+
+
+def system_dialogue_line(content: str | None) -> str:
+    """Triage line for chat_type=3. Never includes JSON headers or secrets."""
+    revel = parse_revel_timeline(content)
+    if revel is not None:
+        intent = (revel.get("intent") or "").strip()
+        result = (revel.get("result") or "").strip()
+        requested = (revel.get("requested") or "").strip()
+        bits = [part for part in (intent, result, requested) if part]
+        return " ".join(bits)
+    return calendar_dialogue_line(content)
 
 
 async def latest_session_id(db: AsyncSession, agent_id: str) -> str:
@@ -205,6 +288,66 @@ async def persist_google_calendar_timeline(
         "calendar timeline recorded agent=%s uid=%s chat_type=%s",
         agent_id,
         occ.uid,
+        CHAT_TYPE_SYSTEM,
+    )
+    return {
+        "id": row.id,
+        "agentId": agent_id,
+        "sessionId": session_id,
+        "chatType": CHAT_TYPE_SYSTEM,
+        "content": content,
+        "macAddress": "",
+        "createdAt": created_ms,
+    }
+
+
+async def persist_revel_timeline(
+    db: AsyncSession,
+    *,
+    agent_id: str,
+    requested: str,
+    intent: str,
+    device_name: str,
+    result: str,
+    delivered_at: datetime,
+) -> dict[str, Any] | None:
+    """Insert one display-action system_event row. Caller commits."""
+    if not agent_id:
+        return None
+    session_id = await latest_session_id(db, agent_id)
+    delivered_iso = _iso(delivered_at)
+    content = encode_revel_timeline(
+        requested=requested,
+        intent=intent,
+        device_name=device_name,
+        result=result,
+        delivered_at=delivered_iso,
+    )
+    stamp = _naive_local(delivered_at)
+    fields: dict[str, Any] = {
+        "mac_address": None,
+        "agent_id": agent_id,
+        "session_id": session_id,
+        "chat_type": CHAT_TYPE_SYSTEM,
+        "content": content,
+        "created_at": stamp,
+        "updated_at": stamp,
+    }
+    next_id = await _sqlite_next_chat_id(db)
+    if next_id is not None:
+        fields["id"] = next_id
+    row = AiAgentChatHistory(**fields)
+    db.add(row)
+    await db.flush()
+    if delivered_at.tzinfo is not None:
+        created_ms = int(delivered_at.timestamp() * 1000)
+    else:
+        created_ms = int(stamp.replace(tzinfo=timezone.utc).timestamp() * 1000)
+    log.info(
+        "revel timeline recorded agent=%s intent=%s result=%s chat_type=%s",
+        agent_id,
+        intent,
+        result if result in ("delivered", "failed") else "failed",
         CHAT_TYPE_SYSTEM,
     )
     return {

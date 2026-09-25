@@ -15,6 +15,7 @@ export interface AgentSummary {
 }
 
 export interface AgentDetail extends AgentSummary {
+  botName?: string | null;
   systemPrompt: string | null;
   chatHistoryConf: number;
   llmModelId: string | null;
@@ -154,6 +155,21 @@ export interface CalendarEventPreview {
   location?: string;
 }
 
+export interface RevelDiscoveredDevice {
+  id: string;
+  name: string;
+  isOnline?: boolean | null;
+  tags?: string[];
+}
+
+export interface RevelVoiceAction {
+  intent: string;
+  label?: string | null;
+  revelTag?: string | null;
+  enabled?: boolean;
+  phrases?: string[];
+}
+
 export interface ClientIntegration {
   provider: IntegrationProvider;
   label: string;
@@ -179,4 +195,15 @@ export interface ClientIntegration {
   upcoming?: CalendarEventPreview[];
   ok?: boolean;
   eventCount?: number;
+  apiBaseUrl?: string | null;
+  deviceId?: string | null;
+  deviceName?: string | null;
+  discoveredDevices?: RevelDiscoveredDevice[];
+  discoveredTags?: string[];
+  lastDiscoverAt?: string | null;
+  registrationKeySet?: boolean;
+  registrationKeyHint?: string | null;
+  actions?: RevelVoiceAction[];
+  executeEnabled?: boolean;
+  voiceRequiresBotName?: boolean;
 }
