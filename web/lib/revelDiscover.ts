@@ -22,6 +22,19 @@ export function revelDiscoverUrl(agentId: string): string {
   return `/api${revelDiscoverPath(agentId)}`;
 }
 
+export const REVEL_DISCOVER_CLICK_RECEIVED = "Discover click received";
+export const REVEL_DISCOVER_SAVING = "Saving key…";
+export const REVEL_DISCOVER_DISCOVERING = "Discovering…";
+
+export function revelDiscoverRequestLine(agentId: string): string {
+  return `revel discover request route=${revelDiscoverUrl(agentId)}`;
+}
+
+export function revelDiscoverFailedBeforeApi(message: string): string {
+  const safe = (message || "unknown error").replace(/\s+/g, " ").trim().slice(0, 240);
+  return `Discover failed before API call: ${safe}`;
+}
+
 export function planRevelDiscover(opts: {
   agentId?: string | null;
   busy?: boolean;

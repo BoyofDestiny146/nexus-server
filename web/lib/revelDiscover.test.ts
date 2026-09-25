@@ -4,8 +4,11 @@ import {
   deviceOnlineLabel,
   formatRevelDiscoverError,
   planRevelDiscover,
+  revelDiscoverFailedBeforeApi,
   revelDiscoverPath,
+  revelDiscoverRequestLine,
   revelDiscoverUrl,
+  REVEL_DISCOVER_CLICK_RECEIVED,
   shouldClearSessionOn401,
 } from "./revelDiscover.ts";
 
@@ -70,6 +73,19 @@ test("device online labels", () => {
   assert.equal(deviceOnlineLabel(true), "Online");
   assert.equal(deviceOnlineLabel(false), "Offline");
   assert.equal(deviceOnlineLabel(null), "Unknown");
+});
+
+test("visible/client diagnostics never include secrets", () => {
+  assert.equal(REVEL_DISCOVER_CLICK_RECEIVED, "Discover click received");
+  assert.equal(
+    revelDiscoverRequestLine("agt_9"),
+    "revel discover request route=/api/agent/agt_9/integrations/revel/discover",
+  );
+  assert.equal(
+    revelDiscoverFailedBeforeApi("network down"),
+    "Discover failed before API call: network down",
+  );
+  assert.equal(revelDiscoverRequestLine("agt_9").toLowerCase().includes("key"), false);
 });
 
 test("Revel envelope 401 must not clear the dashboard JWT", () => {

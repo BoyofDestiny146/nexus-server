@@ -6,7 +6,7 @@
  * Google Calendar is read-only (private iCal URL). Nexus never writes events.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Calendar, Check, CircuitBoard, Copy, KeyRound, Link2, Loader2, Plus, Unlink2, X, type LucideIcon } from "lucide-react";
 import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api";
 import { Modal } from "@/components/Modal";
@@ -17,7 +17,12 @@ import {
   deviceOnlineLabel,
   formatRevelDiscoverError,
   planRevelDiscover,
+  revelDiscoverFailedBeforeApi,
   revelDiscoverPath,
+  revelDiscoverRequestLine,
+  REVEL_DISCOVER_CLICK_RECEIVED,
+  REVEL_DISCOVER_DISCOVERING,
+  REVEL_DISCOVER_SAVING,
 } from "@/lib/revelDiscover";
 
 interface Props {
@@ -174,9 +179,11 @@ export function ClientIntegrations({ agentId, botName }: Props) {
   const [testNote, setTestNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [discovering, setDiscovering] = useState(false);
+  const [discoverTrace, setDiscoverTrace] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState<Copied>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const discoverClickGuard = useRef(0);
 
   const refresh = useCallback(async () => {
     const data = await apiGet<{ list: ClientIntegration[] }>(
@@ -211,6 +218,7 @@ export function ClientIntegrations({ agentId, botName }: Props) {
     setErr(null);
     setBusy(false);
     setDiscovering(false);
+    setDiscoverTrace(null);
     setCopied(null);
     setConfirmDisconnect(false);
     setRevelKey("");
@@ -311,42 +319,63 @@ export function ClientIntegrations({ agentId, botName }: Props) {
   }
 
   async function discoverRevel() {
-    const plan = planRevelDiscover({
-      agentId,
-      busy,
-      connected: !!revel?.connected,
-      typedKey: revelKey,
-    });
-    // Non-secret diagnostic only. Never log keys, ciphertext, or registration keys.
-    console.info(`revel discover click agent=${agentId} plan=${plan.action}`);
-    if (plan.action === "missing-agent") {
-      setErr("Missing client id; cannot discover Revel devices.");
-      return;
-    }
-    if (plan.action === "busy") {
-      setErr("Discovery is already running.");
-      return;
-    }
-    if (plan.action === "need-key") {
-      setErr("Save the API key first, then Discover Devices.");
-      return;
-    }
-    setBusy(true);
-    setDiscovering(true);
-    setErr(null);
+    // Visible first, before any guard or fetch. Never log secrets.
+    setDiscoverTrace(REVEL_DISCOVER_CLICK_RECEIVED);
+    console.info(`revel discover click agent=${agentId}`);
+    let discoverFetchStarted = false;
     try {
+      const plan = planRevelDiscover({
+        agentId,
+        busy: discovering,
+        connected: !!revel?.connected,
+        typedKey: revelKey,
+      });
+      console.info(`revel discover click agent=${agentId} plan=${plan.action}`);
+      if (plan.action === "missing-agent") {
+        setErr("Missing client id; cannot discover Revel devices.");
+        return;
+      }
+      if (plan.action === "busy") {
+        setErr("Discovery is already running.");
+        return;
+      }
+      if (plan.action === "need-key") {
+        setErr("Save the API key first, then Discover Devices.");
+        return;
+      }
+      setBusy(true);
+      setDiscovering(true);
+      setErr(null);
       if (plan.action === "save-then-discover") {
+        setDiscoverTrace(REVEL_DISCOVER_SAVING);
         await apiPut(`/agent/${agentId}/integrations/revel`, { apiKey: plan.apiKey });
         setRevelKey("");
       }
+      const routeLine = revelDiscoverRequestLine(agentId);
+      console.info(routeLine);
+      setDiscoverTrace(`${REVEL_DISCOVER_DISCOVERING}\n${routeLine}`);
+      discoverFetchStarted = true;
       await apiPost<ClientIntegration>(revelDiscoverPath(agentId), {});
       await refresh();
     } catch (e) {
-      setErr(formatRevelDiscoverError(e));
+      const safe = formatRevelDiscoverError(e);
+      if (!discoverFetchStarted) {
+        setDiscoverTrace(revelDiscoverFailedBeforeApi(safe));
+      }
+      setErr(safe);
     } finally {
       setDiscovering(false);
       setBusy(false);
     }
+  }
+
+  function onDiscoverActivate(e: { preventDefault: () => void; stopPropagation: () => void }) {
+    e.preventDefault();
+    e.stopPropagation();
+    const now = Date.now();
+    if (now - discoverClickGuard.current < 400) return;
+    discoverClickGuard.current = now;
+    void discoverRevel();
   }
 
   async function saveGoogleCalendar() {
@@ -609,6 +638,20 @@ export function ClientIntegrations({ agentId, botName }: Props) {
           </p>
         ) : (
           <div className="space-y-5 text-[14px] text-slate-deep max-h-[min(70vh,40rem)] overflow-y-auto pr-1">
+            {discoverTrace ? (
+              <div
+                data-testid="revel-discover-trace"
+                className="rounded-card border border-teal/40 bg-teal-tint px-3.5 py-2.5 text-[13px] text-slate-deep whitespace-pre-wrap font-mono"
+              >
+                {discoverTrace}
+              </div>
+            ) : null}
+            {err && (
+              <div className="flex items-start gap-2 text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                {err}
+              </div>
+            )}
             <div className="rounded-card border border-slate-line/70 bg-bone-soft/60 px-3.5 py-2.5 text-[13px] leading-relaxed">
               Voice commands require the client’s bot name.
               Example: “{botName?.trim() || "Bob"}, show my calendar”
@@ -653,14 +696,11 @@ export function ClientIntegrations({ agentId, botName }: Props) {
               </button>
               <button
                 type="button"
-                className="btn-secondary text-[12px]"
+                className="btn-secondary text-[12px] pointer-events-auto"
                 data-testid="revel-discover"
-                disabled={busy || (!revel?.connected && revelKey.trim().length < 8)}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  void discoverRevel();
-                }}
+                aria-busy={discovering}
+                onPointerDown={onDiscoverActivate}
+                onClick={onDiscoverActivate}
               >
                 {discovering ? <Loader2 size={12} className="animate-spin" /> : null}
                 {discovering ? "Discovering…" : "Discover Devices"}
