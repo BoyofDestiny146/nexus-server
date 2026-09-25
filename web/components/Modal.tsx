@@ -53,7 +53,7 @@ export function Modal({
         ref={ref}
         tabIndex={-1}
         className={classNames(
-          "relative w-full bg-white border border-slate-line rounded-card outline-none toast-in",
+          "relative z-10 w-full bg-white border border-slate-line rounded-card outline-none toast-in",
           widthCls,
         )}
       >

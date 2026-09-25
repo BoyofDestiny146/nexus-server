@@ -7,6 +7,8 @@
  * - Response envelope is `{code, msg, data}`. We unwrap on success
  *   (code === 0) and throw `ApiError(code, msg)` otherwise.
  */
+import { shouldClearSessionOn401 } from "@/lib/revelDiscover";
+
 const TOKEN_KEY = "careconnect.token";
 const USER_KEY = "careconnect.user";
 
@@ -69,7 +71,11 @@ export async function api<T = unknown>(
     throw new ApiError(r.status, String(msg));
   }
   if (body.code !== 0) {
-    if (body.code === 401 && typeof window !== "undefined") {
+    if (
+      body.code === 401 &&
+      typeof window !== "undefined" &&
+      shouldClearSessionOn401(path, body.msg)
+    ) {
       clearSession();
     }
     throw new ApiError(body.code, body.msg || body.error || `unexpected ${r.status}`);

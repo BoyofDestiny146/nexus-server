@@ -10,9 +10,15 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Calendar, Check, CircuitBoard, Copy, KeyRound, Link2, Loader2, Plus, Unlink2, X, type LucideIcon } from "lucide-react";
 import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api";
 import { Modal } from "@/components/Modal";
-import type { CalendarEventPreview, ClientIntegration, RevelVoiceAction } from "@/lib/types";
+import type { CalendarEventPreview, ClientIntegration, RevelDiscoveredDevice, RevelVoiceAction } from "@/lib/types";
 import { fargoDateTime } from "@/lib/time";
 import { relativeTime, classNames } from "@/lib/format";
+import {
+  deviceOnlineLabel,
+  formatRevelDiscoverError,
+  planRevelDiscover,
+  revelDiscoverPath,
+} from "@/lib/revelDiscover";
 
 interface Props {
   agentId: string;
@@ -53,6 +59,46 @@ function formatCalendarEvent(ev: CalendarEventPreview | null | undefined): strin
   if (!ev) return "None in the upcoming window";
   const title = ev.title?.trim() || "(untitled)";
   return `${title} — ${formatCalendarWhen(ev)}`;
+}
+
+function RevelDeviceResults({
+  devices,
+  discovering,
+}: {
+  devices: RevelDiscoveredDevice[];
+  discovering: boolean;
+}) {
+  if (discovering) {
+    return (
+      <p className="text-[13px] text-slate-muted flex items-center gap-2">
+        <Loader2 size={14} className="animate-spin" />
+        Discovering…
+      </p>
+    );
+  }
+  if (devices.length === 0) {
+    return (
+      <p className="text-[13px] text-slate-muted">
+        No devices yet. Save the API key, then Discover Devices.
+      </p>
+    );
+  }
+  return (
+    <ul className="space-y-2">
+      {devices.map((d) => (
+        <li
+          key={d.id}
+          className="rounded-card border border-slate-line/70 bg-white px-3 py-2"
+        >
+          <div className="text-[13px] text-slate-deep font-medium">{d.name || d.id}</div>
+          <div className="text-[12px] text-slate-muted mt-0.5">{deviceOnlineLabel(d.isOnline)}</div>
+          <div className="text-[12px] text-slate-muted mt-0.5">
+            {(d.tags || []).length > 0 ? (d.tags || []).join(", ") : "No tags"}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function ConnectionRow({
@@ -127,6 +173,7 @@ export function ClientIntegrations({ agentId, botName }: Props) {
   const [showReplaceCalendar, setShowReplaceCalendar] = useState(false);
   const [testNote, setTestNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState<Copied>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
@@ -163,6 +210,7 @@ export function ClientIntegrations({ agentId, botName }: Props) {
   function openPanel(next: Panel) {
     setErr(null);
     setBusy(false);
+    setDiscovering(false);
     setCopied(null);
     setConfirmDisconnect(false);
     setRevelKey("");
@@ -263,15 +311,40 @@ export function ClientIntegrations({ agentId, botName }: Props) {
   }
 
   async function discoverRevel() {
-    if (busy) return;
+    const plan = planRevelDiscover({
+      agentId,
+      busy,
+      connected: !!revel?.connected,
+      typedKey: revelKey,
+    });
+    // Non-secret diagnostic only. Never log keys, ciphertext, or registration keys.
+    console.info(`revel discover click agent=${agentId} plan=${plan.action}`);
+    if (plan.action === "missing-agent") {
+      setErr("Missing client id; cannot discover Revel devices.");
+      return;
+    }
+    if (plan.action === "busy") {
+      setErr("Discovery is already running.");
+      return;
+    }
+    if (plan.action === "need-key") {
+      setErr("Save the API key first, then Discover Devices.");
+      return;
+    }
     setBusy(true);
+    setDiscovering(true);
     setErr(null);
     try {
-      await apiPost(`/agent/${agentId}/integrations/revel/discover`);
+      if (plan.action === "save-then-discover") {
+        await apiPut(`/agent/${agentId}/integrations/revel`, { apiKey: plan.apiKey });
+        setRevelKey("");
+      }
+      await apiPost<ClientIntegration>(revelDiscoverPath(agentId), {});
       await refresh();
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Could not discover Revel devices.");
+      setErr(formatRevelDiscoverError(e));
     } finally {
+      setDiscovering(false);
       setBusy(false);
     }
   }
@@ -568,15 +641,43 @@ export function ClientIntegrations({ agentId, botName }: Props) {
                 A device registration key will not work. The full key is stored encrypted and is never shown again.
               </div>
             </div>
-            <button
-              type="button"
-              className="btn-primary text-[12px]"
-              disabled={busy || revelKey.trim().length < 8}
-              onClick={saveRevel}
-            >
-              {busy && <Loader2 size={12} className="animate-spin" />}
-              {revel?.connected ? "Replace key" : "Save key"}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn-primary text-[12px]"
+                disabled={busy || revelKey.trim().length < 8}
+                onClick={() => void saveRevel()}
+              >
+                {busy && !discovering && <Loader2 size={12} className="animate-spin" />}
+                {revel?.connected ? "Replace key" : "Save key"}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary text-[12px]"
+                data-testid="revel-discover"
+                disabled={busy || (!revel?.connected && revelKey.trim().length < 8)}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void discoverRevel();
+                }}
+              >
+                {discovering ? <Loader2 size={12} className="animate-spin" /> : null}
+                {discovering ? "Discovering…" : "Discover Devices"}
+              </button>
+            </div>
+            <div className="helper">
+              {revel?.connected || revelKey.trim().length >= 8
+                ? "Save connection → Discover Devices. Discovery talks to CareConnect only; it does not change the display."
+                : "Save the API key first, then Discover Devices."}
+            </div>
+            <div>
+              <div className="kicker mb-2">Available devices</div>
+              <RevelDeviceResults
+                devices={revel?.discoveredDevices || []}
+                discovering={discovering}
+              />
+            </div>
 
             {revel?.connected && (
               <>
@@ -603,28 +704,22 @@ export function ClientIntegrations({ agentId, botName }: Props) {
                   />
                   <div className="helper">Encrypted like the API key. Leave blank to keep the stored value. Not required for tag commands unless discovery says otherwise.</div>
                 </div>
-                <div className="flex items-end gap-3">
-                  <div className="flex-1">
-                    <label htmlFor="revel-device" className="label">Selected display</label>
-                    <select
-                      id="revel-device"
-                      className="input"
-                      value={revelDeviceId}
-                      onChange={(e) => setRevelDeviceId(e.target.value)}
-                    >
-                      <option value="">Select a discovered display</option>
-                      {(revel.discoveredDevices || []).map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.name}{d.isOnline === true ? " · online" : d.isOnline === false ? " · offline" : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="helper">Voice cannot choose a device. Discover first, then pick Display1 here.</div>
-                  </div>
-                  <button type="button" className="btn-secondary text-[12px] mb-5" disabled={busy} onClick={discoverRevel}>
-                    {busy && <Loader2 size={12} className="animate-spin" />}
-                    Discover devices
-                  </button>
+                <div>
+                  <label htmlFor="revel-device" className="label">Selected display</label>
+                  <select
+                    id="revel-device"
+                    className="input"
+                    value={revelDeviceId}
+                    onChange={(e) => setRevelDeviceId(e.target.value)}
+                  >
+                    <option value="">Select a discovered display</option>
+                    {(revel.discoveredDevices || []).map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}{d.isOnline === true ? " · online" : d.isOnline === false ? " · offline" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="helper">Voice cannot choose a device. Discover first, then pick Display1 here.</div>
                 </div>
 
                 <div>
