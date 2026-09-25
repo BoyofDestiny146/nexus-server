@@ -21,21 +21,28 @@ export function Modal({
   size?: "sm" | "md" | "lg";
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseRef.current();
     };
     document.addEventListener("keydown", onKey);
-    ref.current?.focus();
+    // Focus the dialog only when it opens. Re-running this on every parent
+    // render (inline onClose identity) steals focus from inputs after each key.
+    const node = ref.current;
+    if (node && !node.contains(document.activeElement)) {
+      node.focus();
+    }
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prev;
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   if (typeof document === "undefined") return null;
@@ -48,7 +55,7 @@ export function Modal({
       aria-modal="true"
       aria-labelledby={title ? "modal-title" : undefined}
       className="fixed inset-0 z-[80] flex items-start justify-center pt-24 px-4"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCloseRef.current(); }}
     >
       {/* Must not intercept clicks. The overlay parent handles outside-click close. */}
       <div
@@ -74,7 +81,7 @@ export function Modal({
             )}
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => onCloseRef.current()}
               className="text-slate-muted hover:text-slate-deep p-1 -mr-1 -mt-1 rounded transition"
               aria-label="Close dialog"
             >

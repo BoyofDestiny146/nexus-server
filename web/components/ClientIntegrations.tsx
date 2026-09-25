@@ -24,6 +24,12 @@ import {
   REVEL_DISCOVER_DISCOVERING,
   REVEL_DISCOVER_SAVING,
 } from "@/lib/revelDiscover";
+import {
+  addPhrase,
+  phraseChipKey,
+  phraseDraftInputKey,
+  removePhrase,
+} from "@/lib/revelPhrases";
 
 interface Props {
   agentId: string;
@@ -211,7 +217,6 @@ export function ClientIntegrations({ agentId, botName }: Props) {
     setRevelApiBase(revel.apiBaseUrl || "https://api.reveldigital.com");
     setRevelDeviceId(revel.deviceId || "");
     setRevelActions(revel.actions ? revel.actions.map((a) => ({ ...a, phrases: [...(a.phrases || [])] })) : []);
-    setPhraseDraft({});
   }, [panel, revel?.updatedAt, revel?.lastDiscoverAt, revel?.connected, revel?.apiBaseUrl, revel?.deviceId]);
 
   function openPanel(next: Panel) {
@@ -223,6 +228,7 @@ export function ClientIntegrations({ agentId, botName }: Props) {
     setConfirmDisconnect(false);
     setRevelKey("");
     setRevelRegKey("");
+    setPhraseDraft({});
     setIcalUrl("");
     setShowReplaceCalendar(false);
     setTestNote(null);
@@ -812,8 +818,11 @@ export function ClientIntegrations({ agentId, botName }: Props) {
                           <ul className="flex flex-wrap gap-1.5 mt-1">
                             {(action.phrases || []).length === 0 ? (
                               <li className="text-[12px] text-slate-muted">No phrases yet</li>
-                            ) : (action.phrases || []).map((phrase) => (
-                              <li key={phrase} className="inline-flex items-center gap-1 rounded-full border border-slate-line bg-white px-2 py-0.5 text-[12px]">
+                            ) : (action.phrases || []).map((phrase, phraseIdx) => (
+                              <li
+                                key={phraseChipKey(action.intent, phraseIdx)}
+                                className="inline-flex items-center gap-1 rounded-full border border-slate-line bg-white px-2 py-0.5 text-[12px]"
+                              >
                                 {phrase}
                                 <button
                                   type="button"
@@ -823,7 +832,7 @@ export function ClientIntegrations({ agentId, botName }: Props) {
                                     const next = [...revelActions];
                                     next[idx] = {
                                       ...action,
-                                      phrases: (action.phrases || []).filter((p) => p !== phrase),
+                                      phrases: removePhrase(action.phrases, phrase),
                                     };
                                     setRevelActions(next);
                                   }}
@@ -835,19 +844,22 @@ export function ClientIntegrations({ agentId, botName }: Props) {
                           </ul>
                           <div className="flex gap-2 mt-2">
                             <input
+                              key={phraseDraftInputKey(action.intent)}
+                              id={phraseDraftInputKey(action.intent)}
                               className="input"
                               placeholder="Add phrase"
-                              value={phraseDraft[action.intent] || ""}
-                              onChange={(e) => setPhraseDraft((d) => ({ ...d, [action.intent]: e.target.value }))}
+                              value={phraseDraft[action.intent] ?? ""}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                setPhraseDraft((d) => ({ ...d, [action.intent]: value }));
+                              }}
                               onKeyDown={(e) => {
                                 if (e.key !== "Enter") return;
                                 e.preventDefault();
-                                const text = (phraseDraft[action.intent] || "").trim();
-                                if (!text) return;
+                                const text = phraseDraft[action.intent] ?? "";
+                                if (!text.trim()) return;
                                 const next = [...revelActions];
-                                const phrases = [...(action.phrases || [])];
-                                if (!phrases.some((p) => p.toLowerCase() === text.toLowerCase())) phrases.push(text);
-                                next[idx] = { ...action, phrases };
+                                next[idx] = { ...action, phrases: addPhrase(action.phrases, text) };
                                 setRevelActions(next);
                                 setPhraseDraft((d) => ({ ...d, [action.intent]: "" }));
                               }}
@@ -856,12 +868,10 @@ export function ClientIntegrations({ agentId, botName }: Props) {
                               type="button"
                               className="btn-secondary text-[12px]"
                               onClick={() => {
-                                const text = (phraseDraft[action.intent] || "").trim();
-                                if (!text) return;
+                                const text = phraseDraft[action.intent] ?? "";
+                                if (!text.trim()) return;
                                 const next = [...revelActions];
-                                const phrases = [...(action.phrases || [])];
-                                if (!phrases.some((p) => p.toLowerCase() === text.toLowerCase())) phrases.push(text);
-                                next[idx] = { ...action, phrases };
+                                next[idx] = { ...action, phrases: addPhrase(action.phrases, text) };
                                 setRevelActions(next);
                                 setPhraseDraft((d) => ({ ...d, [action.intent]: "" }));
                               }}
