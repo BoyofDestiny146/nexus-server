@@ -125,6 +125,9 @@ function OnboardWizard() {
   function update<K extends keyof DraftState>(key: K, value: DraftState[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
   }
+  function updateForm<K extends keyof ClientFormDraft>(key: K, value: ClientFormDraft[K]) {
+    setDraft((d) => ({ ...d, [key]: value }));
+  }
 
   // Per-step validation
   const stepValid = useMemo(() => {
@@ -208,8 +211,8 @@ function OnboardWizard() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
           <div className="xl:col-span-2">
             <div className="card p-8 md:p-10 min-h-[420px]">
-              {step === 0 && <ProfileFields draft={draft} update={update} autoFocusName />}
-              {step === 1 && <GuardrailsFields draft={draft} update={update} />}
+              {step === 0 && <ProfileFields draft={draft} update={updateForm} autoFocusName />}
+              {step === 1 && <GuardrailsFields draft={draft} update={updateForm} />}
               {step === 2 && (
                 <DeviceStep
                   draft={draft} update={update}

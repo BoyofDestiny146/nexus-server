@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,11 +17,29 @@ from careconnect_api.client_profile import (
     merge_profile,
     parse_profile_from_prompt,
 )
-from careconnect_api.models import AiAgent, AiAgentChatHistory, ClientIntegration
+from careconnect_api.models import AiAgent, AiAgentChatHistory, ClientIntegration, SysUser
 
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture(scope="function")
+async def admin_token(client: AsyncClient, db_session: AsyncSession) -> str:
+    from careconnect_api.auth import ROLE_ROOT, hash_password, issue_token
+
+    _ = client
+    user = SysUser(
+        id=1,
+        username="admin1",
+        password=hash_password("unused-in-these-tests"),
+        super_admin=ROLE_ROOT,
+        status=1,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    token, _expire = issue_token(user.id, user.username, ROLE_ROOT)
+    return token
 
 
 def test_generated_prompt_round_trips_structured_fields():
@@ -235,6 +254,7 @@ async def test_patch_keeps_unknown_profile_keys_chat_and_same_agent(
     agent.profile_json = dump_profile(stored)
     db_session.add(
         AiAgentChatHistory(
+            id=101,
             mac_address="AA:BB:CC:DD:EE:FF",
             agent_id=agent_id,
             session_id="sess-edit",
