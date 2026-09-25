@@ -150,6 +150,17 @@ export interface DeviceVoice {
   speed: string;
   response_length?: string;
   volume?: number;
+  sleepTimeoutSec?: number;
+  listenScreenOff?: boolean;
+  sleepMode?: "screen_off" | "deep_sleep";
+  powerApplied?: {
+    sleepTimeoutSec: number;
+    listenScreenOff: boolean;
+    sleepMode: "screen_off" | "deep_sleep";
+  } | null;
+  powerApplyState?: "unset" | "pending_offline" | "pending_ack" | "applied";
+  powerSaved?: boolean;
+  powerSaveMessage?: string;
 }
 
 export type IntegrationProvider = "careconnect" | "revel" | "directed_logic" | "google_calendar";

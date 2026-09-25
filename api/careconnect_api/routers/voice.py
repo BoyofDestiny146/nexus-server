@@ -60,10 +60,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import CurrentUser, get_current_user
 from ..db import get_db
+from ..device_power import (
+    DEFAULT_POWER,
+    POWER_KEYS,
+    PowerSettingsError,
+    apply_state,
+    applied_from_entry,
+    merge_power,
+    public_power,
+)
 from ..envelope import APIException
 from ..rbac import assert_can_access_agent
 from ..settings import settings
 from ..watcher_device import get_watcher_device
+from ..xiaozhi_control import notify_xiaozhi_device_settings
 
 
 log = logging.getLogger("voice")
@@ -256,6 +266,9 @@ class VoiceUpdatePayload(BaseModel):
     speed: str | None = None
     response_length: str | None = None  # brief | normal | detailed
     volume: int | None = Field(default=None, ge=0, le=100)
+    sleepTimeoutSec: int | None = None
+    listenScreenOff: bool | None = None
+    sleepMode: str | None = None
 
 
 class PreviewPayload(BaseModel):
@@ -264,9 +277,23 @@ class PreviewPayload(BaseModel):
     text: str | None = None
 
 
+def _power_payload(cfg: dict[str, Any]) -> dict[str, Any]:
+    desired = public_power(cfg) if any(k in cfg for k in POWER_KEYS) else dict(DEFAULT_POWER)
+    applied = applied_from_entry(cfg)
+    state = apply_state(cfg)
+    return {
+        "sleepTimeoutSec": desired["sleepTimeoutSec"],
+        "listenScreenOff": desired["listenScreenOff"],
+        "sleepMode": desired["sleepMode"],
+        "powerApplied": applied,
+        "powerApplyState": state,
+        "powerSaved": any(k in cfg for k in POWER_KEYS),
+    }
+
+
 def _voice_payload(mac: str, cfg: dict[str, Any], source: str) -> dict[str, Any]:
     volume = cfg.get("volume")
-    return {
+    out = {
         "mac": mac,
         "voice": cfg.get("voice"),
         "speed": cfg.get("speed"),
@@ -274,6 +301,8 @@ def _voice_payload(mac: str, cfg: dict[str, Any], source: str) -> dict[str, Any]
         "volume": _clamp_volume(volume, _DEFAULT_VOLUME) if volume is not None else _DEFAULT_VOLUME,
         "source": source,
     }
+    out.update(_power_payload(cfg))
+    return out
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -334,7 +363,7 @@ async def get_device_voice(
         return _voice_payload(mac, catalog_default, "catalog_default")
     except APIException:
         log.warning("device voice lookup: mac=%s — TTS unreachable, returning nulls", mac)
-        return {
+        fallback = {
             "mac": mac,
             "voice": None,
             "speed": None,
@@ -342,6 +371,8 @@ async def get_device_voice(
             "volume": _DEFAULT_VOLUME,
             "source": "unknown",
         }
+        fallback.update(_power_payload(device_cfg or {}))
+        return fallback
 
 
 @router.put("/device/{mac}/voice", response_model=None)
@@ -357,99 +388,151 @@ async def set_device_voice(
     on unknown values). Atomically updates the config file; the xiaozhi-server
     will pick up the new value on the next turn (it reads the file per-request).
     """
-    if (
-        payload.voice is None
-        and payload.speed is None
-        and payload.response_length is None
-        and payload.volume is None
-    ):
+    provided = payload.model_fields_set
+    voice_provided = bool(
+        provided
+        & {"voice", "speed", "response_length", "volume"}
+    )
+    power_patch = {
+        key: getattr(payload, key)
+        for key in POWER_KEYS
+        if key in provided
+    }
+    if not voice_provided and not power_patch:
         raise APIException(
             400,
-            "at least one of 'voice', 'speed', 'response_length', 'volume' must be provided",
+            "at least one of 'voice', 'speed', 'response_length', 'volume', "
+            "'sleepTimeoutSec', 'listenScreenOff', 'sleepMode' must be provided",
         )
 
     mac = _normalise_mac(mac)
     await _authorize_device_mac(db, user, mac)
 
-    catalog = await _fetch_catalog()
-    valid_voice_ids = {
-        v["id"] for v in catalog.get("voices", []) if isinstance(v, dict) and "id" in v
-    }
-    valid_speed_ids = {
-        s["id"] for s in catalog.get("speeds", []) if isinstance(s, dict) and "id" in s
-    }
-    valid_length_ids = {
-        length["id"]
-        for length in catalog.get("lengths", [])
-        if isinstance(length, dict) and "id" in length
-    } or {"brief", "normal", "detailed"}
+    catalog: dict[str, Any] | None = None
+    if voice_provided:
+        catalog = await _fetch_catalog()
+        valid_voice_ids = {
+            v["id"] for v in catalog.get("voices", []) if isinstance(v, dict) and "id" in v
+        }
+        valid_speed_ids = {
+            s["id"] for s in catalog.get("speeds", []) if isinstance(s, dict) and "id" in s
+        }
+        valid_length_ids = {
+            length["id"]
+            for length in catalog.get("lengths", [])
+            if isinstance(length, dict) and "id" in length
+        } or {"brief", "normal", "detailed"}
 
-    if payload.voice is not None and payload.voice not in valid_voice_ids:
-        raise APIException(
-            400,
-            f"unknown voice {payload.voice!r}; valid: {sorted(valid_voice_ids)}",
-        )
-    if payload.speed is not None and payload.speed not in valid_speed_ids:
-        raise APIException(
-            400,
-            f"unknown speed {payload.speed!r}; valid: {sorted(valid_speed_ids)}",
-        )
-    if payload.response_length is not None and payload.response_length not in valid_length_ids:
-        raise APIException(
-            400,
-            f"unknown response_length {payload.response_length!r}; valid: {sorted(valid_length_ids)}",
-        )
+        if payload.voice is not None and payload.voice not in valid_voice_ids:
+            raise APIException(
+                400,
+                f"unknown voice {payload.voice!r}; valid: {sorted(valid_voice_ids)}",
+            )
+        if payload.speed is not None and payload.speed not in valid_speed_ids:
+            raise APIException(
+                400,
+                f"unknown speed {payload.speed!r}; valid: {sorted(valid_speed_ids)}",
+            )
+        if payload.response_length is not None and payload.response_length not in valid_length_ids:
+            raise APIException(
+                400,
+                f"unknown response_length {payload.response_length!r}; valid: {sorted(valid_length_ids)}",
+            )
+
+    power_cfg: dict[str, Any] | None = None
+    if power_patch:
+        try:
+            async with _file_lock:
+                peek = dict((_read_config().get("devices") or {}).get(mac, {}) or {})
+            power_cfg = merge_power(peek, power_patch)
+        except PowerSettingsError as exc:
+            raise APIException(400, str(exc)) from exc
 
     async with _file_lock:
         config = _read_config()
         existing = dict(config["devices"].get(mac, {}) or {})
 
-        new_voice = payload.voice if payload.voice is not None else existing.get("voice")
-        new_speed = payload.speed if payload.speed is not None else existing.get("speed")
-        new_length = (
-            payload.response_length
-            if payload.response_length is not None
-            else existing.get("response_length")
-        )
-        new_volume = (
-            _clamp_volume(payload.volume)
-            if payload.volume is not None
-            else existing.get("volume")
-        )
+        new_voice = existing.get("voice")
+        new_speed = existing.get("speed")
+        new_length = existing.get("response_length")
+        new_volume = existing.get("volume")
 
-        if new_voice is None:
-            new_voice = catalog.get("default", "")
-        if new_speed is None:
-            new_speed = catalog.get("default_speed", "normal")
-        if new_length is None:
-            new_length = catalog.get("default_length", "brief")
-        if new_volume is None:
-            new_volume = _DEFAULT_VOLUME
-        else:
-            new_volume = _clamp_volume(new_volume)
+        if voice_provided:
+            new_voice = payload.voice if payload.voice is not None else existing.get("voice")
+            new_speed = payload.speed if payload.speed is not None else existing.get("speed")
+            new_length = (
+                payload.response_length
+                if payload.response_length is not None
+                else existing.get("response_length")
+            )
+            new_volume = (
+                _clamp_volume(payload.volume)
+                if payload.volume is not None
+                else existing.get("volume")
+            )
+            cat = catalog or {}
+            if new_voice is None:
+                new_voice = cat.get("default", "")
+            if new_speed is None:
+                new_speed = cat.get("default_speed", "normal")
+            if new_length is None:
+                new_length = cat.get("default_length", "brief")
+            if new_volume is None:
+                new_volume = _DEFAULT_VOLUME
+            else:
+                new_volume = _clamp_volume(new_volume)
+            existing["voice"] = new_voice
+            existing["speed"] = new_speed
+            existing["response_length"] = new_length
+            existing["volume"] = new_volume
 
-        existing["voice"] = new_voice
-        existing["speed"] = new_speed
-        existing["response_length"] = new_length
-        existing["volume"] = new_volume
+        if power_cfg is not None:
+            existing.update(power_cfg)
+            existing["powerPushSent"] = 0
+
         config["devices"][mac] = existing
         _write_config(config)
 
+    push: dict[str, Any] = {"attempted": False, "sent": 0}
+    if power_cfg is not None:
+        watcher = await get_watcher_device(db, mac)
+        push = await notify_xiaozhi_device_settings(
+            mac=mac,
+            device_id=watcher.id if watcher is not None else None,
+            sleep_timeout_sec=int(power_cfg["sleepTimeoutSec"]),
+            listen_screen_off=bool(power_cfg["listenScreenOff"]),
+            sleep_mode=str(power_cfg["sleepMode"]),
+        )
+        sent = int(push.get("sent") or 0)
+        async with _file_lock:
+            config = _read_config()
+            existing = dict(config["devices"].get(mac, {}) or {})
+            existing["powerPushSent"] = sent
+            config["devices"][mac] = existing
+            _write_config(config)
+
     log.info(
-        "device voice updated: mac=%s voice=%s speed=%s length=%s volume=%s",
+        "device voice updated: mac=%s voice=%s speed=%s length=%s volume=%s power=%s sent=%s",
         mac,
-        new_voice,
+        existing.get("voice") if voice_provided else new_voice,
         new_speed,
         new_length,
         new_volume,
+        power_cfg,
+        push.get("sent"),
     )
-    return {
-        "mac": mac,
-        "voice": new_voice,
-        "speed": new_speed,
-        "response_length": new_length,
-        "volume": new_volume,
-    }
+    # Re-read so applyState matches the file after powerPushSent.
+    saved = dict(_read_config().get("devices", {}).get(mac, {}) or {})
+    result = _voice_payload(mac, saved, "device")
+    if power_cfg is not None:
+        sent = int(push.get("sent") or 0)
+        if result["powerApplyState"] == "applied":
+            result["powerSaveMessage"] = "Saved."
+        elif sent > 0:
+            result["powerSaveMessage"] = "Saved — waiting for Watcher to apply."
+        else:
+            result["powerSaveMessage"] = "Saved — will apply when Watcher reconnects."
+    return result
 
 
 @router.post("/voice/preview", response_model=None)

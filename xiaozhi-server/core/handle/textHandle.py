@@ -80,6 +80,24 @@ async def handleTextMessage(conn, message):
                 asyncio.create_task(handleIotDescriptors(conn, msg_json["descriptors"]))
             if "states" in msg_json:
                 asyncio.create_task(handleIotStatus(conn, msg_json["states"]))
+        elif msg_json["type"] == "device_settings":
+            conn.logger.bind(tag=TAG).info("收到device_settings消息")
+            status = str(msg_json.get("status") or "").strip().lower()
+            if status in ("applied", "ok", "ack"):
+                try:
+                    from config.device_power import mark_applied
+
+                    mac = getattr(conn, "device_id", None) or ""
+                    if mac:
+                        applied = mark_applied(mac, msg_json)
+                        conn.cc_keep_listening = (
+                            applied["sleepMode"] == "screen_off"
+                            and bool(applied["listenScreenOff"])
+                        )
+                except Exception as exc:
+                    conn.logger.bind(tag=TAG).warning(
+                        f"device_settings ack persist failed: {exc}"
+                    )
         elif msg_json["type"] == "mcp":
             conn.logger.bind(tag=TAG).info(f"收到mcp消息：{message[:100]}")
             if "payload" in msg_json:

@@ -135,6 +135,10 @@ async def no_voice_close_connect(conn, have_voice):
     if have_voice:
         conn.last_activity_time = time.time() * 1000
         return
+    # Screen Off + listen: keep the live WS so reminders and wake listening
+    # still work. Do not treat this as a conversation timeout.
+    if getattr(conn, "cc_keep_listening", False):
+        return
     # 只有在已经初始化过时间戳的情况下才进行超时检查
     if conn.last_activity_time > 0.0:
         no_voice_time = time.time() * 1000 - conn.last_activity_time

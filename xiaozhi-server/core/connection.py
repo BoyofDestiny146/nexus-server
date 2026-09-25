@@ -1636,6 +1636,9 @@ class ConnectionHandler:
         try:
             while not self.stop_event.is_set():
                 # 检查是否超时（只有在时间戳已初始化的情况下）
+                if getattr(self, "cc_keep_listening", False):
+                    await asyncio.sleep(10)
+                    continue
                 if self.last_activity_time > 0.0:
                     current_time = time.time() * 1000
                     if (

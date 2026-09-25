@@ -14,6 +14,14 @@ import { apiGet, apiPut, apiPost, apiBinary, apiDelete, ApiError } from "@/lib/a
 import { classNames } from "@/lib/format";
 import { Modal } from "@/components/Modal";
 import type { VoiceCatalog, DeviceVoice } from "@/lib/types";
+import {
+  coercePower,
+  DEFAULT_POWER,
+  powerHelp,
+  SLEEP_MODES,
+  SLEEP_TIMEOUTS,
+  type DevicePowerSettings,
+} from "@/lib/devicePower";
 
 interface Props {
   mac: string;
@@ -37,6 +45,9 @@ export function VoiceSelector({ mac, deviceId, agentId, onDeleted }: Props) {
   const [selectedLength, setSelectedLength] = useState<string>("");
   const [selectedVolume, setSelectedVolume] = useState<number>(80);
   const [testMessage, setTestMessage] = useState<string>(DEFAULT_TEST_MESSAGE);
+  const [power, setPower] = useState<DevicePowerSettings>(DEFAULT_POWER);
+  const [powerApplyState, setPowerApplyState] = useState<DeviceVoice["powerApplyState"]>("unset");
+  const [powerSaveMessage, setPowerSaveMessage] = useState<string | null>(null);
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -70,6 +81,13 @@ export function VoiceSelector({ mac, deviceId, agentId, onDeleted }: Props) {
         setSelectedSpeed(dev.speed || cat.default_speed);
         setSelectedLength(dev.response_length || cat.default_length || "brief");
         setSelectedVolume(typeof dev.volume === "number" ? Math.max(0, Math.min(100, dev.volume)) : 80);
+        setPower(coercePower({
+          sleepTimeoutSec: typeof dev.sleepTimeoutSec === "number" ? dev.sleepTimeoutSec : DEFAULT_POWER.sleepTimeoutSec,
+          listenScreenOff: typeof dev.listenScreenOff === "boolean" ? dev.listenScreenOff : DEFAULT_POWER.listenScreenOff,
+          sleepMode: dev.sleepMode === "deep_sleep" ? "deep_sleep" : "screen_off",
+        }));
+        setPowerApplyState(dev.powerApplyState ?? "unset");
+        setPowerSaveMessage(null);
       } catch (e) {
         if (cancelled) return;
         setLoadError(e instanceof ApiError ? e.message : "Failed to load voice settings.");
@@ -136,19 +154,35 @@ export function VoiceSelector({ mac, deviceId, agentId, onDeleted }: Props) {
     }
   }
 
+  function updatePower(patch: Partial<DevicePowerSettings>) {
+    setPower((prev) => {
+      const next = { ...prev, ...patch };
+      if (patch.sleepMode === "deep_sleep") next.listenScreenOff = false;
+      if (patch.listenScreenOff === true) next.sleepMode = "screen_off";
+      return coercePower(next);
+    });
+    setSaveStatus("idle");
+    setPowerSaveMessage(null);
+  }
+
   async function handleSave() {
     setSaveStatus("saving");
     setSaveError(null);
     try {
-      await apiPut<DeviceVoice>(
+      const saved = await apiPut<DeviceVoice>(
         `/device/${encodeURIComponent(mac)}/voice`,
         {
           voice: selectedVoice,
           speed: selectedSpeed,
           response_length: selectedLength,
           volume: selectedVolume,
+          sleepTimeoutSec: power.sleepTimeoutSec,
+          listenScreenOff: power.listenScreenOff,
+          sleepMode: power.sleepMode,
         },
       );
+      setPowerApplyState(saved.powerApplyState ?? "unset");
+      setPowerSaveMessage(saved.powerSaveMessage ?? null);
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2200);
     } catch (e) {
@@ -376,6 +410,80 @@ export function VoiceSelector({ mac, deviceId, agentId, onDeleted }: Props) {
         </div>
       </div>
 
+      <div className="flex flex-col gap-2 pt-1">
+        <div className="text-[10px] uppercase tracking-[0.12em] text-slate-muted font-medium">
+          Power / Sleep
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1 min-w-0">
+            <label
+              htmlFor={`sleep-timeout-${mac}`}
+              className="text-[10px] uppercase tracking-[0.12em] text-slate-muted font-medium"
+            >
+              Sleep after inactivity
+            </label>
+            <select
+              id={`sleep-timeout-${mac}`}
+              value={power.sleepTimeoutSec}
+              onChange={(e) => updatePower({ sleepTimeoutSec: Number(e.target.value) })}
+              className="bg-white border border-slate-line/80 rounded-card px-2.5 py-1.5 text-[13px] text-slate-deep tracking-tight focus:outline-none focus:border-teal focus:ring-2 focus:ring-teal/15 transition min-w-[140px]"
+            >
+              {SLEEP_TIMEOUTS.map((t) => (
+                <option key={t.sec} value={t.sec}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1 min-w-0">
+            <label
+              htmlFor={`listen-screen-${mac}`}
+              className="text-[10px] uppercase tracking-[0.12em] text-slate-muted font-medium"
+            >
+              Listen while screen is off
+            </label>
+            <select
+              id={`listen-screen-${mac}`}
+              value={power.listenScreenOff ? "on" : "off"}
+              onChange={(e) => updatePower({ listenScreenOff: e.target.value === "on" })}
+              className="bg-white border border-slate-line/80 rounded-card px-2.5 py-1.5 text-[13px] text-slate-deep tracking-tight focus:outline-none focus:border-teal focus:ring-2 focus:ring-teal/15 transition min-w-[120px]"
+            >
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1 min-w-0">
+            <label
+              htmlFor={`sleep-mode-${mac}`}
+              className="text-[10px] uppercase tracking-[0.12em] text-slate-muted font-medium"
+            >
+              Sleep mode
+            </label>
+            <select
+              id={`sleep-mode-${mac}`}
+              value={power.sleepMode}
+              onChange={(e) => updatePower({ sleepMode: e.target.value as DevicePowerSettings["sleepMode"] })}
+              className="bg-white border border-slate-line/80 rounded-card px-2.5 py-1.5 text-[13px] text-slate-deep tracking-tight focus:outline-none focus:border-teal focus:ring-2 focus:ring-teal/15 transition min-w-[150px]"
+            >
+              {SLEEP_MODES.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <p className="text-[12px] text-slate-muted leading-snug max-w-2xl">
+          {powerHelp(power)}
+          {power.sleepMode === "deep_sleep" ? " Deep sleep disconnects Wi-Fi and voice listening until the Watcher wakes." : ""}
+        </p>
+        {powerApplyState === "applied" && (
+          <p className="text-[12px] text-teal-deep">Applied</p>
+        )}
+        {powerApplyState === "pending_offline" && (
+          <p className="text-[12px] text-slate-muted">Pending device reconnect</p>
+        )}
+        {powerApplyState === "pending_ack" && (
+          <p className="text-[12px] text-slate-muted">Waiting for Watcher to apply</p>
+        )}
+      </div>
+
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1 min-w-[220px] flex-1">
           <label
@@ -454,7 +562,13 @@ export function VoiceSelector({ mac, deviceId, agentId, onDeleted }: Props) {
       {!previewError && !saveError && previewStatus === "idle" && saveStatus === "idle" && (
         <div className="flex items-center gap-1.5 text-[12px] text-teal-deep">
           <Check size={12} strokeWidth={2} />
-          Voice settings ready. Click Test Voice to hear a sample.
+          {powerSaveMessage || "Voice settings ready. Click Test Voice to hear a sample."}
+        </div>
+      )}
+      {saveStatus === "saved" && powerSaveMessage && (
+        <div className="flex items-center gap-1.5 text-[12px] text-teal-deep">
+          <Check size={12} strokeWidth={2} />
+          {powerSaveMessage}
         </div>
       )}
 

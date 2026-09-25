@@ -56,6 +56,29 @@ async def handleHelloMessage(conn, msg_json):
             asyncio.create_task(send_mcp_tools_list_request(conn))
 
     await conn.websocket.send(json.dumps(conn.welcome_msg))
+    asyncio.create_task(_cc_push_saved_power_settings(conn))
+
+
+async def _cc_push_saved_power_settings(conn):
+    """On session establishment, push pending CareConnect power settings.
+
+    Volume already nudges via MCP when tools are ready. Sleep settings use
+    the top-level ``device_settings`` WS type so they apply even if MCP is
+    late. Unsaved dashboard defaults are not pushed (firmware NVS wins).
+    """
+    try:
+        from config.device_power import desired_saved
+        from core.api.settings_handler import push_settings_to_handler
+
+        mac = getattr(conn, "device_id", None) or ""
+        saved = desired_saved(mac)
+        if not saved:
+            return
+        await push_settings_to_handler(conn, saved)
+    except Exception as exc:
+        conn.logger.bind(tag=TAG).warning(
+            f"careconnect power settings push failed: {exc}"
+        )
 
 
 async def checkWakeupWords(conn, text):
