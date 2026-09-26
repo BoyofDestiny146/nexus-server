@@ -82,6 +82,14 @@ haizel.online, www.haizel.online, app.haizel.online, api.haizel.online {
     }
 
     # ── Next.js static export (dashboard SPA) ────────────────────────────────
+    # Dynamic Client and Knowledge URLs are not prerendered. Next exports a
+    # dummy `/patients/_/` and `/knowledge/_/` shell; try_files serves that
+    # HTML and the client reads the real id from window.location.pathname.
+    handle /careconnect/knowledge/* {
+        root * /srv/web
+        try_files {path} {path}/index.html /knowledge/_/index.html
+        file_server
+    }
     handle /* {
         root * /srv/web
         try_files {path} {path}/index.html /patients/_/index.html

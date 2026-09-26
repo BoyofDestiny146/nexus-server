@@ -7,6 +7,7 @@ import {
   knowledgeAssignmentPutBody,
   knowledgeAssignmentStatus,
   knowledgeIdsEqual,
+  parseKnowledgeIdFromPath,
   slugifyKnowledge,
   sourceNeedsFile,
   sourceStatusLabel,
@@ -75,4 +76,13 @@ test("formatSourceBytes and status chips", () => {
   assert.equal(sourceNeedsFile("pdf"), true);
   assert.equal(isKnowledgeWorkspaceTab("sources"), true);
   assert.equal(isKnowledgeWorkspaceTab("rag"), false);
+});
+
+test("parseKnowledgeIdFromPath matches the Patient-detail static-export pattern", () => {
+  assert.equal(parseKnowledgeIdFromPath("/careconnect/knowledge/1"), "1");
+  assert.equal(parseKnowledgeIdFromPath("/careconnect/knowledge/1/"), "1");
+  assert.equal(parseKnowledgeIdFromPath("/knowledge/bioev"), "bioev");
+  assert.equal(parseKnowledgeIdFromPath("/careconnect/knowledge/_/"), null);
+  assert.equal(parseKnowledgeIdFromPath("/careconnect/knowledge/"), null);
+  assert.equal(parseKnowledgeIdFromPath("/careconnect/patients/1"), null);
 });

@@ -31,6 +31,12 @@ care.nexus.warehouse-13.biz {
         file_server
     }
 
+    # Dynamic Knowledge URLs use the same dummy-id export as Client detail.
+    handle /careconnect/knowledge/* {
+        root * /srv/web
+        try_files {path} {path}/index.html /knowledge/_/index.html
+        file_server
+    }
     handle /* {
         root * /srv/web
         try_files {path} {path}/index.html /patients/_/index.html

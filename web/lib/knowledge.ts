@@ -95,3 +95,13 @@ export function sourceStatusLabel(source: { enabled: boolean; status: string }):
 export function sourceNeedsFile(type: KnowledgeSourceType): boolean {
   return type !== "text";
 }
+
+/** Client-side id from the browser URL. Static export only prerenders
+ *  `/knowledge/_/`; Caddy serves that HTML for `/careconnect/knowledge/{id}/`
+ *  and this parser reads the real id (same pattern as Patient detail). */
+export function parseKnowledgeIdFromPath(pathname: string): string | null {
+  const m = (pathname || "").match(/\/knowledge\/([^/]+)\/?$/);
+  const id = m?.[1];
+  if (!id || id === "_") return null;
+  return id;
+}

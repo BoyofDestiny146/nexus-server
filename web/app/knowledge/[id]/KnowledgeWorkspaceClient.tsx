@@ -20,6 +20,7 @@ import {
   isKnowledgeWorkspaceTab,
   KNOWLEDGE_SOURCE_TYPES,
   KNOWLEDGE_WORKSPACE_TABS,
+  parseKnowledgeIdFromPath,
   sourceNeedsFile,
   sourceStatusLabel,
   sourceTypeLabel,
@@ -42,15 +43,14 @@ const TAB_LABEL: Record<KnowledgeWorkspaceTab, string> = {
 
 function readKnowledgeId(): string | null {
   if (typeof window === "undefined") return null;
-  const m = window.location.pathname.match(/\/knowledge\/([^/]+)\/?$/);
-  return m?.[1] ?? null;
+  return parseKnowledgeIdFromPath(window.location.pathname);
 }
 
 export default function KnowledgeWorkspacePage() {
   const params = useParams<{ id: string }>();
   const [id, setId] = useState<string | null>(null);
   useEffect(() => {
-    setId(readKnowledgeId() ?? (params?.id as string | undefined) ?? null);
+    setId(readKnowledgeId() ?? (params?.id && params.id !== "_" ? params.id : null));
   }, [params?.id]);
 
   return (
