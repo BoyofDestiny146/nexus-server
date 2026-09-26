@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -261,15 +262,95 @@ def calendar_dialogue_line(content: str | None) -> str:
     return (content or "").strip()
 
 
+_INJECTION_RE = re.compile(
+    r"(?is)"
+    r"(ignore\s+(all\s+)?(previous|prior)\s+(instructions|prompts))"
+    r"|(you\s+are\s+(now|a))"
+    r"|(system\s*prompt)"
+    r"|(\[INST\])"
+    r"|(\<\|)"
+    r"|(`{3})"
+)
+_ROLE_PREFIX_RE = re.compile(r"(?i)\b(system|assistant|developer)\s*:")
+_ASSESSMENT_SECRET_RE = re.compile(
+    r"(?i)(api[_-]?key|authorization|x-reveldigital-apikey|"
+    r"x-internal-token|bearer\s+\S+|graphql|mutation\b)"
+)
+_ASSESSMENT_ID_KEYS = frozenset(
+    {
+        "revel_device_id",
+        "revelDeviceId",
+        "control_table_id",
+        "controlTableId",
+        "control_row_id",
+        "controlRowId",
+        "device_key",
+        "deviceKey",
+    }
+)
+
+
+def _sanitize_context_value(raw: Any, *, max_len: int = 80) -> str:
+    """Allowlisted field text. Strips injection, secrets, and role prefixes."""
+    text = " ".join(str(raw or "").replace("\x00", " ").split())
+    if not text:
+        return ""
+    if _INJECTION_RE.search(text) or _ROLE_PREFIX_RE.search(text):
+        return ""
+    if _ASSESSMENT_SECRET_RE.search(text):
+        return ""
+    return text[:max_len]
+
+
+def revel_display_name(parsed: dict[str, Any]) -> str:
+    """Human display id: mapped player name, else normalized screen. Never invented."""
+    name = _sanitize_context_value(
+        parsed.get("revel_device_name") or parsed.get("deviceName") or "",
+        max_len=80,
+    )
+    if name:
+        return name
+    return _sanitize_context_value(parsed.get("screen") or "", max_len=32)
+
+
+def revel_assessment_context(
+    content: str | None,
+    *,
+    created_at: datetime | None = None,
+) -> str | None:
+    """Normalized REVEL_DISPLAY block for Nexus analysis. Historical, not instructions."""
+    parsed = parse_revel_timeline(content)
+    if parsed is None:
+        return None
+    for key in _ASSESSMENT_ID_KEYS:
+        parsed.pop(key, None)
+    ts = str(parsed.get("created_at") or parsed.get("delivered_at") or "")
+    if not ts and created_at is not None:
+        if created_at.tzinfo is None:
+            ts = created_at.replace(tzinfo=timezone.utc).isoformat()
+        else:
+            ts = created_at.isoformat()
+    fields = (
+        ("timestamp", _sanitize_context_value(ts, max_len=40)),
+        ("tag", _sanitize_context_value(parsed.get("tag"), max_len=64)),
+        ("display", revel_display_name(parsed)),
+        ("intent", _sanitize_context_value(parsed.get("intent"), max_len=64)),
+        ("screen", _sanitize_context_value(parsed.get("screen"), max_len=32)),
+        ("result", _sanitize_context_value(parsed.get("result"), max_len=16)),
+        ("reason", _sanitize_context_value(parsed.get("reason"), max_len=80)),
+    )
+    lines = ["REVEL_DISPLAY"]
+    for key, value in fields:
+        if value:
+            lines.append(f"{key}: {value}")
+    return "\n".join(lines)
+
+
 def system_dialogue_line(content: str | None) -> str:
     """Triage line for chat_type=3. Never includes JSON headers or secrets."""
-    revel = parse_revel_timeline(content)
+    revel = revel_assessment_context(content)
     if revel is not None:
-        intent = (revel.get("intent") or "").strip()
-        result = (revel.get("result") or "").strip()
-        requested = (revel.get("requested") or "").strip()
-        bits = [part for part in (intent, result, requested) if part]
-        return " ".join(bits)
+        return revel
     return calendar_dialogue_line(content)
 
 

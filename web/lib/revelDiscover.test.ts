@@ -93,5 +93,7 @@ test("Revel envelope 401 must not clear the dashboard JWT", () => {
     shouldClearSessionOn401("/agent/agt/integrations/revel/discover", "Revel authentication failed (401)"),
     false,
   );
+  assert.equal(shouldClearSessionOn401("/agent/agt/revel/test", "Revel authentication failed (401)"), false);
+  assert.equal(shouldClearSessionOn401("/agent/agt/revel/status", "unavailable"), false);
   assert.equal(shouldClearSessionOn401("/auth/login", "username or password is incorrect"), true);
 });

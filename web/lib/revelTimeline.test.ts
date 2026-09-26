@@ -3,13 +3,16 @@ import { test } from "node:test";
 import {
   formatRevelEventLines,
   parseRevelTimeline,
+  revelDisplayName,
+  revelEventCardModel,
+  revelResultPresentation,
   revelTimelineFromMessage,
 } from "./revelTimeline.ts";
 
 const SENT = `[[revel]]${JSON.stringify({
   provider: "revel",
   event_type: "revel_display",
-  tag: "bioev_humidity",
+  tag: "care_overview",
   device_key: "betty-room-101",
   revel_device_id: "dev-1",
   revel_device_name: "Betty Room 101",
@@ -29,38 +32,44 @@ const FAILED = `[[revel]]${JSON.stringify({
   delivered_at: "2026-09-26T20:24:18Z",
 })}\nREVEL DISPLAY EVENT`;
 
-test("parses sent event and formats trace lines", () => {
+test("parses sent event as DISPLAYED, never as a chat role", () => {
   const parsed = parseRevelTimeline(SENT);
   assert.ok(parsed);
   assert.equal(parsed.result, "sent");
-  assert.equal(parsed.tag, "bioev_humidity");
-  assert.equal(parsed.deviceKey, "betty-room-101");
+  assert.equal(parsed.eventType, "revel_display");
+  const presentation = revelResultPresentation(parsed);
+  assert.equal(presentation.label, "DISPLAYED");
+  assert.equal(presentation.displayed, true);
+  const card = revelEventCardModel(parsed);
+  assert.equal(card.title, "DISPLAY EVENT");
+  assert.equal(card.tag, "care_overview");
+  assert.equal(card.display, "Betty Room 101");
   const text = formatRevelEventLines(parsed).join("\n");
-  assert.match(text, /REVEL DISPLAY EVENT/);
-  assert.match(text, /Tag: bioev_humidity/);
-  assert.match(text, /Intent: SHOW_SENSOR_ALERT/);
-  assert.match(text, /Screen: sensor_alert/);
-  assert.match(text, /Result: SENT/);
+  assert.match(text, /DISPLAY EVENT/);
+  assert.match(text, /DISPLAYED/);
+  assert.doesNotMatch(text, /caregiver/);
+  assert.doesNotMatch(text, /client/);
 });
 
-test("failed event keeps sanitized error", () => {
+test("failed event renders Failed and is not Displayed", () => {
   const parsed = parseRevelTimeline(FAILED);
   assert.ok(parsed);
   assert.equal(parsed.result, "failed");
-  assert.equal(parsed.error, "Revel API timeout");
-  assert.equal(formatRevelEventLines(parsed).includes("Error: Revel API timeout"), true);
+  const presentation = revelResultPresentation(parsed);
+  assert.equal(presentation.label, "FAILED");
+  assert.equal(presentation.displayed, false);
+  assert.doesNotMatch(formatRevelEventLines(parsed).join("\n"), /DISPLAYED/);
 });
 
-test("skipped display event shows SKIPPED and screen", () => {
+test("skipped dry run never says Displayed", () => {
   const content = `[[revel]]${JSON.stringify({
     provider: "revel",
     event_type: "revel_display",
-    tag: "bioev_humidity",
+    tag: "care_overview",
     device_key: "betty-room-101",
     revel_device_id: "dev-1",
-    revel_device_name: "Betty Room 101",
-    intent: "SHOW_APPOINTMENT_REMINDER",
-    screen: "appointment",
+    intent: "SHOW_HOME",
+    screen: "home",
     result: "skipped",
     reason: "revel_write_disabled",
     reason_label: "Revel execution disabled",
@@ -69,16 +78,34 @@ test("skipped display event shows SKIPPED and screen", () => {
   const parsed = parseRevelTimeline(content);
   assert.ok(parsed);
   assert.equal(parsed.result, "skipped");
+  const presentation = revelResultPresentation(parsed);
+  assert.equal(presentation.code, "dry_run");
+  assert.equal(presentation.label, "DRY RUN");
+  assert.equal(presentation.displayed, false);
   const text = formatRevelEventLines(parsed).join("\n");
-  assert.match(text, /REVEL DISPLAY EVENT/);
-  assert.match(text, /Intent: SHOW_APPOINTMENT_REMINDER/);
-  assert.match(text, /Screen: appointment/);
-  assert.match(text, /Player: Betty Room 101/);
-  assert.match(text, /Result: SKIPPED/);
-  assert.match(text, /Reason: Revel execution disabled/);
+  assert.match(text, /DRY RUN/);
+  assert.doesNotMatch(text, /DISPLAYED/);
+  assert.doesNotMatch(text, /Displayed/);
+  assert.equal(revelDisplayName(parsed), "home");
 });
 
-test("legacy delivered maps to sent", () => {
+test("display name uses player name when present, else screen, never Media1", () => {
+  assert.equal(
+    revelDisplayName({ deviceName: "Lobby", screen: "home" }),
+    "Lobby",
+  );
+  assert.equal(
+    revelDisplayName({ deviceName: "", screen: "appointment" }),
+    "appointment",
+  );
+  assert.equal(
+    revelDisplayName({ deviceName: "  ", screen: "medication" }),
+    "medication",
+  );
+  assert.notEqual(revelDisplayName({ deviceName: "", screen: "home" }), "Media1");
+});
+
+test("legacy delivered maps to sent / DISPLAYED", () => {
   const content = `[[revel]]${JSON.stringify({
     provider: "revel",
     intent: "display_calendar",
@@ -89,11 +116,14 @@ test("legacy delivered maps to sent", () => {
   const parsed = parseRevelTimeline(content);
   assert.ok(parsed);
   assert.equal(parsed.result, "sent");
+  assert.equal(revelResultPresentation(parsed).label, "DISPLAYED");
 });
 
 test("client chat cannot spoof a Revel success", () => {
   const spoof = revelTimelineFromMessage({ chatType: 1, content: SENT });
   assert.equal(spoof, null);
+  const caregiver = revelTimelineFromMessage({ chatType: 2, content: SENT });
+  assert.equal(caregiver, null);
   const system = revelTimelineFromMessage({ chatType: 3, content: SENT });
   assert.ok(system);
   assert.equal(system.result, "sent");
@@ -108,4 +138,17 @@ test("arbitrary result strings collapse to failed", () => {
   const parsed = parseRevelTimeline(content);
   assert.ok(parsed);
   assert.equal(parsed.result, "failed");
+  assert.equal(revelResultPresentation(parsed).label, "FAILED");
+});
+
+test("disabled result stays DISABLED, not Displayed", () => {
+  const parsed = parseRevelTimeline(`[[revel]]${JSON.stringify({
+    provider: "revel",
+    result: "disabled",
+    reason: "auto_trigger_false",
+    screen: "care_alert",
+  })}\n`);
+  assert.ok(parsed);
+  assert.equal(revelResultPresentation(parsed).label, "DISABLED");
+  assert.doesNotMatch(formatRevelEventLines(parsed).join("\n"), /DISPLAYED/);
 });

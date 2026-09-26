@@ -776,6 +776,41 @@ async def test_display_test_uses_show_home_and_rejects_screen(
 
 
 @pytest.mark.asyncio
+async def test_dashboard_dry_test_skips_write_and_never_returns_key(
+    client: AsyncClient, admin_token: str, stub_control
+):
+    import careconnect_api.revel_write as rw
+
+    agent_id = await _onboard(client, admin_token)
+    await _connect_and_map(client, admin_token, agent_id)
+    puts_before = rw.revel_puts_attempted
+    ok = await client.post(
+        f"/api/agent/{agent_id}/revel/test",
+        json={},
+        headers=_auth(admin_token),
+    )
+    body = ok.json()
+    assert body["code"] == 0, body
+    data = body["data"]
+    assert data["result"] == "skipped"
+    assert data["reason"] == REASON_EXECUTE_DISABLED
+    assert data["executed"] is False
+    assert data["executeEnabled"] is False
+    assert revel_execute_enabled() is False
+    assert rw.revel_puts_attempted == puts_before
+    blob = json.dumps(body)
+    for banned in _BANNED:
+        assert banned not in blob
+    rejected = await client.post(
+        f"/api/agent/{agent_id}/revel/test",
+        json={"screen": "photos", "intent": "SHOW_PHOTOS"},
+        headers=_auth(admin_token),
+    )
+    assert rejected.json()["code"] == 400
+    assert rw.revel_puts_attempted == puts_before
+
+
+@pytest.mark.asyncio
 async def test_oversized_title_http(client: AsyncClient, admin_token: str):
     agent_id = await _onboard(client, admin_token)
     await _connect_and_map(client, admin_token, agent_id)

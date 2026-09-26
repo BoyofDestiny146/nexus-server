@@ -6,6 +6,7 @@ Endpoints
 ---------
 GET    /api/agent/{agentId}/integrations
 GET    /api/agent/{agentId}/revel/status
+POST   /api/agent/{agentId}/revel/test
 POST   /api/agent/{agentId}/integrations/careconnect
 POST   /api/agent/{agentId}/integrations/careconnect/rotate
 DELETE /api/agent/{agentId}/integrations/careconnect
@@ -29,7 +30,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,7 +60,9 @@ from ..revel_config import (
     public_meta,
     tags_from_devices,
 )
+from ..revel_hooks import apply_test_display
 from ..revel_status import revel_status_for_agent
+from ..revel_write import revel_execute_enabled, revel_puts_attempted
 from ..settings import settings
 
 
@@ -336,6 +339,40 @@ async def get_revel_status(
     data = await revel_status_for_agent(db, agent_id, topic_id=topicId)
     _assert_no_secret_fields(data)
     return data
+
+
+class RevelDryTestIn(BaseModel):
+    """Dashboard dry-run. Screen, device, and GraphQL cannot be supplied."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post("/{agent_id}/revel/test", response_model=None)
+async def revel_dry_test(
+    agent_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    payload: RevelDryTestIn | None = None,
+) -> dict[str, Any]:
+    """Allowlisted SHOW_HOME dry-run. Never enables live Revel writes."""
+    _ = payload
+    await assert_can_access_agent(db, user, agent_id)
+    await _require_agent(db, agent_id)
+    puts_before = revel_puts_attempted
+    result = await apply_test_display(db, agent_id=agent_id)
+    _assert_no_secret_fields(result)
+    log.info(
+        "revel dashboard dry-test agent=%s result=%s reason=%s executed=%s "
+        "execute_enabled=%s puts_before=%s puts_after=%s",
+        agent_id,
+        result.get("result"),
+        result.get("reason"),
+        result.get("executed"),
+        revel_execute_enabled(),
+        puts_before,
+        revel_puts_attempted,
+    )
+    return result
 
 
 @router.post("/{agent_id}/integrations/careconnect", response_model=None)

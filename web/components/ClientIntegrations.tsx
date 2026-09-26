@@ -11,8 +11,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, BookOpen, Calendar, Check, Copy, KeyRound, Link2, Loader2, Plus, Unlink2, X, type LucideIcon } from "lucide-react";
 import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api";
+import { Drawer } from "@/components/Drawer";
 import { Modal } from "@/components/Modal";
 import { KnowledgeAccessFields } from "@/components/clientForm/KnowledgeAccessFields";
+import { RevelDiagnosticsList } from "@/components/RevelDiagnosticsList";
 import type {
   CalendarEventPreview,
   ClientIntegration,
@@ -47,6 +49,15 @@ import {
   phraseDraftInputKey,
   removePhrase,
 } from "@/lib/revelPhrases";
+import type { RevelStatus } from "@/lib/revelStatus";
+import {
+  revelApiKeyState,
+  revelApiStatusLabel,
+  revelConnectionLabel,
+  revelDryTestPath,
+  revelExecutionLabel,
+  revelLiveTestEnabled,
+} from "@/lib/revelDrawer";
 
 interface Props {
   agentId: string;
@@ -142,6 +153,7 @@ function ConnectionRow({
   disabled,
   busy,
   onClick,
+  testId,
 }: {
   name: string;
   icon: LucideIcon;
@@ -151,12 +163,14 @@ function ConnectionRow({
   disabled?: boolean;
   busy?: boolean;
   onClick?: () => void;
+  testId?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled || busy}
+      data-testid={testId}
       aria-label={`${name}, ${status}`}
       className={classNames(
         "w-full flex items-start gap-2.5 px-2 py-2 rounded-card text-left transition",
@@ -219,6 +233,8 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
   const [baselineKbIds, setBaselineKbIds] = useState<number[]>([]);
   const [kbLoading, setKbLoading] = useState(false);
   const [kbError, setKbError] = useState<string | null>(null);
+  const [revelStatus, setRevelStatus] = useState<RevelStatus | null>(null);
+  const [dryTestNote, setDryTestNote] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const data = await apiGet<{ list: ClientIntegration[] }>(
@@ -262,6 +278,19 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
     setRevelActions(revel.actions ? revel.actions.map((a) => ({ ...a, phrases: [...(a.phrases || [])] })) : []);
   }, [panel, revel?.updatedAt, revel?.lastDiscoverAt, revel?.connected, revel?.apiBaseUrl, revel?.deviceId]);
 
+  useEffect(() => {
+    if (panel !== "revel") return;
+    let cancelled = false;
+    apiGet<RevelStatus>(`/agent/${agentId}/revel/status`)
+      .then((data) => {
+        if (!cancelled) setRevelStatus(data);
+      })
+      .catch(() => {
+        if (!cancelled) setRevelStatus(null);
+      });
+    return () => { cancelled = true; };
+  }, [panel, agentId, revel?.updatedAt, revel?.lastDiscoverAt, revel?.deviceId]);
+
   function openPanel(next: Panel) {
     setErr(null);
     setBusy(false);
@@ -277,6 +306,7 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
     setTestNote(null);
     setOnceSecret(null);
     setKbError(null);
+    setDryTestNote(null);
     setPanel(next);
   }
 
@@ -478,6 +508,30 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
     void discoverRevel();
   }
 
+  async function runRevelDryTest() {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    setDryTestNote(null);
+    try {
+      const result = await apiPost<{ result?: string; reason?: string; executed?: boolean }>(
+        revelDryTestPath(agentId),
+        {},
+      );
+      const label = (result.result || "skipped").toUpperCase();
+      const reason = result.reason ? ` · ${result.reason}` : "";
+      setDryTestNote(`Dry test ${label}${reason}`);
+      await refresh();
+      const status = await apiGet<RevelStatus>(`/agent/${agentId}/revel/status`);
+      setRevelStatus(status);
+      onChanged?.();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Could not run the Revel dry test.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveGoogleCalendar() {
     if (busy || !icalUrl.trim()) return;
     setBusy(true);
@@ -599,6 +653,7 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
           icon={KeyRound}
           connected={!!revel?.connected}
           status={revel?.connected ? "Connected" : "Connect →"}
+          testId="revel-connection-row"
           onClick={() => openPanel("revel")}
         />
         <div className="kicker px-2 mt-4 mb-1.5">Knowledge</div>
@@ -701,11 +756,12 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
         )}
       </Modal>
 
-      <Modal
+      <Drawer
         open={panel === "revel"}
         onClose={() => { if (!busy) setPanel(null); }}
-        title={revel?.connected ? "Revel" : "Connect to Revel"}
-        size="lg"
+        title="Revel Integration"
+        side="left"
+        testId="revel-integration-drawer"
         footer={
           confirmDisconnect ? (
             <>
@@ -740,7 +796,7 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
             This will disconnect Revel from this client. The client/person, Watchers, chat history, assessments, and reminders will not be deleted.
           </p>
         ) : (
-          <div className="space-y-5 text-[14px] text-slate-deep max-h-[min(70vh,40rem)] overflow-y-auto pr-1">
+          <div className="space-y-6 text-[14px] text-slate-deep">
             {discoverTrace ? (
               <div
                 data-testid="revel-discover-trace"
@@ -755,23 +811,47 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
                 {err}
               </div>
             )}
-            <div className="rounded-card border border-slate-line/70 bg-bone-soft/60 px-3.5 py-2.5 text-[13px] leading-relaxed">
-              Voice commands require the client’s bot name.
-              Example: “{botName?.trim() || "Bob"}, show my calendar”
-              {!botName?.trim() ? (
-                <span className="block mt-1 text-slate-muted">Set a bot name in Edit client before commands can run.</span>
-              ) : null}
-            </div>
-            {revel?.connected && (
-              <div>
-                <div className="kicker mb-1">Revel: Connected</div>
-                <div className="label">API key</div>
-                <span className="font-mono">{revel.maskedKey || `••••••••••••${revel.secretHint || ""}`}</span>
-              </div>
-            )}
-            <div>
+
+            <section>
+              <div className="kicker mb-2">Connection</div>
+              <dl className="space-y-1.5 text-[13px]">
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">Connection</dt>
+                  <dd>{revelConnectionLabel(!!revel?.connected)}</dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">API status</dt>
+                  <dd>
+                    {revelApiStatusLabel({
+                      connected: !!revel?.connected,
+                      lastDiscoverAt: revel?.lastDiscoverAt,
+                      lastError: revelStatus?.lastEvent?.error,
+                    })}
+                  </dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">Execution</dt>
+                  <dd>{revelExecutionLabel(revelStatus?.revelExecuteEnabled)}</dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">Last successful communication</dt>
+                  <dd className="text-right min-w-0">
+                    {revel?.lastDiscoverAt ? relativeTime(revel.lastDiscoverAt) : "None recorded"}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+
+            <section>
+              <div className="kicker mb-2">Credentials</div>
+              <dl className="space-y-1.5 text-[13px] mb-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">API Key</dt>
+                  <dd>{revelApiKeyState(!!revel?.connected)}</dd>
+                </div>
+              </dl>
               <label htmlFor="revel-key" className="label">
-                {revel?.connected ? "Replace key" : "Revel API key"}
+                {revel?.connected ? "Replace key" : "Configure API key"}
               </label>
               <input
                 id="revel-key"
@@ -783,72 +863,75 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
                 onChange={(e) => setRevelKey(e.target.value)}
               />
               <div className="helper">
-                Paste the Developer API key from Revel Account → Developer API.
-                A device registration key will not work. The full key is stored encrypted and is never shown again.
+                The stored key is never shown. Paste a replacement to rotate it.
               </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="btn-primary text-[12px]"
-                disabled={busy || revelKey.trim().length < 8}
-                onClick={() => void saveRevel()}
-              >
-                {busy && !discovering && <Loader2 size={12} className="animate-spin" />}
-                {revel?.connected ? "Replace key" : "Save key"}
-              </button>
-              <button
-                type="button"
-                className="btn-secondary text-[12px] pointer-events-auto"
-                data-testid="revel-discover"
-                aria-busy={discovering}
-                onPointerDown={onDiscoverActivate}
-                onClick={onDiscoverActivate}
-              >
-                {discovering ? <Loader2 size={12} className="animate-spin" /> : null}
-                {discovering ? "Discovering…" : "Discover Devices"}
-              </button>
-            </div>
-            <div className="helper">
-              {revel?.connected || revelKey.trim().length >= 8
-                ? "Save connection → Discover Devices. Discovery talks to CareConnect only; it does not change the display."
-                : "Save the API key first, then Discover Devices."}
-            </div>
-            <div>
-              <div className="kicker mb-2">Available devices</div>
-              <RevelDeviceResults
-                devices={revel?.discoveredDevices || []}
-                discovering={discovering}
-              />
-            </div>
-
-            {revel?.connected && (
-              <>
-                <div>
-                  <label htmlFor="revel-base" className="label">API base URL</label>
-                  <input
-                    id="revel-base"
-                    className="input font-mono"
-                    value={revelApiBase}
-                    onChange={(e) => setRevelApiBase(e.target.value)}
-                    placeholder="https://api.reveldigital.com"
-                  />
-                </div>
-                <div>
+              <div className="flex flex-wrap gap-2 mt-2">
+                <button
+                  type="button"
+                  className="btn-primary text-[12px]"
+                  disabled={busy || revelKey.trim().length < 8}
+                  onClick={() => void saveRevel()}
+                >
+                  {busy && !discovering && <Loader2 size={12} className="animate-spin" />}
+                  {revel?.connected ? "Replace key" : "Configure"}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary text-[12px] pointer-events-auto"
+                  data-testid="revel-discover"
+                  aria-busy={discovering}
+                  onPointerDown={onDiscoverActivate}
+                  onClick={onDiscoverActivate}
+                >
+                  {discovering ? <Loader2 size={12} className="animate-spin" /> : null}
+                  {discovering ? "Discovering…" : "Discover Devices"}
+                </button>
+              </div>
+              {revel?.connected ? (
+                <div className="mt-3">
                   <label htmlFor="revel-reg" className="label">Registration key (optional)</label>
                   <input
                     id="revel-reg"
                     className="input font-mono"
                     type="password"
                     autoComplete="off"
-                    placeholder={revel.registrationKeySet ? `Stored · hint ${revel.registrationKeyHint || "••••"}` : "Only if Revel requires it for this device"}
+                    placeholder={revel.registrationKeySet ? "Stored · leave blank to keep" : "Only if Revel requires it for this device"}
                     value={revelRegKey}
                     onChange={(e) => setRevelRegKey(e.target.value)}
                   />
-                  <div className="helper">Encrypted like the API key. Leave blank to keep the stored value. Not required for tag commands unless discovery says otherwise.</div>
                 </div>
-                <div>
-                  <label htmlFor="revel-device" className="label">Selected display</label>
+              ) : null}
+            </section>
+
+            <section>
+              <div className="kicker mb-2">Player Mapping</div>
+              <dl className="space-y-1.5 text-[13px]">
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">Mapped player</dt>
+                  <dd className="text-right min-w-0 break-all">
+                    {revelStatus?.device?.name || revel?.deviceName || "—"}
+                  </dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">Revel device ID</dt>
+                  <dd className="font-mono text-[12px] text-right min-w-0 break-all">
+                    {revelStatus?.device?.id || revel?.deviceId || "—"}
+                  </dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">deviceKey</dt>
+                  <dd className="font-mono text-[12px] text-right min-w-0 break-all">
+                    {revelStatus?.deviceKey || "—"}
+                  </dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">Status</dt>
+                  <dd className="capitalize">{revelStatus?.device?.status || "unknown"}</dd>
+                </div>
+              </dl>
+              {(revel?.discoveredDevices || []).length > 0 ? (
+                <div className="mt-3">
+                  <label htmlFor="revel-device" className="label">Select Player</label>
                   <select
                     id="revel-device"
                     className="input"
@@ -862,140 +945,262 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
                       </option>
                     ))}
                   </select>
-                  <div className="helper">Voice cannot choose a device. Discover first, then pick Display1 here.</div>
+                  <button
+                    type="button"
+                    className="btn-secondary text-[12px] mt-2"
+                    disabled={busy}
+                    onClick={() => void saveRevelConfig()}
+                  >
+                    Save player
+                  </button>
                 </div>
+              ) : (
+                <p className="text-[12px] text-slate-muted mt-2 leading-relaxed">
+                  Discover devices to select a player. Discovery does not change the display.
+                </p>
+              )}
+              <div className="mt-3">
+                <RevelDeviceResults
+                  devices={revel?.discoveredDevices || []}
+                  discovering={discovering}
+                />
+              </div>
+            </section>
 
-                <div>
-                  <div className="kicker mb-2">Voice display commands</div>
-                  <p className="text-[12.5px] text-slate-muted mb-3 leading-relaxed">
-                    Admins map each allowlisted action to a discovered Revel tag. Clients cannot edit this.
-                    Live display changes are not sent until execute is approved.
-                  </p>
-                  <div className="space-y-3">
-                    {revelActions.map((action, idx) => (
-                      <div key={action.intent} className="border border-slate-line/70 rounded-card px-3.5 py-3 space-y-2.5">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="font-medium text-slate-deep">{action.label || action.intent}</div>
-                          <label className="flex items-center gap-2 text-[12px] text-slate-muted">
-                            <input
-                              type="checkbox"
-                              checked={action.enabled !== false}
-                              onChange={(e) => {
-                                const next = [...revelActions];
-                                next[idx] = { ...action, enabled: e.target.checked };
-                                setRevelActions(next);
-                              }}
-                            />
-                            Enabled
-                          </label>
-                        </div>
-                        <div>
-                          <label className="label" htmlFor={`revel-tag-${action.intent}`}>Revel tag / command</label>
-                          <select
-                            id={`revel-tag-${action.intent}`}
-                            className="input"
-                            value={action.revelTag || ""}
-                            onChange={(e) => {
-                              const next = [...revelActions];
-                              next[idx] = { ...action, revelTag: e.target.value || null };
-                              setRevelActions(next);
-                            }}
-                          >
-                            <option value="">Select a discovered tag</option>
-                            {(revel.discoveredTags || []).map((tag) => (
-                              <option key={tag} value={tag}>{tag}</option>
-                            ))}
-                            {action.revelTag && !(revel.discoveredTags || []).includes(action.revelTag) ? (
-                              <option value={action.revelTag}>{action.revelTag} (saved)</option>
-                            ) : null}
-                          </select>
-                        </div>
-                        <div>
-                          <div className="label">Accepted phrases</div>
-                          <ul className="flex flex-wrap gap-1.5 mt-1">
-                            {(action.phrases || []).length === 0 ? (
-                              <li className="text-[12px] text-slate-muted">No phrases yet</li>
-                            ) : (action.phrases || []).map((phrase, phraseIdx) => (
-                              <li
-                                key={phraseChipKey(action.intent, phraseIdx)}
-                                className="inline-flex items-center gap-1 rounded-full border border-slate-line bg-white px-2 py-0.5 text-[12px]"
-                              >
-                                {phrase}
-                                <button
-                                  type="button"
-                                  className="text-slate-muted hover:text-risk-urgent"
-                                  aria-label={`Remove phrase ${phrase}`}
-                                  onClick={() => {
-                                    const next = [...revelActions];
-                                    next[idx] = {
-                                      ...action,
-                                      phrases: removePhrase(action.phrases, phrase),
-                                    };
-                                    setRevelActions(next);
-                                  }}
-                                >
-                                  <X size={12} />
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                          <div className="flex gap-2 mt-2">
-                            <input
-                              key={phraseDraftInputKey(action.intent)}
-                              id={phraseDraftInputKey(action.intent)}
+            <section>
+              <div className="kicker mb-2">Control</div>
+              <dl className="space-y-1.5 text-[13px]">
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">Control table</dt>
+                  <dd className="font-mono text-[12px] text-right min-w-0 break-all">
+                    {revelStatus?.controlTableId || "—"}
+                  </dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">Control row</dt>
+                  <dd className="font-mono text-[12px] text-right min-w-0 break-all">
+                    {revelStatus?.controlRowId || "—"}
+                  </dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">Table discovery</dt>
+                  <dd>{revelStatus?.controlTableId ? "Inspected" : "Not inspected"}</dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">Current display</dt>
+                  <dd className="text-right min-w-0 break-all">
+                    {revelStatus?.lastEvent?.screen || revelStatus?.device?.name || "—"}
+                  </dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">Current tag</dt>
+                  <dd className="font-mono text-[12px]">{revelStatus?.tag || "—"}</dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-slate-muted">Auto trigger</dt>
+                  <dd>{revelStatus?.autoTrigger ? "Enabled" : "Disabled"}</dd>
+                </div>
+              </dl>
+              {revel?.connected ? (
+                <>
+                  <div className="mt-3">
+                    <label htmlFor="revel-base" className="label">API base URL</label>
+                    <input
+                      id="revel-base"
+                      className="input font-mono"
+                      value={revelApiBase}
+                      onChange={(e) => setRevelApiBase(e.target.value)}
+                      placeholder="https://api.reveldigital.com"
+                    />
+                  </div>
+                  <div className="mt-4">
+                    <div className="kicker mb-2">Voice display commands</div>
+                    <p className="text-[12.5px] text-slate-muted mb-3 leading-relaxed">
+                      Voice commands require the client’s bot name.
+                      Example: “{botName?.trim() || "Bob"}, show my calendar”
+                      {!botName?.trim() ? (
+                        <span className="block mt-1">Set a bot name in Edit client before commands can run.</span>
+                      ) : null}
+                    </p>
+                    <div className="space-y-3">
+                      {revelActions.map((action, idx) => (
+                        <div key={action.intent} className="border border-slate-line/70 rounded-card px-3.5 py-3 space-y-2.5">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="font-medium text-slate-deep">{action.label || action.intent}</div>
+                            <label className="flex items-center gap-2 text-[12px] text-slate-muted">
+                              <input
+                                type="checkbox"
+                                checked={action.enabled !== false}
+                                onChange={(e) => {
+                                  const next = [...revelActions];
+                                  next[idx] = { ...action, enabled: e.target.checked };
+                                  setRevelActions(next);
+                                }}
+                              />
+                              Enabled
+                            </label>
+                          </div>
+                          <div>
+                            <label className="label" htmlFor={`revel-tag-${action.intent}`}>Revel tag / command</label>
+                            <select
+                              id={`revel-tag-${action.intent}`}
                               className="input"
-                              placeholder="Add phrase"
-                              value={phraseDraft[action.intent] ?? ""}
+                              value={action.revelTag || ""}
                               onChange={(e) => {
-                                const value = e.target.value;
-                                setPhraseDraft((d) => ({ ...d, [action.intent]: value }));
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key !== "Enter") return;
-                                e.preventDefault();
-                                const text = phraseDraft[action.intent] ?? "";
-                                if (!text.trim()) return;
                                 const next = [...revelActions];
-                                next[idx] = { ...action, phrases: addPhrase(action.phrases, text) };
+                                next[idx] = { ...action, revelTag: e.target.value || null };
                                 setRevelActions(next);
-                                setPhraseDraft((d) => ({ ...d, [action.intent]: "" }));
-                              }}
-                            />
-                            <button
-                              type="button"
-                              className="btn-secondary text-[12px]"
-                              onClick={() => {
-                                const text = phraseDraft[action.intent] ?? "";
-                                if (!text.trim()) return;
-                                const next = [...revelActions];
-                                next[idx] = { ...action, phrases: addPhrase(action.phrases, text) };
-                                setRevelActions(next);
-                                setPhraseDraft((d) => ({ ...d, [action.intent]: "" }));
                               }}
                             >
-                              <Plus size={12} /> Add phrase
-                            </button>
+                              <option value="">Select a discovered tag</option>
+                              {(revel.discoveredTags || []).map((tag) => (
+                                <option key={tag} value={tag}>{tag}</option>
+                              ))}
+                              {action.revelTag && !(revel.discoveredTags || []).includes(action.revelTag) ? (
+                                <option value={action.revelTag}>{action.revelTag} (saved)</option>
+                              ) : null}
+                            </select>
+                          </div>
+                          <div>
+                            <div className="label">Accepted phrases</div>
+                            <ul className="flex flex-wrap gap-1.5 mt-1">
+                              {(action.phrases || []).length === 0 ? (
+                                <li className="text-[12px] text-slate-muted">No phrases yet</li>
+                              ) : (action.phrases || []).map((phrase, phraseIdx) => (
+                                <li
+                                  key={phraseChipKey(action.intent, phraseIdx)}
+                                  className="inline-flex items-center gap-1 rounded-full border border-slate-line bg-white px-2 py-0.5 text-[12px]"
+                                >
+                                  {phrase}
+                                  <button
+                                    type="button"
+                                    className="text-slate-muted hover:text-risk-urgent"
+                                    aria-label={`Remove phrase ${phrase}`}
+                                    onClick={() => {
+                                      const next = [...revelActions];
+                                      next[idx] = {
+                                        ...action,
+                                        phrases: removePhrase(action.phrases, phrase),
+                                      };
+                                      setRevelActions(next);
+                                    }}
+                                  >
+                                    <X size={12} />
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                            <div className="flex gap-2 mt-2">
+                              <input
+                                key={phraseDraftInputKey(action.intent)}
+                                id={phraseDraftInputKey(action.intent)}
+                                className="input"
+                                placeholder="Add phrase"
+                                value={phraseDraft[action.intent] ?? ""}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setPhraseDraft((d) => ({ ...d, [action.intent]: value }));
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key !== "Enter") return;
+                                  e.preventDefault();
+                                  const text = phraseDraft[action.intent] ?? "";
+                                  if (!text.trim()) return;
+                                  const next = [...revelActions];
+                                  next[idx] = { ...action, phrases: addPhrase(action.phrases, text) };
+                                  setRevelActions(next);
+                                  setPhraseDraft((d) => ({ ...d, [action.intent]: "" }));
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className="btn-secondary text-[12px]"
+                                onClick={() => {
+                                  const text = phraseDraft[action.intent] ?? "";
+                                  if (!text.trim()) return;
+                                  const next = [...revelActions];
+                                  next[idx] = { ...action, phrases: addPhrase(action.phrases, text) };
+                                  setRevelActions(next);
+                                  setPhraseDraft((d) => ({ ...d, [action.intent]: "" }));
+                                }}
+                              >
+                                <Plus size={12} /> Add phrase
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
+                    <button type="button" className="btn-primary text-[12px] mt-3" disabled={busy} onClick={saveRevelConfig}>
+                      {busy && <Loader2 size={12} className="animate-spin" />}
+                      Save display commands
+                    </button>
                   </div>
-                </div>
-                <button type="button" className="btn-primary text-[12px]" disabled={busy} onClick={saveRevelConfig}>
+                </>
+              ) : null}
+            </section>
+
+            <section>
+              <div className="kicker mb-2">Diagnostics</div>
+              {revelStatus ? (
+                <>
+                  <RevelDiagnosticsList status={revelStatus} compact />
+                  <dl className="mt-2 space-y-1.5 text-[12px] text-slate-deep">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <dt className="text-slate-muted">Dry-run status</dt>
+                      <dd>
+                        {revelStatus.lastEvent?.result === "skipped"
+                        && revelStatus.lastEvent?.reason === "revel_write_disabled"
+                          ? "Dry run"
+                          : revelStatus.lastEvent
+                            ? "Live path recorded"
+                            : "No event yet"}
+                      </dd>
+                    </div>
+                  </dl>
+                </>
+              ) : (
+                <p className="text-[12px] text-slate-muted leading-relaxed">
+                  Revel status is not available for this discussion.
+                </p>
+              )}
+            </section>
+
+            <section>
+              <div className="kicker mb-2">Testing</div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn-primary text-[12px]"
+                  data-testid="revel-dry-test"
+                  disabled={busy || !revel?.connected}
+                  onClick={() => void runRevelDryTest()}
+                >
                   {busy && <Loader2 size={12} className="animate-spin" />}
-                  Save display commands
+                  Run Dry Test
                 </button>
-              </>
-            )}
-            {err && (
-              <div className="flex items-start gap-2 text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">
-                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                {err}
+                <button
+                  type="button"
+                  className="btn-secondary text-[12px]"
+                  data-testid="revel-live-test"
+                  disabled={!revelLiveTestEnabled(revelStatus?.revelExecuteEnabled)}
+                  title="Live tests stay disabled while REVEL_EXECUTE_ENABLED is false."
+                >
+                  Live test
+                </button>
               </div>
-            )}
+              <p className="helper mt-2">
+                Live test controls stay disabled while Revel execution is off. Dry tests do not write to Revel.
+              </p>
+              {dryTestNote ? (
+                <div className="mt-2 text-[13px] text-slate-deep border border-slate-line/70 rounded-card px-3 py-2">
+                  {dryTestNote}
+                </div>
+              ) : null}
+            </section>
           </div>
         )}
-      </Modal>
+      </Drawer>
 
       <Modal
         open={panel === "google_calendar"}

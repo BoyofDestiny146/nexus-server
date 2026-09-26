@@ -76,6 +76,8 @@ export function deviceOnlineLabel(isOnline: boolean | null | undefined): string 
 /** JWT envelope 401 must not log the admin out during Revel credential failures. */
 export function shouldClearSessionOn401(path: string, message?: string | null): boolean {
   if (path.includes("/integrations/revel")) return false;
+  if (path.includes("/revel/test")) return false;
+  if (path.includes("/revel/status")) return false;
   if (/revel authentication failed/i.test(message || "")) return false;
   return true;
 }

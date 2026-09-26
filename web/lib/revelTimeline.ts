@@ -78,19 +78,84 @@ export function revelTimelineFromMessage(message: {
   return parseRevelTimeline(message.content);
 }
 
+/** Mapped player name if present, otherwise the normalized screen. Never invents Media1. */
+export function revelDisplayName(event: Pick<RevelTimeline, "deviceName" | "screen">): string {
+  const name = (event.deviceName || "").trim();
+  if (name) return name;
+  return (event.screen || "").trim();
+}
+
+export type RevelResultCode = "dry_run" | "displayed" | "skipped" | "failed" | "disabled";
+export type RevelResultLabel = "DRY RUN" | "DISPLAYED" | "SKIPPED" | "FAILED" | "DISABLED";
+
+export type RevelResultPresentation = {
+  code: RevelResultCode;
+  label: RevelResultLabel;
+  displayed: boolean;
+};
+
+export function revelResultPresentation(
+  event: Pick<RevelTimeline, "result" | "reason">,
+): RevelResultPresentation {
+  if (event.result === "sent") {
+    return { code: "displayed", label: "DISPLAYED", displayed: true };
+  }
+  if (event.result === "failed") {
+    return { code: "failed", label: "FAILED", displayed: false };
+  }
+  if (event.result === "disabled") {
+    return { code: "disabled", label: "DISABLED", displayed: false };
+  }
+  if (event.result === "skipped" && event.reason === "revel_write_disabled") {
+    return { code: "dry_run", label: "DRY RUN", displayed: false };
+  }
+  if (event.result === "skipped") {
+    return { code: "skipped", label: "SKIPPED", displayed: false };
+  }
+  return { code: "failed", label: "FAILED", displayed: false };
+}
+
+export type RevelEventCardModel = {
+  type: string;
+  title: "DISPLAY EVENT";
+  tag: string;
+  display: string;
+  intent: string;
+  screen: string;
+  result: RevelTimeline["result"];
+  resultLabel: RevelResultLabel;
+  reason: string;
+  message: string;
+  timestamp: string;
+  deviceKey: string;
+};
+
+export function revelEventCardModel(
+  event: RevelTimeline,
+  timestamp?: string | null,
+): RevelEventCardModel {
+  const presentation = revelResultPresentation(event);
+  return {
+    type: event.eventType || "revel_display",
+    title: "DISPLAY EVENT",
+    tag: event.tag || "",
+    display: revelDisplayName(event),
+    intent: event.intent || "",
+    screen: event.screen || "",
+    result: event.result,
+    resultLabel: presentation.label,
+    reason: event.reason || "",
+    message: event.summary || "",
+    timestamp: (timestamp || event.deliveredAt || "").trim(),
+    deviceKey: event.deviceKey || "",
+  };
+}
+
 export function formatRevelEventLines(event: RevelTimeline): string[] {
-  const lines = ["REVEL DISPLAY EVENT"];
-  if (event.intent) lines.push(`Intent: ${event.intent}`);
-  if (event.screen) lines.push(`Screen: ${event.screen}`);
-  if (event.deviceName) lines.push(`Player: ${event.deviceName}`);
-  if (event.tag) lines.push(`Tag: ${event.tag}`);
-  if (event.deviceKey) lines.push(`Device Key: ${event.deviceKey}`);
-  lines.push(`Result: ${event.result.toUpperCase()}`);
-  const reasonText = event.reasonLabel || event.reason;
-  if (reasonText) lines.push(`Reason: ${reasonText}`);
-  if (event.controlTableId) lines.push(`Control Table: ${event.controlTableId}`);
-  if (event.controlRowId) lines.push(`Control Row: ${event.controlRowId}`);
-  if (event.error) lines.push(`Error: ${event.error}`);
-  if (event.deliveredAt) lines.push(`Time: ${event.deliveredAt}`);
+  const card = revelEventCardModel(event);
+  const lines = [card.title];
+  if (card.tag) lines.push(`Revel Tag: ${card.tag}`);
+  if (card.display) lines.push(`Display: ${card.display}`);
+  lines.push(card.resultLabel);
   return lines;
 }

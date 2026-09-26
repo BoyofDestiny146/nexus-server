@@ -459,7 +459,8 @@ def test_revel_timeline_encode_parse_and_not_gcal():
     dialogue = _render_dialogue(
         [AiAgentChatHistory(chat_type=3, content=content)]
     )
-    assert dialogue.startswith("display_action:")
+    assert dialogue.startswith("REVEL_DISPLAY")
+    assert "display_action:" not in dialogue
     assert "calendar_reminder:" not in dialogue
 
 

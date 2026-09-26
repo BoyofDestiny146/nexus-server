@@ -14,14 +14,13 @@ import type {
 import { deviceSetupUrl } from "@/lib/serverConfig";
 import { classNames, dayLabel, relativeTime, shortTime } from "@/lib/format";
 import { parseGcalTimeline, isSystemChat } from "@/lib/calendarTimeline";
-import { formatRevelEventLines, revelTimelineFromMessage } from "@/lib/revelTimeline";
+import { revelTimelineFromMessage } from "@/lib/revelTimeline";
 import {
   PATIENT_DETAIL_CENTER,
   PATIENT_DETAIL_LEFT,
   PATIENT_DETAIL_RIGHT,
   PATIENT_DETAIL_SECTION,
 } from "@/lib/patientDetailLayout";
-import type { RevelStatus } from "@/lib/revelStatus";
 import { useLiveChat } from "@/lib/useLiveChat";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -32,7 +31,7 @@ import { Modal } from "@/components/Modal";
 import { ToastProvider, useToast } from "@/components/Toast";
 import { ClientIntegrations } from "@/components/ClientIntegrations";
 import { EditClientWorkspace } from "@/components/EditClientWorkspace";
-import { RevelDiagnosticsList } from "@/components/RevelDiagnosticsList";
+import { RevelDisplayEvent } from "@/components/RevelDisplayEvent";
 import { RevelStatusBadge } from "@/components/RevelStatusBadge";
 
 const WATCHER_ONLINE_MS = 5 * 60_000;
@@ -110,7 +109,6 @@ function PatientDetailView({ id }: { id: string }) {
   const [editOpen, setEditOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [knowledgeTick, setKnowledgeTick] = useState(0);
-  const [revelStatus, setRevelStatus] = useState<RevelStatus | null>(null);
 
   const live = useLiveChat(id);
 
@@ -352,7 +350,7 @@ function PatientDetailView({ id }: { id: string }) {
             <div className="flex items-center gap-2.5 mb-2 min-w-0">
               <span className="kicker">Client detail</span>
               <LiveBadge status={live.status} />
-              <RevelStatusBadge agentId={id} refreshKey={knowledgeTick} onStatus={setRevelStatus} />
+              <RevelStatusBadge agentId={id} refreshKey={knowledgeTick} />
             </div>
             <h1 className="display-1 text-slate-deep leading-[1.05]">{agent.agentName}</h1>
             <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[12px] text-slate-muted">
@@ -396,7 +394,14 @@ function PatientDetailView({ id }: { id: string }) {
                 botName={agent.botName}
                 agentName={agent.agentName}
                 knowledgeTick={knowledgeTick}
-                onChanged={() => setKnowledgeTick((n) => n + 1)}
+                onChanged={() => {
+                  setKnowledgeTick((n) => n + 1);
+                  if (activeSession) {
+                    apiGet<ChatMessage[]>(`/agent/${id}/chat-history/${activeSession}`)
+                      .then((m) => setMessages(m ?? []))
+                      .catch(() => { /* keep current transcript */ });
+                  }
+                }}
               />
             </div>
             <div>
@@ -538,19 +543,9 @@ function PatientDetailView({ id }: { id: string }) {
                   const revel = revelTimelineFromMessage(m);
                   const gcal = parseGcalTimeline(m.content);
                   if (revel) {
-                    const lines = formatRevelEventLines(revel);
                     return (
-                      <li key={m.id} className="flex justify-center">
-                        <div className="w-full max-w-[min(100%,28rem)] border border-dashed border-slate-line bg-bone-soft/70 rounded-card px-3.5 py-2.5">
-                          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-muted">
-                            {lines[0]}
-                          </div>
-                          <div className="mt-1.5 text-[13.5px] leading-relaxed text-slate-deep space-y-0.5">
-                            {lines.slice(1).map((line) => (
-                              <div key={line}>{line}</div>
-                            ))}
-                          </div>
-                        </div>
+                      <li key={m.id} className="flex justify-center" data-testid="revel-timeline-item">
+                        <RevelDisplayEvent event={revel} timestamp={m.createdAt} />
                       </li>
                     );
                   }
@@ -623,8 +618,9 @@ function PatientDetailView({ id }: { id: string }) {
           ))}
         </div>
 
-        {/* Right: risk panel */}
+        {/* Right: current assessment */}
         <aside
+          data-testid="current-assessment-rail"
           className={classNames(
             PATIENT_DETAIL_RIGHT,
             live.assessmentTick > 0 && "ring-1 ring-teal/30",
@@ -635,7 +631,7 @@ function PatientDetailView({ id }: { id: string }) {
             <Sparkline data={history} width={280} height={48} />
           </div>
 
-          <div className="mt-6">
+          <div className="mt-6" data-testid="latest-assessment">
             <div className="kicker mb-3">Latest assessment</div>
             {latest ? (
               <>
@@ -680,6 +676,12 @@ function PatientDetailView({ id }: { id: string }) {
                   </div>
                 )}
 
+                {latest.concerns.length === 0 && latest.recommendations.length === 0 && (
+                  <p className="mt-6 text-[12px] text-slate-muted leading-relaxed">
+                    No current observations
+                  </p>
+                )}
+
                 {isRoot && (
                   <button
                     onClick={regenerate}
@@ -705,25 +707,6 @@ function PatientDetailView({ id }: { id: string }) {
                 )}
               </div>
             )}
-          </div>
-
-          <div className="mt-8 pt-6 border-t border-slate-line/70">
-            <div className="kicker mb-3">Revel diagnostics</div>
-            {revelStatus ? (
-              <RevelDiagnosticsList status={revelStatus} compact />
-            ) : (
-              <p className="text-[12px] text-slate-muted leading-relaxed">
-                Revel status is not available for this discussion.
-              </p>
-            )}
-          </div>
-
-          <div className="mt-8 pt-6 border-t border-slate-line/70">
-            <div className="kicker mb-2">Automation</div>
-            <p className="text-[12px] text-slate-muted leading-relaxed">
-              Calendar reminders and sensor alerts can request display screens through
-              an internal hook. They are not connected yet.
-            </p>
           </div>
         </aside>
       </section>
