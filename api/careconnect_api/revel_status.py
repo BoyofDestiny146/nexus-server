@@ -29,6 +29,7 @@ from .models import (
     KnowledgeBase,
     KnowledgeTopic,
 )
+from .revel_player_map import get_player_map, list_player_maps
 from .revel_client import _safe_revel_error
 from .revel_config import load_meta
 
@@ -111,6 +112,7 @@ def _public_event(parsed: dict[str, Any] | None) -> dict[str, Any] | None:
         "revelDeviceId": parsed.get("revel_device_id") or None,
         "revelDeviceName": parsed.get("revel_device_name") or parsed.get("deviceName") or None,
         "intent": parsed.get("intent") or None,
+        "screen": parsed.get("screen") or None,
         "result": normalize_revel_result(str(parsed.get("result") or "")),
         "error": error,
         "summary": (parsed.get("summary") or parsed.get("requested") or None) or None,
@@ -124,6 +126,8 @@ def _public_event(parsed: dict[str, Any] | None) -> dict[str, Any] | None:
         out["deviceKey"] = None
     if out.get("tag") == "":
         out["tag"] = None
+    if out.get("screen") == "":
+        out["screen"] = None
     return out
 
 
@@ -239,7 +243,19 @@ async def revel_status_for_agent(
     if device_id and not _DEVICE_ID_RE.match(device_id):
         device_id = None
     device_name = str(meta.get("deviceName") or "").strip() or None
-    device_key = device_key_for(device_name, device_id)
+    mapped = None
+    if device_id:
+        mapped = await get_player_map(db, agent_id, revel_device_id=device_id)
+    if mapped is None:
+        maps = await list_player_maps(db, agent_id)
+        if len(maps) == 1:
+            mapped = maps[0]
+    if mapped is not None:
+        device_id = mapped.revel_device_id
+        device_name = mapped.revel_device_name or device_name
+        device_key = mapped.device_key
+    else:
+        device_key = device_key_for(device_name, device_id)
 
     last_event = await latest_revel_event(db, agent_id)
     topics = await _assigned_topics(db, agent_id)
@@ -300,7 +316,7 @@ def result_for_attempt(*, executed: bool, reason: str | None) -> str:
     why = (reason or "").strip()
     if why in {"feature_disabled", "auto_trigger_false", "action_disabled"}:
         return "disabled"
-    if why in {"revel_failed"} or "fail" in why:
+    if why in {"unmapped_player", "revel_failed"} or "fail" in why.casefold():
         return "failed"
     return "skipped"
 
@@ -317,12 +333,20 @@ async def record_revel_attempt(
     executed: bool = False,
     reason: str | None = None,
     error: str | None = None,
+    device_key: str | None = None,
+    screen: str | None = None,
 ) -> dict[str, Any] | None:
     """Persist a system timeline event for a real backend attempt. Fail-open."""
     if not agent_id:
         return None
     result = result_for_attempt(executed=executed, reason=reason)
     safe_error = _safe_revel_error(error) if result == "failed" else ""
+    stored_key = device_key
+    if not stored_key and device_id:
+        mapped = await get_player_map(db, agent_id, revel_device_id=device_id)
+        if mapped is not None:
+            stored_key = mapped.device_key
+            device_name = device_name or mapped.revel_device_name
     try:
         payload = await persist_revel_timeline(
             db,
@@ -333,8 +357,9 @@ async def record_revel_attempt(
             result=result,
             delivered_at=datetime.now(timezone.utc),
             tag=tag,
-            device_key=device_key_for(device_name, device_id),
+            device_key=stored_key or device_key_for(device_name, device_id),
             revel_device_id=device_id,
+            screen=screen,
             error=safe_error or None,
             summary=requested or None,
         )

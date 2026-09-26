@@ -102,6 +102,7 @@ export function RevelStatusBadge({
               {status.lastEvent ? (
                 <div className="space-y-2">
                   <Row label="Intent" value={status.lastEvent.intent || "—"} />
+                  <Row label="Screen" value={status.lastEvent.screen || "—"} />
                   <Row label="Message" value={status.lastEvent.summary || "—"} />
                   <Row label="Sent At" value={longTime(status.lastEvent.createdAt) || "—"} />
                   <Row label="Result" value={(status.lastEvent.result || "—").toString().toUpperCase()} />

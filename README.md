@@ -99,3 +99,28 @@ docker compose exec -T api wget -qO- \
   --header="X-Internal-Token: ${TOKEN}" \
   http://127.0.0.1:8080/api/internal/revel/status/$AGENT_ID
 ```
+
+## Nexus Revel display state (Phase 2B)
+
+Display writes are still **disabled**. `EXECUTE_ENABLED` remains false. A valid
+internal display request records a timeline `SKIPPED` event (`Revel execution
+disabled`) and never POSTs a Data Table mutation.
+
+Player targeting uses `cc_revel_player_map` (agent → frozen `deviceKey` →
+immutable Revel `deviceId`). Names, slugs, tags, and AI text are not write
+keys. Callers cannot supply `revelDeviceId`, `screen`, GraphQL, or Revel
+commands.
+
+V1 intents: `SHOW_HOME`, `RETURN_HOME`, `SHOW_APPOINTMENT_REMINDER`,
+`SHOW_MEDICATION_REMINDER`, `SHOW_CARE_ALERT`, `SHOW_SENSOR_ALERT`.
+
+Read-only Data Table discovery (same `X-Internal-Token`):
+
+```sh
+TOKEN=$(docker run --rm -v careconnect_cc-secrets:/s:ro alpine cat /s/api-internal-token)
+docker compose exec -T api wget -qO- \
+  --header="X-Internal-Token: ${TOKEN}" \
+  http://127.0.0.1:8080/api/internal/revel/datatables
+```
+
+Apply `api/migrations/020_revel_player_map.sql` by hand on existing databases.

@@ -8,6 +8,7 @@ export type RevelTimeline = {
   provider: string;
   eventType: string;
   intent: string;
+  screen: string;
   deviceName: string;
   revelDeviceId: string;
   deviceKey: string;
@@ -44,6 +45,7 @@ export function parseRevelTimeline(content: string | null | undefined): RevelTim
       provider,
       eventType: String(header.event_type || "revel_display"),
       intent: String(header.intent || ""),
+      screen: String(header.screen || ""),
       deviceName,
       revelDeviceId: String(header.revel_device_id || ""),
       deviceKey: String(header.device_key || ""),
@@ -74,6 +76,7 @@ export function formatRevelEventLines(event: RevelTimeline): string[] {
   if (event.deviceName) lines.push(`Player: ${event.deviceName}`);
   if (event.deviceKey) lines.push(`Device Key: ${event.deviceKey}`);
   if (event.intent) lines.push(`Intent: ${event.intent}`);
+  if (event.screen) lines.push(`Screen: ${event.screen}`);
   lines.push(`Result: ${event.result.toUpperCase()}`);
   if (event.error) lines.push(`Error: ${event.error}`);
   if (event.deliveredAt) lines.push(`Time: ${event.deliveredAt}`);

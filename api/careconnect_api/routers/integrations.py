@@ -48,6 +48,7 @@ from ..gcal_ical import (
 )
 from ..integration_crypto import decrypt_secret, encrypt_secret, secret_hint
 from ..models import AiAgent, ClientIntegration
+from ..revel_player_map import delete_player_maps, upsert_from_meta
 from ..rbac import assert_can_access_agent
 from ..revel_client import list_devices, sanitize_revel_api_key
 from ..revel_config import (
@@ -514,6 +515,7 @@ async def upsert_revel(
         meta["registrationKeyEnc"] = encrypt_secret(reg)
         meta["registrationKeyHint"] = secret_hint(reg)
     row.metadata_json = dump_meta(meta)
+    await upsert_from_meta(db, agent_id, meta)
 
     try:
         await db.commit()
@@ -567,6 +569,7 @@ async def discover_revel(
         meta["deviceName"] = None
     row.metadata_json = dump_meta(meta)
     row.updated_at = _now()
+    await upsert_from_meta(db, agent_id, meta)
     try:
         await db.commit()
         await db.refresh(row)
@@ -592,6 +595,7 @@ async def delete_revel(
     if row is None:
         raise APIException(404, "Revel integration is not connected")
     try:
+        await delete_player_maps(db, agent_id)
         await db.execute(
             delete(ClientIntegration).where(
                 ClientIntegration.agent_id == agent_id,

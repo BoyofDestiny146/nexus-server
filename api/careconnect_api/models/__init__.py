@@ -175,6 +175,35 @@ class ClientIntegration(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class RevelPlayerMap(Base):
+    """Authoritative client → frozen device_key → immutable Revel device ID.
+
+    Writes target ``revel_device_id``. ``device_key`` is UI/display only and
+    is frozen when the operator selects a discovered player.
+    """
+
+    __tablename__ = "cc_revel_player_map"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "device_key", name="uq_cc_revel_player_agent_key"),
+        UniqueConstraint("agent_id", "revel_device_id", name="uq_cc_revel_player_agent_device"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    agent_id: Mapped[str] = mapped_column(String(32), index=True)
+    device_key: Mapped[str] = mapped_column(String(128))
+    revel_device_id: Mapped[str] = mapped_column(String(128))
+    revel_device_name: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class KnowledgeBase(Base):
     """Reusable localized knowledge catalog. Assigned to clients (ai_agent),
     not stored on ai_device. Watchers inherit via the bound agent."""

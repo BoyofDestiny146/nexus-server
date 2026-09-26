@@ -67,6 +67,7 @@ from ..models import (
     AiDevice,
     AiMedicalAssessment,
     ClientIntegration,
+    RevelPlayerMap,
 )
 from ..rbac import assert_can_access_agent
 from ..settings import settings
@@ -573,6 +574,7 @@ async def delete_agent(
     """Hard-delete a client (root only). Cascades:
 
       • cc_admin_client_access  — removes RBAC grants pointing at this agent
+      • cc_revel_player_map      — removes stored Revel device-id mappings
       • cc_client_integration    — removes partner credentials (not Watchers)
       • ai_medical_assessment    — removes triage rows
       • ai_agent_chat_history    — removes conversation rows
@@ -616,6 +618,9 @@ async def delete_agent(
         # 2. cascade deletes (RBAC grants, triage, history)
         await db.execute(
             delete(AdminClientAccess).where(AdminClientAccess.agent_id == agent_id)
+        )
+        await db.execute(
+            delete(RevelPlayerMap).where(RevelPlayerMap.agent_id == agent_id)
         )
         await db.execute(
             delete(ClientIntegration).where(ClientIntegration.agent_id == agent_id)

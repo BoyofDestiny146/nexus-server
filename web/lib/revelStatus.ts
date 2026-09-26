@@ -16,6 +16,7 @@ export interface RevelStatusEvent {
   revelDeviceId?: string | null;
   revelDeviceName?: string | null;
   intent?: string | null;
+  screen?: string | null;
   result?: RevelResult | string | null;
   error?: string | null;
   summary?: string | null;

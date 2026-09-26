@@ -5,6 +5,7 @@ The LLM / external callers never supply GraphQL text, REST paths, or command
 names. The only GraphQL document this module will POST is ``DEVICES_QUERY``.
 
 Writes (Data Table rows, ``sendDeviceCommand``) are not implemented here.
+Data Table discovery lives in ``revel_datatables`` (read-only).
 """
 from __future__ import annotations
 

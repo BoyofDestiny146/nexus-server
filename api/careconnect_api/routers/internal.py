@@ -20,6 +20,11 @@ Endpoints
 * ``GET /api/internal/revel/devices`` — Nexus-system Revel discovery
   (read-only GraphQL device list). Requires ``X-Internal-Token``. Does not
   accept GraphQL from the caller and does not write to Revel.
+* ``GET /api/internal/revel/datatables`` — read-only Data Table list.
+* ``GET /api/internal/revel/datatables/{id}`` — read-only table schema + rows.
+* ``POST /api/internal/revel/display`` — validate a V1 display-state intent,
+  resolve the stored player mapping, and record a skipped timeline event
+  while ``EXECUTE_ENABLED`` is false. Does not write to Revel.
 * ``GET /api/internal/revel/status/{agent_id}`` — read-only Revel observability
   for a client discussion. Same payload as ``GET /api/agent/{id}/revel/status``.
 """
@@ -30,7 +35,7 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
@@ -39,6 +44,8 @@ from ..knowledge_retrieval import device_knowledge_search
 from ..knowledge_revel import evaluate_knowledge_revel
 from ..pubsub import publish_chat_turn
 from ..revel_command import evaluate_voice_command
+from ..revel_datatables import get_data_table, list_data_tables
+from ..revel_display import apply_display_state
 from ..revel_signage import list_signage_devices
 from ..revel_status import revel_status_for_agent
 from ..settings import settings
@@ -138,6 +145,79 @@ async def revel_devices() -> dict[str, Any]:
     """
     devices = await list_signage_devices()
     return {"ok": True, "devices": devices}
+
+
+@router.get(
+    "/revel/datatables",
+    response_model=None,
+    dependencies=[Depends(require_internal_token)],
+)
+async def revel_datatables(
+    pageSize: int | None = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
+    """Read-only Data Table list. Does not mutate Revel."""
+    return await list_data_tables(page_size=pageSize)
+
+
+@router.get(
+    "/revel/datatables/{table_id}",
+    response_model=None,
+    dependencies=[Depends(require_internal_token)],
+)
+async def revel_datatable(
+    table_id: str,
+    pageSize: int | None = Query(default=50, ge=1, le=100),
+) -> dict[str, Any]:
+    """Read-only table definition + rows. Does not mutate Revel."""
+    return await get_data_table(table_id, page_size=pageSize)
+
+
+class RevelDisplayIn(BaseModel):
+    """Internal display-state request. Screen and Revel device id are server-side."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    agentId: str = Field(min_length=1, max_length=64)
+    deviceKey: str | None = Field(default=None, max_length=128)
+    intent: str = Field(min_length=1, max_length=64)
+    title: str | None = Field(default=None, max_length=500)
+    message: str | None = Field(default=None, max_length=2000)
+    imageUrl: str | None = Field(default=None, max_length=2048)
+    priority: int | None = Field(default=None, ge=0, le=100)
+    expiresAt: str | None = Field(default=None, max_length=64)
+    source: str | None = Field(default=None, max_length=32)
+    tag: str | None = Field(default=None, max_length=128)
+
+
+@router.post("/revel/display", response_model=None, dependencies=[Depends(require_internal_token)])
+async def revel_display(
+    payload: RevelDisplayIn,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Validate V1 display state and skip the Revel write while execute is off."""
+    result = await apply_display_state(
+        db,
+        agent_id=payload.agentId,
+        intent=payload.intent,
+        device_key=payload.deviceKey,
+        title=payload.title,
+        message=payload.message,
+        image_url=payload.imageUrl,
+        priority=payload.priority,
+        expires_at=payload.expiresAt,
+        source=payload.source,
+        tag=payload.tag,
+        extra=payload.model_dump(),
+    )
+    log.info(
+        "revel display agent=%s intent=%s result=%s reason=%s executed=%s",
+        payload.agentId,
+        payload.intent,
+        result.get("result"),
+        result.get("reason"),
+        result.get("executed"),
+    )
+    return result
 
 
 @router.get(

@@ -14,6 +14,7 @@ const SENT = `[[revel]]${JSON.stringify({
   revel_device_id: "dev-1",
   revel_device_name: "Betty Room 101",
   intent: "SHOW_SENSOR_ALERT",
+  screen: "sensor_alert",
   result: "sent",
   created_at: "2026-09-26T20:24:18Z",
 })}\nREVEL DISPLAY EVENT`;
@@ -37,6 +38,8 @@ test("parses sent event and formats trace lines", () => {
   const text = formatRevelEventLines(parsed).join("\n");
   assert.match(text, /REVEL DISPLAY EVENT/);
   assert.match(text, /Tag: bioev_humidity/);
+  assert.match(text, /Intent: SHOW_SENSOR_ALERT/);
+  assert.match(text, /Screen: sensor_alert/);
   assert.match(text, /Result: SENT/);
 });
 
@@ -46,6 +49,29 @@ test("failed event keeps sanitized error", () => {
   assert.equal(parsed.result, "failed");
   assert.equal(parsed.error, "Revel API timeout");
   assert.equal(formatRevelEventLines(parsed).includes("Error: Revel API timeout"), true);
+});
+
+test("skipped display event shows SKIPPED and screen", () => {
+  const content = `[[revel]]${JSON.stringify({
+    provider: "revel",
+    event_type: "revel_display",
+    tag: "bioev_humidity",
+    device_key: "betty-room-101",
+    revel_device_id: "dev-1",
+    revel_device_name: "Betty Room 101",
+    intent: "SHOW_APPOINTMENT_REMINDER",
+    screen: "appointment",
+    result: "skipped",
+    created_at: "2026-09-26T20:24:18Z",
+  })}\nREVEL DISPLAY EVENT`;
+  const parsed = parseRevelTimeline(content);
+  assert.ok(parsed);
+  assert.equal(parsed.result, "skipped");
+  const text = formatRevelEventLines(parsed).join("\n");
+  assert.match(text, /REVEL DISPLAY EVENT/);
+  assert.match(text, /Intent: SHOW_APPOINTMENT_REMINDER/);
+  assert.match(text, /Screen: appointment/);
+  assert.match(text, /Result: SKIPPED/);
 });
 
 test("legacy delivered maps to sent", () => {
