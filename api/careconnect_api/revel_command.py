@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .models import ClientIntegration
 from .revel_config import EXECUTE_ENABLED, load_meta
 from .revel_match import match_enabled_action
+from .revel_status import record_revel_attempt
 
 log = logging.getLogger("revel_command")
 
@@ -92,7 +93,19 @@ async def evaluate_voice_command(
         action.get("intent"),
         EXECUTE_ENABLED,
     )
-    return _matched_action_result(action, meta)
+    result = _matched_action_result(action, meta)
+    await record_revel_attempt(
+        db,
+        agent_id=agent_id,
+        intent=result.get("intent"),
+        tag=result.get("revelTag"),
+        device_id=str(meta.get("deviceId") or "") or None,
+        device_name=result.get("deviceName"),
+        requested=remainder,
+        executed=bool(result.get("executed")),
+        reason=result.get("reason"),
+    )
+    return result
 
 
 async def evaluate_configured_tag(

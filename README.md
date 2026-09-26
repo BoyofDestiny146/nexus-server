@@ -85,3 +85,17 @@ docker compose -f deploy/docker-compose.yml exec -T api wget -qO- \
   --header="X-Internal-Token: ${TOKEN}" \
   http://127.0.0.1:8080/api/internal/revel/devices
 ```
+
+## Nexus Revel observability (Phase 2A)
+
+The client discussion header (Client detail, next to Live) shows a
+server-generated Revel badge. Click it for a diagnostic panel. Timeline
+`REVEL DISPLAY EVENT` rows are `chatType` 3 system events only — the UI
+never invents ENABLED/MANUAL/OFF copy or success results.
+
+```sh
+TOKEN=$(docker run --rm -v careconnect_cc-secrets:/s:ro alpine cat /s/api-internal-token)
+docker compose exec -T api wget -qO- \
+  --header="X-Internal-Token: ${TOKEN}" \
+  http://127.0.0.1:8080/api/internal/revel/status/$AGENT_ID
+```

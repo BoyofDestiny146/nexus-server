@@ -5,6 +5,7 @@ Directed Logic is UI-only. Identity belongs to ``ai_agent``, not a Watcher.
 Endpoints
 ---------
 GET    /api/agent/{agentId}/integrations
+GET    /api/agent/{agentId}/revel/status
 POST   /api/agent/{agentId}/integrations/careconnect
 POST   /api/agent/{agentId}/integrations/careconnect/rotate
 DELETE /api/agent/{agentId}/integrations/careconnect
@@ -27,7 +28,7 @@ import string
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
@@ -57,6 +58,7 @@ from ..revel_config import (
     public_meta,
     tags_from_devices,
 )
+from ..revel_status import revel_status_for_agent
 from ..settings import settings
 
 
@@ -318,6 +320,21 @@ async def list_integrations(
     for item in items:
         _assert_no_secret_fields(item)
     return {"list": items}
+
+
+@router.get("/{agent_id}/revel/status", response_model=None)
+async def get_revel_status(
+    agent_id: str,
+    topicId: int | None = Query(default=None, ge=1),
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Read-only Revel observability for the client discussion header."""
+    await assert_can_access_agent(db, user, agent_id)
+    await _require_agent(db, agent_id)
+    data = await revel_status_for_agent(db, agent_id, topic_id=topicId)
+    _assert_no_secret_fields(data)
+    return data
 
 
 @router.post("/{agent_id}/integrations/careconnect", response_model=None)

@@ -54,6 +54,7 @@ interface Props {
   agentName?: string | null;
   /** Bump after Edit Client saves so the Connections row refetches assignments. */
   knowledgeTick?: number;
+  onChanged?: () => void;
 }
 
 type Panel = "careconnect" | "revel" | "google_calendar" | "knowledge" | null;
@@ -189,7 +190,7 @@ function ConnectionRow({
   );
 }
 
-export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick = 0 }: Props) {
+export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick = 0, onChanged }: Props) {
   const [items, setItems] = useState<ClientIntegration[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
@@ -319,6 +320,7 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
       setBaselineKbIds(ids);
       setSelectedKbIds(ids);
       setPanel(null);
+      onChanged?.();
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Could not save knowledge access.");
     } finally {
@@ -380,6 +382,7 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
       setRevelKey("");
       setOnceSecret(null);
       await refresh();
+      onChanged?.();
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Could not save Revel key.");
     } finally {
@@ -407,6 +410,7 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
       await apiPut(`/agent/${agentId}/integrations/revel`, body);
       setRevelRegKey("");
       await refresh();
+      onChanged?.();
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Could not save Revel display commands.");
     } finally {
@@ -527,8 +531,7 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
       setShowReplaceCalendar(false);
       setPanel(null);
       await refresh();
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Could not disconnect.");
+      onChanged?.();
     } finally {
       setBusy(false);
     }

@@ -451,7 +451,7 @@ def test_revel_timeline_encode_parse_and_not_gcal():
     assert parsed is not None
     assert parsed["intent"] == "display_calendar"
     assert parsed["deviceName"] == "Display1"
-    assert parsed["result"] == "delivered"
+    assert parsed["result"] == "sent"
     assert parsed["requested"] == "Bob, show my calendar"
     assert parse_gcal_timeline(content) is None
     assert "apiKey" not in content

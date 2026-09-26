@@ -13,8 +13,8 @@ import type {
 } from "@/lib/types";
 import { deviceSetupUrl } from "@/lib/serverConfig";
 import { classNames, dayLabel, relativeTime, shortTime } from "@/lib/format";
-import { isSystemChat, parseGcalTimeline } from "@/lib/calendarTimeline";
-import { parseRevelTimeline } from "@/lib/revelTimeline";
+import { parseGcalTimeline, isSystemChat } from "@/lib/calendarTimeline";
+import { formatRevelEventLines, revelTimelineFromMessage } from "@/lib/revelTimeline";
 import { useLiveChat } from "@/lib/useLiveChat";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -25,6 +25,7 @@ import { Modal } from "@/components/Modal";
 import { ToastProvider, useToast } from "@/components/Toast";
 import { ClientIntegrations } from "@/components/ClientIntegrations";
 import { EditClientWorkspace } from "@/components/EditClientWorkspace";
+import { RevelStatusBadge } from "@/components/RevelStatusBadge";
 
 const WATCHER_ONLINE_MS = 5 * 60_000;
 
@@ -339,9 +340,10 @@ function PatientDetailView({ id }: { id: string }) {
         </button>
         <div className="flex items-start justify-between gap-6 min-w-0">
           <div className="min-w-0">
-            <div className="flex items-center gap-2.5 mb-2">
+            <div className="flex items-center gap-2.5 mb-2 min-w-0">
               <span className="kicker">Client detail</span>
               <LiveBadge status={live.status} />
+              <RevelStatusBadge agentId={id} refreshKey={knowledgeTick} />
             </div>
             <h1 className="display-1 text-slate-deep leading-[1.05]">{agent.agentName}</h1>
             <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[12px] text-slate-muted">
@@ -387,6 +389,7 @@ function PatientDetailView({ id }: { id: string }) {
                 botName={agent.botName}
                 agentName={agent.agentName}
                 knowledgeTick={knowledgeTick}
+                onChanged={() => setKnowledgeTick((n) => n + 1)}
               />
             </div>
             <div>
@@ -525,23 +528,20 @@ function PatientDetailView({ id }: { id: string }) {
               </div>
               <ol className="space-y-4">
                 {group.items.map((m) => {
-                  const revel = parseRevelTimeline(m.content);
+                  const revel = revelTimelineFromMessage(m);
                   const gcal = parseGcalTimeline(m.content);
                   if (revel) {
-                    const when = shortTime(revel.deliveredAt || m.createdAt);
+                    const lines = formatRevelEventLines(revel);
                     return (
                       <li key={m.id} className="flex justify-center">
                         <div className="w-full max-w-[min(100%,28rem)] border border-dashed border-slate-line bg-bone-soft/70 rounded-card px-3.5 py-2.5">
-                          <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-muted">
-                            <span>Display action{when ? ` · ${when}` : ""}</span>
+                          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-muted">
+                            {lines[0]}
                           </div>
                           <div className="mt-1.5 text-[13.5px] leading-relaxed text-slate-deep space-y-0.5">
-                            {revel.requested ? (
-                              <div>Requested: “{revel.requested}”</div>
-                            ) : null}
-                            {revel.intent ? <div>Action: {revel.intent}</div> : null}
-                            {revel.deviceName ? <div>Display: {revel.deviceName}</div> : null}
-                            <div>Result: {revel.result}</div>
+                            {lines.slice(1).map((line) => (
+                              <div key={line}>{line}</div>
+                            ))}
                           </div>
                         </div>
                       </li>

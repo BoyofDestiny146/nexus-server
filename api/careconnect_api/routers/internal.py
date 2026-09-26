@@ -20,6 +20,8 @@ Endpoints
 * ``GET /api/internal/revel/devices`` — Nexus-system Revel discovery
   (read-only GraphQL device list). Requires ``X-Internal-Token``. Does not
   accept GraphQL from the caller and does not write to Revel.
+* ``GET /api/internal/revel/status/{agent_id}`` — read-only Revel observability
+  for a client discussion. Same payload as ``GET /api/agent/{id}/revel/status``.
 """
 from __future__ import annotations
 
@@ -27,7 +29,7 @@ import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +40,7 @@ from ..knowledge_revel import evaluate_knowledge_revel
 from ..pubsub import publish_chat_turn
 from ..revel_command import evaluate_voice_command
 from ..revel_signage import list_signage_devices
+from ..revel_status import revel_status_for_agent
 from ..settings import settings
 
 
@@ -135,6 +138,20 @@ async def revel_devices() -> dict[str, Any]:
     """
     devices = await list_signage_devices()
     return {"ok": True, "devices": devices}
+
+
+@router.get(
+    "/revel/status/{agent_id}",
+    response_model=None,
+    dependencies=[Depends(require_internal_token)],
+)
+async def internal_revel_status(
+    agent_id: str,
+    topicId: int | None = Query(default=None, ge=1),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Read-only discussion Revel status. Does not write to Revel."""
+    return await revel_status_for_agent(db, agent_id, topic_id=topicId)
 
 
 @router.post("/revel/command", response_model=None, dependencies=[Depends(require_internal_token)])

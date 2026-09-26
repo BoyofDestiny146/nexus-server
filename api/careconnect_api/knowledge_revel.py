@@ -23,6 +23,7 @@ from .models import (
 )
 from .revel_command import PROVIDER_REVEL, evaluate_configured_tag
 from .revel_config import load_meta
+from .revel_status import record_revel_attempt
 from .settings import settings
 
 log = logging.getLogger("knowledge_revel")
@@ -376,15 +377,50 @@ async def evaluate_knowledge_revel(
         revel = await evaluate_configured_tag(
             db, agent_id=str(client_id), tag=_tag(decision.get("revelTag"))
         )
-    except Exception as exc:
-        log.warning("knowledge revel command path failed (non-fatal): %s", exc)
+    except Exception:
+        log.warning("knowledge revel command path failed (non-fatal)")
         decision["executed"] = False
         decision["revelReason"] = "revel_failed"
         _log_decision(mac, client_id, decision)
+        await record_revel_attempt(
+            db,
+            agent_id=str(client_id),
+            intent=decision.get("intent"),
+            tag=decision.get("revelTag"),
+            requested=query,
+            executed=False,
+            reason="revel_failed",
+            error="Revel command path failed",
+        )
         return decision
     decision["executed"] = bool(revel.get("executed"))
     decision["intent"] = revel.get("intent") or decision.get("intent")
     decision["revelReason"] = revel.get("reason")
     decision["executeEnabled"] = revel.get("executeEnabled")
     _log_decision(mac, client_id, decision)
+    meta = load_meta(
+        (
+            await db.execute(
+                select(ClientIntegration).where(
+                    ClientIntegration.agent_id == str(client_id),
+                    ClientIntegration.provider == PROVIDER_REVEL,
+                )
+            )
+        ).scalar_one_or_none()
+    )
+    error = None
+    if decision.get("revelReason") == "revel_failed":
+        error = "Revel command path failed"
+    await record_revel_attempt(
+        db,
+        agent_id=str(client_id),
+        intent=decision.get("intent"),
+        tag=decision.get("revelTag"),
+        device_id=str(meta.get("deviceId") or "") or None,
+        device_name=str(meta.get("deviceName") or "") or None,
+        requested=query,
+        executed=bool(decision.get("executed")),
+        reason=decision.get("revelReason") or decision.get("reason"),
+        error=error,
+    )
     return decision

@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .gcal_ical import CalendarOccurrence, spoken_text
 from .models import AiAgentChatHistory
 from .pubsub import publish_chat_turn
+from .revel_client import _safe_revel_error
 
 
 log = logging.getLogger("chat_events")
@@ -131,6 +132,20 @@ def parse_gcal_timeline(content: str | None) -> dict[str, Any] | None:
     }
 
 
+REVEL_RESULTS = ("sent", "failed", "skipped", "disabled")
+REVEL_EVENT_TYPE = "revel_display"
+
+
+def normalize_revel_result(raw: str | None) -> str:
+    """Allowlisted results only. Legacy ``delivered`` rows map to ``sent``."""
+    value = (raw or "").strip().casefold()
+    if value == "delivered":
+        return "sent"
+    if value in REVEL_RESULTS:
+        return value
+    return "failed"
+
+
 def encode_revel_timeline(
     *,
     requested: str,
@@ -139,22 +154,36 @@ def encode_revel_timeline(
     result: str,
     delivered_at: str,
     provider: str = SOURCE_REVEL,
+    tag: str | None = None,
+    device_key: str | None = None,
+    revel_device_id: str | None = None,
+    error: str | None = None,
+    summary: str | None = None,
+    event_type: str = REVEL_EVENT_TYPE,
 ) -> str:
-    """Pack a display-action system row. No secrets, no device UUID, no API host."""
-    allowed_result = result if result in ("delivered", "failed") else "failed"
+    """Pack a display-action system row. No API keys, hosts, or GraphQL."""
+    allowed_result = normalize_revel_result(result)
     header = {
         "provider": provider or SOURCE_REVEL,
+        "event_type": (event_type or REVEL_EVENT_TYPE)[:32],
         "intent": (intent or "")[:64],
         "deviceName": (device_name or "")[:80],
+        "revel_device_name": (device_name or "")[:80],
+        "revel_device_id": (revel_device_id or "")[:128],
+        "device_key": (device_key or "")[:128],
+        "tag": (tag or "")[:128],
         "result": allowed_result,
         "requested": (requested or "")[:180],
+        "summary": (summary or requested or "")[:180],
+        "error": _safe_revel_error(error or "")[:180],
         "delivered_at": delivered_at or "",
+        "created_at": delivered_at or "",
     }
     for key in _FORBIDDEN_HEADER_KEYS:
         header.pop(key, None)
     raw = json.dumps(header, separators=(",", ":"), ensure_ascii=False)
     prefix = f"{REVEL_MARKER}{raw}\n"
-    body = "DISPLAY ACTION"
+    body = "REVEL DISPLAY EVENT"
     budget = CONTENT_MAX - len(prefix)
     if budget < 0:
         return (prefix[: CONTENT_MAX - 1] + "\n")[:CONTENT_MAX]
@@ -182,16 +211,27 @@ def parse_revel_timeline(content: str | None) -> dict[str, Any] | None:
     provider = str(header.get("provider") or SOURCE_REVEL)
     if provider != SOURCE_REVEL:
         return None
-    result = str(header.get("result") or "")
-    if result not in ("delivered", "failed"):
-        result = "failed"
+    for key in _FORBIDDEN_HEADER_KEYS:
+        header.pop(key, None)
+    device_name = str(
+        header.get("revel_device_name") or header.get("deviceName") or ""
+    )
+    created = str(header.get("created_at") or header.get("delivered_at") or "")
     return {
         "provider": provider,
+        "event_type": str(header.get("event_type") or REVEL_EVENT_TYPE),
         "intent": str(header.get("intent") or ""),
-        "deviceName": str(header.get("deviceName") or ""),
-        "result": result,
+        "deviceName": device_name,
+        "revel_device_name": device_name,
+        "revel_device_id": str(header.get("revel_device_id") or ""),
+        "device_key": str(header.get("device_key") or ""),
+        "tag": str(header.get("tag") or ""),
+        "result": normalize_revel_result(str(header.get("result") or "")),
         "requested": str(header.get("requested") or ""),
-        "delivered_at": str(header.get("delivered_at") or ""),
+        "summary": str(header.get("summary") or header.get("requested") or ""),
+        "error": str(header.get("error") or ""),
+        "delivered_at": created,
+        "created_at": created,
     }
 
 
@@ -310,6 +350,11 @@ async def persist_revel_timeline(
     device_name: str,
     result: str,
     delivered_at: datetime,
+    tag: str | None = None,
+    device_key: str | None = None,
+    revel_device_id: str | None = None,
+    error: str | None = None,
+    summary: str | None = None,
 ) -> dict[str, Any] | None:
     """Insert one display-action system_event row. Caller commits."""
     if not agent_id:
@@ -322,6 +367,11 @@ async def persist_revel_timeline(
         device_name=device_name,
         result=result,
         delivered_at=delivered_iso,
+        tag=tag,
+        device_key=device_key,
+        revel_device_id=revel_device_id,
+        error=error,
+        summary=summary,
     )
     stamp = _naive_local(delivered_at)
     fields: dict[str, Any] = {
@@ -347,7 +397,7 @@ async def persist_revel_timeline(
         "revel timeline recorded agent=%s intent=%s result=%s chat_type=%s",
         agent_id,
         intent,
-        result if result in ("delivered", "failed") else "failed",
+        normalize_revel_result(result),
         CHAT_TYPE_SYSTEM,
     )
     return {
