@@ -91,11 +91,6 @@ function KnowledgeView() {
             icon={BookOpen}
             title="No knowledge bases yet"
             body="Create a reusable knowledge base, add topics, then assign it to a client from Edit Client."
-            action={
-              <button type="button" className="btn-primary" onClick={() => setEditor("new")}>
-                <Plus size={16} /> New Knowledge Base
-              </button>
-            }
           />
         )}
 
