@@ -939,7 +939,7 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
                     onChange={(e) => setRevelDeviceId(e.target.value)}
                   >
                     <option value="">Select a discovered display</option>
-                    {(revel.discoveredDevices || []).map((d) => (
+                    {(revel?.discoveredDevices || []).map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.name}{d.isOnline === true ? " · online" : d.isOnline === false ? " · offline" : ""}
                       </option>
