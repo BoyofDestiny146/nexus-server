@@ -157,14 +157,15 @@ async def internal_device_knowledge_search(
     payload: DeviceKnowledgeSearchIn,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """Scoped retrieval for a Watcher. XiaoZhi must not call this yet.
+    """Scoped retrieval for a Watcher. XiaoZhi may call this with X-Internal-Token
+    when CC_XIAOZHI_KNOWLEDGE_ENABLED is on. Authorization stays server-side.
 
     Device MAC → bound client Knowledge Bases → enabled sources only.
     Never searches all Knowledge Bases. Does not execute Revel.
     """
     result = await device_knowledge_search(db, mac, payload.query, payload.limit)
     log.info(
-        "device knowledge-search mac=%s client=%s bases=%s hits=%s revel_execute=false xiaozhi=false",
+        "device knowledge-search mac=%s client=%s bases=%s hits=%s revel_execute=false",
         result.get("deviceMac"),
         result.get("clientId"),
         len(result.get("knowledgeBaseIds") or []),

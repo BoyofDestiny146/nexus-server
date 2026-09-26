@@ -155,6 +155,8 @@ class ConnectionHandler:
         # careconnect: per-client Revel command prefix (ai_agent.bot_name)
         self.cc_agent_id = None
         self.cc_bot_name = None
+        # Last authorized knowledge lookup for this turn (internal metadata only)
+        self.cc_last_knowledge = None
 
         self.timeout_seconds = (
             int(self.config.get("close_connection_no_voice_time", 120)) + 60
@@ -877,6 +879,63 @@ class ConnectionHandler:
         except Exception:
             return False
 
+    def _cc_prior_user_text(self, current: str) -> str | None:
+        current_stripped = (current or "").strip()
+        prior = None
+        try:
+            for msg in getattr(self.dialogue, "dialogue", []) or []:
+                if getattr(msg, "role", None) != "user":
+                    continue
+                text = (getattr(msg, "content", None) or "").strip()
+                if text and text != current_stripped:
+                    prior = text
+        except Exception:
+            return None
+        return prior
+
+    def _cc_ground_llm_messages(self, query: str, messages: list) -> list:
+        """Append authorized Nexus Knowledge to this LLM call only. Fail-open.
+
+        Never mutates the stored persona / system prompt. Does not execute Revel.
+        """
+        original = messages
+        try:
+            from core.knowledge_grounding import (
+                apply_grounding,
+                build_knowledge_section,
+                env_int,
+                knowledge_enabled,
+            )
+            from config.careconnect_db import search_device_knowledge
+
+            section, meta = build_knowledge_section(
+                mac=self.device_id or "",
+                query=query,
+                search=search_device_knowledge,
+                enabled=knowledge_enabled(),
+                max_results=env_int("CC_KNOWLEDGE_CONTEXT_MAX_RESULTS", 3),
+                max_chars=env_int("CC_KNOWLEDGE_CONTEXT_MAX_CHARS", 6000),
+                recent_user=self._cc_prior_user_text(query),
+                logger=self.logger.bind(tag=TAG),
+            )
+            self.cc_last_knowledge = meta
+            if not section:
+                return original
+            return apply_grounding(messages, section)
+        except Exception as exc:
+            self.cc_last_knowledge = {
+                "grounding_applied": False,
+                "skipped": "error",
+                "revel_execute": False,
+            }
+            try:
+                self.logger.bind(tag=TAG).warning(
+                    f"knowledge grounding failed (non-fatal): {exc}"
+                )
+            except Exception:
+                pass
+            return original
+
     # careconnect: phrases that mean "end the conversation / go back to sleep".
     # The device runs in auto-listen mode, so without this it keeps the mic open
     # after every reply ("always listening"). With Intent: nointent the
@@ -1252,22 +1311,23 @@ class ConnectionHandler:
             _cc_max_tokens = {"brief": 160, "normal": 240, "detailed": 800}.get(
                 getattr(self, "cc_response_length", "brief"), 160
             )
+            llm_messages = self.dialogue.get_llm_dialogue_with_memory(
+                memory_str, self.config.get("voiceprint", {})
+            )
+            if not tool_call and depth == 0 and not _cc_camera:
+                llm_messages = self._cc_ground_llm_messages(query, llm_messages)
             if self.intent_type == "function_call" and functions is not None:
                 # 使用支持functions的streaming接口
                 llm_responses = self.llm.response_with_functions(
                     self.session_id,
-                    self.dialogue.get_llm_dialogue_with_memory(
-                        memory_str, self.config.get("voiceprint", {})
-                    ),
+                    llm_messages,
                     functions=functions,
                     max_tokens=_cc_max_tokens,
                 )
             else:
                 llm_responses = self.llm.response(
                     self.session_id,
-                    self.dialogue.get_llm_dialogue_with_memory(
-                        memory_str, self.config.get("voiceprint", {})
-                    ),
+                    llm_messages,
                     max_tokens=_cc_max_tokens,
                 )
         except Exception as e:

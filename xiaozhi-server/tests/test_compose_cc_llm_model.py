@@ -19,6 +19,8 @@ def test_repo_compose_declares_cc_llm_model():
     assert "OLLAMA_BASE_URL:" in text
     assert "PIPER_URL:" in text
     assert "piper-tts:5500/v1/audio/speech" in text
+    assert 'CC_XIAOZHI_KNOWLEDGE_ENABLED: "${CC_XIAOZHI_KNOWLEDGE_ENABLED:-false}"' in text
+    assert "CC_KNOWLEDGE_SEARCH_URL:" in text
 
 
 def test_patcher_inserts_after_ollama_url():

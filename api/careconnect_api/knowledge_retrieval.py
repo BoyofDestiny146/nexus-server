@@ -1,8 +1,9 @@
 """Knowledge retrieval orchestration.
 
 CareConnect API owns MariaDB chunks, authorization, and scoped search.
-knowledge-service owns extraction, embeddings, and Qdrant. XiaoZhi is not
-wired. Revel tags are returned as metadata only.
+knowledge-service owns extraction, embeddings, and Qdrant. XiaoZhi calls
+POST /api/internal/device/{mac}/knowledge-search when runtime grounding is enabled.
+Revel tags are returned as metadata only and are never executed here.
 """
 from __future__ import annotations
 
@@ -501,9 +502,18 @@ async def semantic_search(
         },
     )
     hydrated = await hydrate_search_results(db, query=q, hits=list(data.get("results") or []))
+    allowed = set(ids)
+    scoped = [
+        row
+        for row in list(hydrated.get("results") or [])
+        if int(row.get("knowledgeBaseId") or 0) in allowed
+    ]
+    dropped = len(hydrated.get("results") or []) - len(scoped)
+    if dropped:
+        log.warning("dropped %s knowledge hits outside authorized bases", dropped)
     ranked = rank_results(
         q,
-        list(hydrated.get("results") or []),
+        scoped,
         min_score=min_score,
         limit=result_limit,
     )
@@ -526,13 +536,21 @@ async def device_knowledge_search(
 ) -> dict[str, Any]:
     """Device MAC → client Knowledge Bases → enabled sources only. Never global."""
     context = await resolve_device_knowledge_context(db, mac)
-    kb_ids = [int(row["id"]) for row in context.get("knowledgeBases") or []]
+    kb_rows = list(context.get("knowledgeBases") or [])
+    kb_ids = [int(row["id"]) for row in kb_rows]
+    kb_summaries = [{"id": int(row["id"]), "name": row.get("name")} for row in kb_rows]
     payload = {
         "query": (query or "").strip(),
         "deviceMac": context.get("deviceMac"),
         "clientId": context.get("clientId"),
         "knowledgeBaseIds": kb_ids,
+        "knowledgeBases": kb_summaries,
         "results": [],
+        "grounded": {
+            "query": (query or "").strip(),
+            "knowledgeBases": kb_summaries,
+            "context": [],
+        },
     }
     if not kb_ids:
         return payload
@@ -544,7 +562,12 @@ async def device_knowledge_search(
         enabled_only=True,
     )
     payload["results"] = searched["results"]
-    payload["grounded"] = searched.get("grounded")
+    payload["grounded"] = prepare_grounded_context(
+        (query or "").strip(),
+        list(searched.get("results") or []),
+        knowledge_bases=kb_summaries,
+        knowledge_base_ids=kb_ids,
+    )
     payload["candidatesSearched"] = searched.get("candidatesSearched")
     payload["resultsReturned"] = searched.get("resultsReturned")
     payload["minScore"] = searched.get("minScore")

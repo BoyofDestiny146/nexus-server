@@ -297,7 +297,7 @@ async def test_reprocess_indexes_chunks_and_scoped_search(
     assert data["minScore"] == 0.35
     grounded = data["grounded"]
     assert grounded["query"] == data["query"]
-    assert grounded["knowledgeBases"] == [kb["id"]]
+    assert grounded["knowledgeBases"] == [{"id": kb["id"], "name": None}]
     assert grounded["context"][0]["chunkId"] == chunks[0].id
     assert "Slide 4" in grounded["context"][0]["citation"]
     assert fake_ks.search_calls[-1]["knowledgeBaseIds"] == [kb["id"]]
@@ -392,10 +392,19 @@ async def test_device_search_is_scoped_and_requires_internal_token(
     data = body["data"]
     assert data["clientId"] == agent_id
     assert data["knowledgeBaseIds"] == [kb["id"]]
+    assert data["knowledgeBases"] == [{"id": kb["id"], "name": "Bio-EV Sales"}]
     assert other["id"] not in data["knowledgeBaseIds"]
     assert fake_ks.search_calls[-1]["knowledgeBaseIds"] == [kb["id"]]
     assert data["results"][0]["sourceId"] == source["id"]
     assert data["results"][0]["revelTag"] == "care_overview"
+    assert data["results"][0]["revelAutoTrigger"] is False
+    grounded = data["grounded"]
+    assert grounded["knowledgeBases"][0]["id"] == kb["id"]
+    assert grounded["knowledgeBases"][0]["name"] == "Bio-EV Sales"
+    assert grounded["context"][0]["chunkId"] == chunk.id
+    assert grounded["context"][0]["revelTag"] == "care_overview"
+    assert grounded["context"][0]["revelAutoTrigger"] is False
+    assert grounded["context"][0]["sourceName"]
 
     unbound = await client.post(
         f"/api/internal/device/{_UNBOUND_MAC}/knowledge-search",
@@ -405,8 +414,71 @@ async def test_device_search_is_scoped_and_requires_internal_token(
     empty = unbound.json()["data"]
     assert empty["results"] == []
     assert empty["knowledgeBaseIds"] == []
+    assert empty["knowledgeBases"] == []
+    assert empty["grounded"]["context"] == []
     assert empty["clientId"] is None
     assert len(fake_ks.search_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_device_search_isolates_two_clients(
+    client: AsyncClient,
+    admin_token: str,
+    source_dir: Path,
+    db_session: AsyncSession,
+    fake_ks: FakeKS,
+):
+    kb_a = await _create_kb(client, admin_token)
+    kb_b = await _create_kb(
+        client, admin_token, name="Warehouse 13 Corporate", slug="warehouse13-corporate"
+    )
+    topic_a = await client.post(
+        f"/api/knowledge-base/{kb_a['id']}/topics",
+        json={"topicKey": "adult_brief_sensor", "title": "Adult Briefs Sensor", "revelTag": "bioev_humidity"},
+        headers=_auth(admin_token),
+    )
+    source_a = await _create_text_source(
+        client, admin_token, kb_a["id"], topicId=topic_a.json()["data"]["id"]
+    )
+    source_a = await _settle_source(client, admin_token, source_a["id"])
+    agent_a = await _onboard(client, admin_token, "B Dalton")
+    agent_b = await _onboard(client, admin_token, "Other Client")
+    await client.put(
+        f"/api/agent/{agent_a}/knowledge-bases",
+        json={"assignments": [{"knowledgeBaseId": kb_a["id"], "enabled": True}]},
+        headers=_auth(admin_token),
+    )
+    await client.put(
+        f"/api/agent/{agent_b}/knowledge-bases",
+        json={"assignments": [{"knowledgeBaseId": kb_b["id"], "enabled": True}]},
+        headers=_auth(admin_token),
+    )
+    mac_a = "E0:72:A1:FA:41:04"
+    mac_b = "E0:72:A1:FA:41:05"
+    db_session.add(AiDevice(id=device_id_for_mac(mac_a), mac_address=mac_a, agent_id=agent_a))
+    db_session.add(AiDevice(id=device_id_for_mac(mac_b), mac_address=mac_b, agent_id=agent_b))
+    await db_session.commit()
+    db_session.expire_all()
+    chunk_a = (await db_session.execute(select(KnowledgeChunk))).scalar_one()
+    fake_ks.search_hits = [{"chunkId": chunk_a.id, "score": 0.74, "payload": {"chunkId": chunk_a.id}}]
+
+    query = {"query": "How does the briefs sensor work?", "limit": 5}
+    headers = {"X-Internal-Token": settings.internal_token}
+    a = await client.post(f"/api/internal/device/{mac_a}/knowledge-search", json=query, headers=headers)
+    b = await client.post(f"/api/internal/device/{mac_b}/knowledge-search", json=query, headers=headers)
+    data_a = a.json()["data"]
+    data_b = b.json()["data"]
+    assert data_a["clientId"] == agent_a
+    assert data_a["knowledgeBaseIds"] == [kb_a["id"]]
+    assert data_a["results"][0]["chunkId"] == chunk_a.id
+    assert data_a["grounded"]["context"][0]["revelTag"] == "bioev_humidity"
+    assert data_a["grounded"]["context"][0]["revelAutoTrigger"] is False
+    assert data_b["clientId"] == agent_b
+    assert data_b["knowledgeBaseIds"] == [kb_b["id"]]
+    assert data_b["results"] == []
+    assert data_b["grounded"]["context"] == []
+    assert fake_ks.search_calls[0]["knowledgeBaseIds"] == [kb_a["id"]]
+    assert fake_ks.search_calls[1]["knowledgeBaseIds"] == [kb_b["id"]]
 
 
 @pytest.mark.asyncio

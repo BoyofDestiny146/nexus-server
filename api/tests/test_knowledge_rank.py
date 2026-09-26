@@ -240,4 +240,6 @@ def test_excerpt_and_grounded_keep_full_text():
     assert grounded["context"][0]["text"] == text
     assert grounded["context"][0]["citation"] == "Project-Public — Slide 2"
     assert grounded["context"][0]["chunkId"] == 9
+    assert grounded["context"][0]["revelAutoTrigger"] is False
+    assert grounded["knowledgeBases"] == [{"id": 1, "name": None}]
     assert excerpt(text, "briefs sensor").lower().find("briefs") >= 0

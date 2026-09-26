@@ -26,6 +26,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 import pymysql
@@ -84,6 +85,10 @@ NOTIFY_URL = os.environ.get(
 )
 REVEL_COMMAND_URL = os.environ.get(
     "CC_REVEL_COMMAND_URL", "http://127.0.0.1:8080/api/internal/revel/command"
+)
+KNOWLEDGE_SEARCH_URL = os.environ.get(
+    "CC_KNOWLEDGE_SEARCH_URL",
+    "http://127.0.0.1:8080/api/internal/device/{mac}/knowledge-search",
 )
 DB_HOST = os.environ.get("CC_DB_HOST", "127.0.0.1")
 DB_PORT = int(os.environ.get("CC_DB_PORT", "3306"))
@@ -454,6 +459,65 @@ def post_revel_command(
             return data
     except Exception as e:
         log.debug("careconnect_db.post_revel_command failed (non-fatal): %s", e)
+    return None
+
+
+def _knowledge_search_url(mac_address: str) -> str:
+    template = os.environ.get("CC_KNOWLEDGE_SEARCH_URL") or KNOWLEDGE_SEARCH_URL
+    encoded = quote((mac_address or "").strip(), safe=":")
+    if "{mac}" in template:
+        return template.replace("{mac}", encoded)
+    return f"{template.rstrip('/')}/{encoded}/knowledge-search"
+
+
+def _knowledge_search_timeout() -> float:
+    try:
+        return max(0.2, min(float(os.environ.get("CC_KNOWLEDGE_SEARCH_TIMEOUT") or "2.0"), 5.0))
+    except (TypeError, ValueError):
+        return 2.0
+
+
+def search_device_knowledge(
+    mac_address: str,
+    query: str,
+    limit: int = 3,
+) -> dict | None:
+    """POST device-authorized knowledge search. Fail-open: errors return None."""
+    token = _token()
+    q = (query or "").strip()
+    mac = (mac_address or "").strip()
+    if not token or not mac or not q:
+        return None
+    try:
+        resp = httpx.post(
+            _knowledge_search_url(mac),
+            json={"query": q[:2000], "limit": max(1, min(int(limit or 3), 50))},
+            headers={"X-Internal-Token": token},
+            timeout=_knowledge_search_timeout(),
+        )
+        if resp.status_code >= 400:
+            log.warning(
+                "knowledge search http=%s mac=%s",
+                resp.status_code,
+                _display_mac(mac),
+            )
+            return None
+        data = resp.json()
+        if isinstance(data, dict) and data.get("code") not in (None, 0):
+            log.warning(
+                "knowledge search code=%s mac=%s",
+                data.get("code"),
+                _display_mac(mac),
+            )
+            return None
+        if isinstance(data, dict) and isinstance(data.get("data"), dict):
+            data = data["data"]
+        if isinstance(data, dict):
+            return data
+    except Exception as e:
+        log.warning(
+            "careconnect_db.search_device_knowledge failed (non-fatal): %s", e
+        )
     return None
 
 

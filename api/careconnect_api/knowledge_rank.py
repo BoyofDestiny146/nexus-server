@@ -245,23 +245,47 @@ def prepare_grounded_context(
     results: list[dict[str, Any]],
     *,
     knowledge_base_ids: list[int] | None = None,
+    knowledge_bases: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Future LLM context. Does not call a model."""
-    kb_ids = list(knowledge_base_ids or [])
-    if not kb_ids:
-        seen: set[int] = set()
+    """LLM-ready grounded context. Does not call a model or execute Revel."""
+    kb_list: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for row in knowledge_bases or []:
+        try:
+            kid = int(row.get("id"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if kid <= 0 or kid in seen:
+            continue
+        seen.add(kid)
+        kb_list.append({"id": kid, "name": row.get("name")})
+    for kid in knowledge_base_ids or []:
+        try:
+            value = int(kid)
+        except (TypeError, ValueError):
+            continue
+        if value <= 0 or value in seen:
+            continue
+        seen.add(value)
+        kb_list.append({"id": value, "name": None})
+    if not kb_list:
         for row in results:
             kid = row.get("knowledgeBaseId")
             if kid is None:
                 continue
             value = int(kid)
-            if value not in seen:
-                seen.add(value)
-                kb_ids.append(value)
+            if value in seen:
+                continue
+            seen.add(value)
+            kb_list.append({"id": value, "name": None})
     context: list[dict[str, Any]] = []
     for row in results:
         context.append(
             {
+                "chunkId": row.get("chunkId"),
+                "sourceId": row.get("sourceId"),
+                "sourceName": row.get("sourceName"),
+                "originalFilename": row.get("originalFilename"),
                 "citation": citation_label(
                     row.get("sourceName"),
                     slide=row.get("slideNumber"),
@@ -269,13 +293,12 @@ def prepare_grounded_context(
                 ),
                 "topic": row.get("topic"),
                 "text": row.get("text") or "",
+                "score": row.get("score"),
                 "revelTag": row.get("revelTag"),
-                "chunkId": row.get("chunkId"),
-                "sourceId": row.get("sourceId"),
+                "revelAutoTrigger": bool(row.get("revelAutoTrigger")),
                 "knowledgeBaseId": row.get("knowledgeBaseId"),
-                "originalFilename": row.get("originalFilename"),
                 "slideNumber": row.get("slideNumber"),
                 "pageNumber": row.get("pageNumber"),
             }
         )
-    return {"query": query, "knowledgeBases": kb_ids, "context": context}
+    return {"query": query, "knowledgeBases": kb_list, "context": context}
