@@ -271,3 +271,40 @@ def build_knowledge_section(
             f"grounding_applied={meta['grounding_applied']} revel_execute=false"
         )
     return section, meta
+
+
+def ground_turn_messages(
+    *,
+    mac: str,
+    query: str,
+    messages: list[dict[str, Any]],
+    search: SearchFn,
+    enabled: bool = True,
+    max_results: int = 3,
+    max_chars: int = 6000,
+    recent_user: str | None = None,
+    logger=None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Fail-open grounding for one LLM call. Does not mutate stored persona."""
+    try:
+        section, meta = build_knowledge_section(
+            mac=mac,
+            query=query,
+            search=search,
+            enabled=enabled,
+            max_results=max_results,
+            max_chars=max_chars,
+            recent_user=recent_user,
+            logger=logger,
+        )
+        if not section:
+            return messages, meta
+        return apply_grounding(messages, section), meta
+    except Exception as exc:
+        if logger is not None:
+            logger.warning(f"knowledge grounding failed (non-fatal): {exc}")
+        return messages, {
+            "grounding_applied": False,
+            "skipped": "error",
+            "revel_execute": False,
+        }

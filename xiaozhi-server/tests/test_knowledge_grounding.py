@@ -1,10 +1,8 @@
 """Phase 4: XiaoZhi authorized knowledge grounding. Fail-open. No Revel execute."""
 from __future__ import annotations
 
-import inspect
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -20,10 +18,10 @@ from core.knowledge_grounding import (  # noqa: E402
     clip_chars,
     expand_query,
     format_grounding_section,
+    ground_turn_messages,
     knowledge_enabled,
     should_retrieve,
 )
-from core.utils.dialogue import Dialogue, Message  # noqa: E402
 
 MAC_A = "E0:72:A1:FA:41:04"
 MAC_B = "AA:BB:CC:DD:EE:FF"
@@ -325,66 +323,69 @@ def test_search_device_knowledge_fail_open(monkeypatch):
 
 
 def test_chat_path_preserves_persona_and_existing_llm_flow(monkeypatch):
-    from core.connection import ConnectionHandler
+    conn_src = (ROOT / "core" / "connection.py").read_text()
+    chat_fn = conn_src.split("def chat(self, query, tool_call=False, depth=0):", 1)[1]
+    chat_fn = chat_fn.split("\n    def ", 1)[0]
+    assert "SentenceType.FIRST" in chat_fn
+    assert "_cc_ground_llm_messages" in chat_fn
+    assert "ground_turn_messages" in conn_src
+    assert chat_fn.index("SentenceType.FIRST") < chat_fn.index("_cc_ground_llm_messages")
+    assert "get_llm_dialogue_with_memory" in chat_fn
+    assert "change_system_prompt" not in chat_fn
+    assert "llm.response" in chat_fn
 
-    chat_src = inspect.getsource(ConnectionHandler.chat)
-    assert "SentenceType.FIRST" in chat_src
-    assert "_cc_ground_llm_messages" in chat_src
-    assert chat_src.index("SentenceType.FIRST") < chat_src.index("_cc_ground_llm_messages")
-    assert "get_llm_dialogue_with_memory" in chat_src
-    assert "llm.response" in chat_src
-    assert "change_system_prompt" not in chat_src
-
-    from core.handle.receiveAudioHandle import startToChat
-
-    revel_src = inspect.getsource(startToChat)
-    assert "post_revel_command" in revel_src
-    assert revel_src.index("post_revel_command") < revel_src.index("conn.chat")
+    revel_src = (ROOT / "core" / "handle" / "receiveAudioHandle.py").read_text()
+    start = revel_src.split("async def startToChat(conn, text):", 1)[1]
+    start = start.split("\nasync def ", 1)[0]
+    assert "post_revel_command" in start
+    assert start.index("post_revel_command") < start.index("conn.chat")
 
     logger = FakeLog()
-    dialogue = Dialogue()
-    dialogue.put(Message(role="system", content=PERSONA))
-    dialogue.put(Message(role="user", content=QUERY))
-    handler = SimpleNamespace(
-        device_id=MAC_A,
-        logger=logger,
-        cc_last_knowledge=None,
-        dialogue=dialogue,
-    )
-    monkeypatch.setattr(
-        "config.careconnect_db.search_device_knowledge",
-        lambda mac, query, limit=3: _payload(),
-    )
-    monkeypatch.setenv("CC_XIAOZHI_KNOWLEDGE_ENABLED", "true")
     messages = [
         {"role": "system", "content": PERSONA},
         {"role": "user", "content": QUERY},
     ]
-    out = ConnectionHandler._cc_ground_llm_messages(handler, QUERY, messages)
+    monkeypatch.setenv("CC_XIAOZHI_KNOWLEDGE_ENABLED", "true")
+    out, meta = ground_turn_messages(
+        mac=MAC_A,
+        query=QUERY,
+        messages=messages,
+        search=lambda mac, query, limit=3: _payload(),
+        enabled=True,
+        logger=logger,
+    )
     assert messages[0]["content"] == PERSONA
     assert PERSONA in out[0]["content"]
-    assert handler.cc_last_knowledge["grounding_applied"] is True
-    assert handler.cc_last_knowledge["revel_execute"] is False
-    assert any("grounding_applied=true" in rec[1] for rec in logger.records)
+    assert meta["grounding_applied"] is True
+    assert meta["revel_execute"] is False
+    assert any("grounding_applied=True" in rec[1] for rec in logger.records)
+    assert any("revel_execute=false" in rec[1] for rec in logger.records)
 
-    monkeypatch.setenv("CC_XIAOZHI_KNOWLEDGE_ENABLED", "false")
     calls = []
 
     def no_call(*args, **kwargs):
         calls.append(args)
         raise AssertionError("disabled path must not retrieve")
 
-    monkeypatch.setattr("config.careconnect_db.search_device_knowledge", no_call)
-    disabled = ConnectionHandler._cc_ground_llm_messages(handler, QUERY, messages)
+    disabled, disabled_meta = ground_turn_messages(
+        mac=MAC_A,
+        query=QUERY,
+        messages=messages,
+        search=no_call,
+        enabled=False,
+    )
     assert disabled[0]["content"] == PERSONA
+    assert disabled_meta["grounding_applied"] is False
     assert calls == []
 
 
 def test_compose_declares_knowledge_flag_default_false():
     compose = Path(__file__).resolve().parents[2] / "deploy" / "docker-compose.yml"
     text = compose.read_text()
-    xz = text.split("  xiaozhi-server:", 1)[1]
-    env = xz.split("environment:", 1)[1].split("    volumes:", 1)[0]
+    marker = "  xiaozhi-server:\n    image:"
+    assert marker in text
+    xz = text.split(marker, 1)[1]
+    env = xz.split("    volumes:", 1)[0]
     assert 'CC_XIAOZHI_KNOWLEDGE_ENABLED: "${CC_XIAOZHI_KNOWLEDGE_ENABLED:-false}"' in env
     assert "CC_KNOWLEDGE_SEARCH_URL:" in env
     assert "CC_KNOWLEDGE_CONTEXT_MAX_RESULTS:" in env

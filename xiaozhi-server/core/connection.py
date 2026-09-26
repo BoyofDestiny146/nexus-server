@@ -900,17 +900,13 @@ class ConnectionHandler:
         """
         original = messages
         try:
-            from core.knowledge_grounding import (
-                apply_grounding,
-                build_knowledge_section,
-                env_int,
-                knowledge_enabled,
-            )
+            from core.knowledge_grounding import env_int, ground_turn_messages, knowledge_enabled
             from config.careconnect_db import search_device_knowledge
 
-            section, meta = build_knowledge_section(
+            grounded, meta = ground_turn_messages(
                 mac=self.device_id or "",
                 query=query,
+                messages=messages,
                 search=search_device_knowledge,
                 enabled=knowledge_enabled(),
                 max_results=env_int("CC_KNOWLEDGE_CONTEXT_MAX_RESULTS", 3),
@@ -919,9 +915,7 @@ class ConnectionHandler:
                 logger=self.logger.bind(tag=TAG),
             )
             self.cc_last_knowledge = meta
-            if not section:
-                return original
-            return apply_grounding(messages, section)
+            return grounded
         except Exception as exc:
             self.cc_last_knowledge = {
                 "grounding_applied": False,
