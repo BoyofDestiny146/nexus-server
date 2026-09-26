@@ -11,6 +11,7 @@ import {
   slugifyKnowledge,
   sourceNeedsFile,
   sourceStatusLabel,
+  sourceStatusTone,
   sourceTypeLabel,
   toggleKnowledgeSelection,
   topicKeyFromTitle,
@@ -71,6 +72,12 @@ test("formatSourceBytes and status chips", () => {
   assert.equal(formatSourceBytes(null), "—");
   assert.equal(sourceStatusLabel({ enabled: false, status: "ready" }), "Disabled");
   assert.equal(sourceStatusLabel({ enabled: true, status: "uploaded" }), "Uploaded");
+  assert.equal(sourceStatusLabel({ enabled: true, status: "processing" }), "Processing");
+  assert.equal(sourceStatusLabel({ enabled: true, status: "ready" }), "Ready");
+  assert.equal(sourceStatusLabel({ enabled: true, status: "failed" }), "Failed");
+  assert.equal(sourceStatusTone({ enabled: true, status: "ready" }), "ok");
+  assert.equal(sourceStatusTone({ enabled: true, status: "failed" }), "fail");
+  assert.equal(sourceStatusTone({ enabled: true, status: "processing" }), "warn");
   assert.equal(sourceTypeLabel("pdf"), "PDF");
   assert.equal(sourceNeedsFile("text"), false);
   assert.equal(sourceNeedsFile("pdf"), true);

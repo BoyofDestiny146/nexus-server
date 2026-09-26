@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
 from ..envelope import APIException
+from ..knowledge_retrieval import device_knowledge_search
 from ..pubsub import publish_chat_turn
 from ..revel_command import evaluate_voice_command
 from ..settings import settings
@@ -137,5 +138,36 @@ async def revel_command(
         result.get("matched"),
         result.get("executed"),
         result.get("reason"),
+    )
+    return result
+
+
+class DeviceKnowledgeSearchIn(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+    limit: int = Field(default=5, ge=1, le=50)
+
+
+@router.post(
+    "/device/{mac}/knowledge-search",
+    response_model=None,
+    dependencies=[Depends(require_internal_token)],
+)
+async def internal_device_knowledge_search(
+    mac: str,
+    payload: DeviceKnowledgeSearchIn,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Scoped retrieval for a Watcher. XiaoZhi must not call this yet.
+
+    Device MAC → bound client Knowledge Bases → enabled sources only.
+    Never searches all Knowledge Bases. Does not execute Revel.
+    """
+    result = await device_knowledge_search(db, mac, payload.query, payload.limit)
+    log.info(
+        "device knowledge-search mac=%s client=%s bases=%s hits=%s revel_execute=false xiaozhi=false",
+        result.get("deviceMac"),
+        result.get("clientId"),
+        len(result.get("knowledgeBaseIds") or []),
+        len(result.get("results") or []),
     )
     return result

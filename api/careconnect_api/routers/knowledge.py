@@ -19,6 +19,7 @@ Mounted at /api by main.py.
     DELETE /knowledge-source/{source_id}
     GET    /knowledge-source/{source_id}/file
     GET    /knowledge-base/{id}/test-search
+    POST   /knowledge/search
     GET    /agent/{agent_id}/knowledge-bases
     PUT    /agent/{agent_id}/knowledge-bases
     GET    /device/{mac}/knowledge-context
@@ -39,6 +40,7 @@ from ..db import get_db
 from ..envelope import APIException
 from ..knowledge import (
     _flag,
+    chunk_counts,
     client_counts,
     keyword_test_search,
     list_assigned_clients,
@@ -55,6 +57,15 @@ from ..knowledge import (
     topic_counts,
     validate_slug,
     validate_topic_key,
+)
+from ..knowledge_retrieval import (
+    delete_indexed_source,
+    maybe_process_source,
+    process_source,
+    retrieval_configured,
+    semantic_search,
+    serialize_source_detail,
+    sync_source_enabled,
 )
 from ..knowledge_storage import (
     MAX_SOURCE_BYTES,
@@ -110,6 +121,12 @@ class KnowledgeSourceMetaIn(BaseModel):
     bodyText: str | None = None
 
 
+class KnowledgeSearchIn(BaseModel):
+    knowledgeBaseIds: list[int] = Field(default_factory=list)
+    query: str = ""
+    limit: int = Field(default=5, ge=1, le=50)
+
+
 async def _get_base(db: AsyncSession, knowledge_base_id: int) -> KnowledgeBase:
     row = (
         await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id))
@@ -151,14 +168,7 @@ async def _topic_for_base(
 async def _source_with_topic(
     db: AsyncSession, source: KnowledgeSource
 ) -> dict[str, Any]:
-    topic = None
-    if source.topic_id:
-        topic = (
-            await db.execute(
-                select(KnowledgeTopic).where(KnowledgeTopic.id == source.topic_id)
-            )
-        ).scalar_one_or_none()
-    return serialize_source(source, topic=topic)
+    return await serialize_source_detail(db, source)
 
 
 async def _base_detail(db: AsyncSession, row: KnowledgeBase) -> dict[str, Any]:
@@ -431,7 +441,11 @@ async def list_sources(
 ) -> dict[str, Any]:
     await _get_base(db, knowledge_base_id)
     rows = await load_sources(db, knowledge_base_id)
-    items = [serialize_source(source, topic=topic) for source, topic in rows]
+    counts = await chunk_counts(db, [source.id for source, _topic in rows])
+    items = [
+        serialize_source(source, topic=topic, chunk_count=counts.get(source.id, 0))
+        for source, topic in rows
+    ]
     return {"list": items, "total": len(items)}
 
 
@@ -488,6 +502,7 @@ async def create_source(
     row.storage_path = write_source_bytes(knowledge_base_id, row.id, ext, content)
     await db.commit()
     await db.refresh(row)
+    row = await maybe_process_source(db, row)
     return await _source_with_topic(db, row)
 
 
@@ -542,8 +557,14 @@ async def update_source(
         row.error_message = None
         row.original_filename = display_filename(row.name, ext)
         row.mime_type = mime_for(row.source_type, ext)
+        row.indexed_at = None
+    enabled_changed = "enabled" in provided
     await db.commit()
     await db.refresh(row)
+    if "bodyText" in provided:
+        row = await maybe_process_source(db, row)
+    elif enabled_changed:
+        await sync_source_enabled(row.id, bool(row.enabled))
     return await _source_with_topic(db, row)
 
 
@@ -583,8 +604,10 @@ async def replace_source_file(
     row.file_size = len(content)
     row.status = "uploaded"
     row.error_message = None
+    row.indexed_at = None
     await db.commit()
     await db.refresh(row)
+    row = await maybe_process_source(db, row)
     return await _source_with_topic(db, row)
 
 
@@ -595,13 +618,15 @@ async def reprocess_source(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     row = await _get_source(db, source_id)
-    return {
-        "id": row.id,
-        "reprocess": False,
-        "status": row.status,
-        "retrievalConfigured": False,
-        "message": "Retrieval service not configured",
-    }
+    row = await process_source(db, row)
+    detail = await _source_with_topic(db, row)
+    detail["reprocess"] = True
+    detail["retrievalConfigured"] = retrieval_configured()
+    if row.status == "failed" and not retrieval_configured():
+        detail["message"] = row.error_message or "Knowledge service not configured"
+    else:
+        detail["message"] = None
+    return detail
 
 
 @router.delete("/knowledge-source/{source_id}", response_model=None)
@@ -616,6 +641,7 @@ async def delete_source(
     await db.delete(row)
     await db.commit()
     delete_source_file(relative)
+    await delete_indexed_source(source_id_out)
     return {"deleted": True, "id": source_id_out}
 
 
@@ -645,7 +671,53 @@ async def test_search_knowledge(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     await _get_base(db, knowledge_base_id)
-    return await keyword_test_search(db, knowledge_base_id, q or "")
+    if retrieval_configured() and (q or "").strip():
+        searched = await semantic_search(
+            db,
+            knowledge_base_ids=[knowledge_base_id],
+            query=q or "",
+            limit=5,
+        )
+        return {
+            "mode": "semantic",
+            "retrievalConfigured": True,
+            "query": searched["query"],
+            "list": [
+                {
+                    "sourceId": row["sourceId"],
+                    "source": row["sourceName"],
+                    "sourceType": None,
+                    "topic": row["topic"],
+                    "topicKey": None,
+                    "matchedText": row["text"],
+                    "score": row["score"],
+                    "pageNumber": row["pageNumber"],
+                    "slideNumber": row["slideNumber"],
+                    "revelTag": row["revelTag"],
+                    "revelAutoTrigger": row["revelAutoTrigger"],
+                }
+                for row in searched["results"]
+            ],
+            "total": len(searched["results"]),
+            "message": None if searched["results"] else "No indexed matches for this Knowledge Base.",
+        }
+    payload = await keyword_test_search(db, knowledge_base_id, q or "")
+    payload["retrievalConfigured"] = retrieval_configured()
+    return payload
+
+
+@router.post("/knowledge/search", response_model=None)
+async def search_knowledge(
+    payload: KnowledgeSearchIn,
+    _user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    return await semantic_search(
+        db,
+        knowledge_base_ids=payload.knowledgeBaseIds,
+        query=payload.query,
+        limit=payload.limit,
+    )
 
 
 @router.get("/agent/{agent_id}/knowledge-bases", response_model=None)

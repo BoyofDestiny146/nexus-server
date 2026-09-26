@@ -203,7 +203,7 @@ async def test_replace_enable_disable_and_delete_does_not_remove_topic(
 
 
 @pytest.mark.asyncio
-async def test_reprocess_and_test_search_are_not_fake_rag(
+async def test_reprocess_triggers_processing_and_test_search_stays_keyword_without_service(
     client: AsyncClient, admin_token: str, source_dir: Path
 ):
     kb = await _create_kb(client, admin_token)
@@ -218,23 +218,18 @@ async def test_reprocess_and_test_search_are_not_fake_rag(
     )
     topic_id = topic_res.json()["data"]["id"]
     source = await _create_text_source(client, admin_token, kb["id"], topicId=topic_id)
+    assert source["status"] == "uploaded"
+    assert source["chunkCount"] == 0
 
     reprocess = await client.post(
         f"/api/knowledge-source/{source['id']}/reprocess",
         headers=_auth(admin_token),
     )
     body = reprocess.json()["data"]
-    assert body["reprocess"] is False
+    assert body["reprocess"] is True
     assert body["retrievalConfigured"] is False
-    assert body["status"] == "uploaded"
-
-    empty = await client.get(
-        f"/api/knowledge-base/{kb['id']}/test-search",
-        headers=_auth(admin_token),
-    )
-    assert empty.json()["data"]["retrievalConfigured"] is False
-    assert empty.json()["data"]["mode"] == "keyword"
-    assert empty.json()["data"]["list"] == []
+    assert body["status"] == "failed"
+    assert "not configured" in (body["errorMessage"] or "").lower()
 
     hit = await client.get(
         f"/api/knowledge-base/{kb['id']}/test-search",
@@ -250,14 +245,24 @@ async def test_reprocess_and_test_search_are_not_fake_rag(
     assert data["list"][0]["revelTag"] == "bioev_brief_demo"
     assert "sensor" in (data["list"][0]["matchedText"] or "").lower()
 
-    miss = await client.get(
-        f"/api/knowledge-base/{kb['id']}/test-search",
-        params={"q": "quantum teleportation schedule"},
+
+@pytest.mark.asyncio
+async def test_semantic_search_requires_service_and_explicit_ids(
+    client: AsyncClient, admin_token: str
+):
+    scoped = await client.post(
+        "/api/knowledge/search",
+        json={"knowledgeBaseIds": [1], "query": "adult brief sensor"},
         headers=_auth(admin_token),
     )
-    miss_data = miss.json()["data"]
-    assert miss_data["total"] == 0
-    assert "Retrieval service not configured" in miss_data["message"]
+    assert scoped.json()["code"] == 503
+    global_search = await client.post(
+        "/api/knowledge/search",
+        json={"query": "adult brief sensor"},
+        headers=_auth(admin_token),
+    )
+    assert global_search.json()["code"] == 400
+    assert "never global" in global_search.json()["msg"]
 
 
 @pytest.mark.asyncio

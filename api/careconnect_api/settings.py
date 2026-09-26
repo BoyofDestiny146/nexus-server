@@ -96,6 +96,10 @@ class Settings(BaseSettings):
     # Knowledge source originals. Same Docker volume as voice_config (/data,
     # compose: cc-voice). Never served publicly; download is JWT-gated.
     knowledge_source_dir: str = "/data/knowledge-sources"
+    # Retrieval sidecar. Empty = extraction/indexing skipped (source stays uploaded).
+    knowledge_service_url: str = ""
+    knowledge_service_timeout_s: float = 120.0
+    ollama_embed_model: str = "nomic-embed-text"
 
     # Bootstrap admin credentials — read from env or secret files.
     # Usernames are fixed as admin1 / admin2 (generic, not personal).

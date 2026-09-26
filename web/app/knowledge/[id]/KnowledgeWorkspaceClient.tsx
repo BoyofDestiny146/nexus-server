@@ -9,10 +9,11 @@ import {
 import { apiDelete, apiDownload, apiForm, apiGet, apiPost, apiPut, ApiError } from "@/lib/api";
 import type {
   KnowledgeBase,
+  KnowledgeSearchHit,
+  KnowledgeSearchResponse,
   KnowledgeSource,
   KnowledgeSourceList,
   KnowledgeSourceType,
-  KnowledgeTestSearch,
   KnowledgeTopic,
 } from "@/lib/types";
 import {
@@ -21,8 +22,10 @@ import {
   KNOWLEDGE_SOURCE_TYPES,
   KNOWLEDGE_WORKSPACE_TABS,
   parseKnowledgeIdFromPath,
+  sourceLocationLabel,
   sourceNeedsFile,
   sourceStatusLabel,
+  sourceStatusTone,
   sourceTypeLabel,
   type KnowledgeWorkspaceTab,
 } from "@/lib/knowledge";
@@ -338,8 +341,13 @@ function SourcesTab({
     setBusyId(source.id);
     setErr(null);
     try {
-      const res = await apiPost<{ message?: string }>(`/knowledge-source/${source.id}/reprocess`);
-      setErr(res.message || "Retrieval service not configured.");
+      const res = await apiPost<{ message?: string | null; status?: string; errorMessage?: string | null }>(
+        `/knowledge-source/${source.id}/reprocess`,
+      );
+      await onChanged();
+      if (res.status === "failed") {
+        setErr(res.errorMessage || res.message || "Processing failed.");
+      }
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Could not reprocess.");
     } finally {
@@ -376,7 +384,7 @@ function SourcesTab({
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3">
         <p className="text-[14px] text-slate-muted leading-relaxed max-w-2xl">
-          Source files and notes that will later feed retrieval. Nothing here is sent to XiaoZhi yet.
+          Source files stored on the CareConnect volume. Reprocess extracts, chunks, and indexes authorized content. Images stay metadata-only for now.
         </p>
         <button type="button" className="btn-primary shrink-0" onClick={() => setEditor("new")}>
           <Plus size={14} /> Add Source
@@ -391,7 +399,7 @@ function SourcesTab({
         <EmptyState
           icon={FileText}
           title="No sources yet"
-          body="Add a PDF, deck, image, or a manual note. Ingestion and RAG come later; this stores the original."
+          body="Add a PDF, deck, image, or a manual note. Reprocess indexes text sources for semantic retrieval."
         />
       ) : (
         <ul className="space-y-3">
@@ -414,11 +422,16 @@ function SourcesTab({
                   {source.description ? (
                     <p className="mt-1.5 text-[13px] text-slate-muted leading-snug">{source.description}</p>
                   ) : null}
+                  {source.status === "failed" && source.errorMessage ? (
+                    <p className="mt-1.5 text-[13px] text-risk-urgent leading-snug">{source.errorMessage}</p>
+                  ) : null}
                   <div className="mt-2 text-[11px] text-slate-muted num">
-                    Uploaded {relativeTime(source.createdAt)} · Updated {relativeTime(source.updatedAt || source.createdAt)}
+                    {source.chunkCount ?? 0} chunks
+                    {source.indexedAt ? ` · Indexed ${relativeTime(source.indexedAt)}` : ""}
+                    {" · "}Uploaded {relativeTime(source.createdAt)}
                   </div>
                 </div>
-                <StatusChip label={sourceStatusLabel(source)} muted={!source.enabled} />
+                <StatusChip label={sourceStatusLabel(source)} tone={sourceStatusTone(source)} />
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" className="btn-secondary text-[12px] px-2.5 py-1" onClick={() => setEditor(source)}>
@@ -493,16 +506,17 @@ function SourcesTab({
   );
 }
 
-function StatusChip({ label, muted }: { label: string; muted?: boolean }) {
-  return (
-    <span
-      className={classNames(
-        "shrink-0 text-[11px] uppercase tracking-[0.12em] px-2 py-0.5 rounded-chip border",
-        muted
+function StatusChip({ label, tone }: { label: string; tone?: "ok" | "warn" | "fail" | "muted" }) {
+  const cls =
+    tone === "fail"
+      ? "bg-risk-urgent/8 border-risk-urgent/25 text-risk-urgent"
+      : tone === "warn"
+        ? "bg-amber-50 border-amber-200 text-amber-800"
+        : tone === "muted"
           ? "bg-bone-soft border-slate-line/70 text-slate-muted"
-          : "bg-teal-tint border-teal/20 text-teal-deep",
-      )}
-    >
+          : "bg-teal-tint border-teal/20 text-teal-deep";
+  return (
+    <span className={classNames("shrink-0 text-[11px] uppercase tracking-[0.12em] px-2 py-0.5 rounded-chip border", cls)}>
       {label}
     </span>
   );
@@ -682,6 +696,19 @@ function SourceEditor({
           <input type="checkbox" className="accent-teal" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           Enabled
         </label>
+        {!creating && source ? (
+          <div className="rounded-card border border-slate-line/70 bg-bone-soft px-3 py-3 space-y-1.5 text-[13px] text-slate-deep">
+            <div className="kicker">Processing</div>
+            <div>Status: {sourceStatusLabel(source)}</div>
+            <div>Extracted chunks: {source.chunkCount ?? 0}</div>
+            <div>Indexed: {source.indexedAt ? relativeTime(source.indexedAt) : "Not indexed"}</div>
+            <div>Source path: <span className="font-mono text-[12px]">{source.storagePath || "—"}</span></div>
+            <div>Associated topic: {source.topicTitle || "None"}</div>
+            {source.errorMessage ? (
+              <div className="text-risk-urgent">Error: {source.errorMessage}</div>
+            ) : null}
+          </div>
+        ) : null}
         {err && (
           <div className="text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">{err}</div>
         )}
@@ -808,20 +835,28 @@ function RevelTab({ topics }: { topics: KnowledgeTopic[] }) {
 
 function TestingTab({ kbId }: { kbId: number }) {
   const [question, setQuestion] = useState("");
-  const [result, setResult] = useState<KnowledgeTestSearch | null>(null);
+  const [results, setResults] = useState<KnowledgeSearchHit[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   async function search() {
     if (busy) return;
+    const query = question.trim();
+    if (!query) {
+      setErr("Enter a question to search this Knowledge Base.");
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
-      const data = await apiGet<KnowledgeTestSearch>(
-        `/knowledge-base/${kbId}/test-search?q=${encodeURIComponent(question.trim())}`,
-      );
-      setResult(data);
+      const data = await apiPost<KnowledgeSearchResponse>("/knowledge/search", {
+        knowledgeBaseIds: [kbId],
+        query,
+        limit: 5,
+      });
+      setResults(data.results || []);
     } catch (e) {
+      setResults(null);
       setErr(e instanceof ApiError ? e.message : "Search failed.");
     } finally {
       setBusy(false);
@@ -831,9 +866,9 @@ function TestingTab({ kbId }: { kbId: number }) {
   return (
     <div className="space-y-5 max-w-3xl">
       <div>
-        <div className="kicker mb-2">Test Knowledge</div>
+        <div className="kicker mb-2">Semantic retrieval test</div>
         <p className="text-[14px] text-slate-muted leading-relaxed">
-          Phase 2 test search looks through source names, descriptions, and manual text. It is not production RAG and does not call XiaoZhi.
+          Searches indexed chunks in this Knowledge Base only. This is not a chatbot. It does not call XiaoZhi or execute Revel.
         </p>
       </div>
       <div>
@@ -843,7 +878,7 @@ function TestingTab({ kbId }: { kbId: number }) {
           className="input min-h-[5.5rem]"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
-          placeholder="How does the Bio-EV adult brief sensor work?"
+          placeholder="How does the adult brief sensor work?"
         />
         <button type="button" className="btn-primary mt-3" disabled={busy} onClick={() => void search()}>
           {busy ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
@@ -856,40 +891,30 @@ function TestingTab({ kbId }: { kbId: number }) {
           {err}
         </div>
       )}
-      {result && (
+      {results && (
         <div className="space-y-3">
-          {!result.retrievalConfigured && (
-            <div className="text-[13px] text-slate-muted border border-slate-line/70 bg-bone-soft rounded-card px-3 py-2">
-              Retrieval service not configured. Showing Phase 2 keyword matches only.
-            </div>
-          )}
-          {result.list.length === 0 ? (
-            <p className="text-[14px] text-slate-muted">{result.message || "No matches."}</p>
+          <div className="text-[13px] text-slate-muted">
+            Results: {results.length}
+          </div>
+          {results.length === 0 ? (
+            <p className="text-[14px] text-slate-muted">No indexed matches in this Knowledge Base.</p>
           ) : (
-            <div className="card overflow-hidden">
-              <table className="w-full text-[13px]">
-                <thead>
-                  <tr className="text-[11px] uppercase tracking-[0.12em] text-slate-muted bg-bone-soft border-b border-slate-line/70">
-                    <th className="text-left font-medium px-4 py-2.5">Source</th>
-                    <th className="text-left font-medium px-4 py-2.5">Topic</th>
-                    <th className="text-left font-medium px-4 py-2.5">Matched Text / Preview</th>
-                    <th className="text-left font-medium px-4 py-2.5">Score</th>
-                    <th className="text-left font-medium px-4 py-2.5">Revel Tag</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.list.map((row) => (
-                    <tr key={row.sourceId} className="border-b border-slate-line/50 last:border-b-0 align-top">
-                      <td className="px-4 py-2.5 text-slate-deep">{row.source}</td>
-                      <td className="px-4 py-2.5 text-slate-muted">{row.topic || "—"}</td>
-                      <td className="px-4 py-2.5 text-slate-muted">{row.matchedText || "—"}</td>
-                      <td className="px-4 py-2.5 num text-slate-deep">{row.score}</td>
-                      <td className="px-4 py-2.5 font-mono text-[12px] text-slate-muted">{row.revelTag || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ul className="space-y-3">
+              {results.map((row, index) => (
+                <li key={`${row.sourceId}-${row.topicId ?? "none"}-${index}`} className="card px-4 py-3.5 space-y-2">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <div className="text-[14px] text-slate-deep">{row.sourceName}</div>
+                    <div className="text-[12px] num text-slate-muted">Score {row.score ?? "—"}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-slate-muted">
+                    <span>{sourceLocationLabel(row)}</span>
+                    <span>Topic: {row.topic || "—"}</span>
+                    <span>Revel tag: <span className="font-mono text-slate-deep">{row.revelTag || "—"}</span></span>
+                  </div>
+                  <p className="text-[13px] text-slate-deep leading-relaxed">{row.text}</p>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}

@@ -282,6 +282,9 @@ export interface KnowledgeSource {
   revelTag: string | null;
   errorMessage: string | null;
   hasFile: boolean;
+  storagePath?: string | null;
+  chunkCount?: number;
+  indexedAt?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }
@@ -303,6 +306,9 @@ export interface KnowledgeTestHit {
   matchedText: string;
   score: number;
   revelTag: string | null;
+  pageNumber?: number | null;
+  slideNumber?: number | null;
+  revelAutoTrigger?: boolean;
 }
 
 export interface KnowledgeTestSearch {
@@ -312,6 +318,25 @@ export interface KnowledgeTestSearch {
   list: KnowledgeTestHit[];
   total: number;
   message: string | null;
+}
+
+export interface KnowledgeSearchHit {
+  knowledgeBaseId: number;
+  sourceId: number;
+  sourceName: string;
+  topicId: number | null;
+  topic?: string | null;
+  text: string;
+  score: number | null;
+  pageNumber: number | null;
+  slideNumber: number | null;
+  revelTag: string | null;
+  revelAutoTrigger: boolean;
+}
+
+export interface KnowledgeSearchResponse {
+  query: string;
+  results: KnowledgeSearchHit[];
 }
 
 export interface KnowledgeBaseList {

@@ -34,6 +34,7 @@ from .models import (
     AiAgent,
     ClientKnowledgeBase,
     KnowledgeBase,
+    KnowledgeChunk,
     KnowledgeSource,
     KnowledgeTopic,
 )
@@ -143,6 +144,7 @@ def serialize_source(
     row: KnowledgeSource,
     *,
     topic: KnowledgeTopic | None = None,
+    chunk_count: int | None = None,
 ) -> dict[str, Any]:
     return {
         "id": row.id,
@@ -161,6 +163,9 @@ def serialize_source(
         "revelTag": topic.revel_tag if topic is not None else None,
         "errorMessage": row.error_message,
         "hasFile": bool(row.storage_path),
+        "storagePath": row.storage_path,
+        "chunkCount": int(chunk_count or 0),
+        "indexedAt": row.indexed_at,
         "createdAt": row.created_at,
         "updatedAt": row.updated_at,
     }
@@ -233,6 +238,21 @@ async def list_assigned_clients(
         }
         for agent_id, agent_name, enabled in rows
     ]
+
+
+async def chunk_counts(
+    db: AsyncSession, source_ids: list[int]
+) -> dict[int, int]:
+    if not source_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(KnowledgeChunk.source_id, func.count(KnowledgeChunk.id))
+            .where(KnowledgeChunk.source_id.in_(source_ids))
+            .group_by(KnowledgeChunk.source_id)
+        )
+    ).all()
+    return {int(source_id): int(count) for source_id, count in rows}
 
 
 async def load_sources(

@@ -89,7 +89,29 @@ export function sourceTypeLabel(type: string | null | undefined): string {
 export function sourceStatusLabel(source: { enabled: boolean; status: string }): string {
   if (!source.enabled) return "Disabled";
   const status = (source.status || "uploaded").toLowerCase();
+  if (status === "uploaded") return "Uploaded";
+  if (status === "processing") return "Processing";
+  if (status === "ready") return "Ready";
+  if (status === "failed") return "Failed";
   return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+export function sourceStatusTone(source: { enabled: boolean; status: string }): "ok" | "warn" | "fail" | "muted" {
+  if (!source.enabled) return "muted";
+  const status = (source.status || "uploaded").toLowerCase();
+  if (status === "ready") return "ok";
+  if (status === "processing") return "warn";
+  if (status === "failed") return "fail";
+  return "muted";
+}
+
+export function sourceLocationLabel(source: {
+  pageNumber?: number | null;
+  slideNumber?: number | null;
+}): string {
+  if (source.slideNumber != null) return `Slide ${source.slideNumber}`;
+  if (source.pageNumber != null) return `Page ${source.pageNumber}`;
+  return "—";
 }
 
 export function sourceNeedsFile(type: KnowledgeSourceType): boolean {

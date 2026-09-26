@@ -60,6 +60,7 @@ git clone <this repo> ~/careconnect-src && cd ~/careconnect-src
 REGISTRY=localhost:5000; TAG=$(date +%Y%m%d)
 
 docker build -t $REGISTRY/careconnect-api:$TAG   -t $REGISTRY/careconnect-api:latest   api/
+docker build -t $REGISTRY/careconnect-knowledge:$TAG -t $REGISTRY/careconnect-knowledge:latest knowledge-service/
 docker build -t $REGISTRY/careconnect-web:$TAG   -t $REGISTRY/careconnect-web:latest   web/
 docker build -f deploy/caddy.Dockerfile -t $REGISTRY/careconnect-caddy:$TAG -t $REGISTRY/careconnect-caddy:latest deploy/
 docker build -f deploy/tts.Dockerfile   -t $REGISTRY/careconnect-piper:$TAG -t $REGISTRY/careconnect-piper:latest .
@@ -77,7 +78,7 @@ git -C mqtt-gateway/upstream checkout 369e42f62fbae5af5734c2da19712c8318652bf5
 cp mqtt-gateway/Dockerfile mqtt-gateway/.dockerignore mqtt-gateway/docker-entrypoint.sh mqtt-gateway/upstream/
 docker build -t $REGISTRY/careconnect-mqtt-gateway:$TAG -t $REGISTRY/careconnect-mqtt-gateway:latest mqtt-gateway/upstream/
 
-for i in api web caddy piper xiaozhi-server mqtt-gateway; do docker push $REGISTRY/careconnect-$i:latest; done
+for i in api knowledge web caddy piper xiaozhi-server mqtt-gateway; do docker push $REGISTRY/careconnect-$i:latest; done
 ```
 
 The xiaozhi-server image runs as root (the base image drops the `xiaozhiuser`

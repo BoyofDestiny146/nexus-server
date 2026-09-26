@@ -17,7 +17,8 @@ Public entry points (via a Cloudflare Tunnel, no inbound ports):
 
 | Path | What it is | Image |
 |---|---|---|
-| `api/` | FastAPI backend: auth, RBAC, patients/devices, client API (`X-API-Key`), triage scheduler, WebSocket push. Tests in `api/tests`. | `careconnect-api` |
+| `api/` | FastAPI backend: auth, RBAC, patients/devices, client API (`X-API-Key`), triage scheduler, WebSocket push, Knowledge Fabric metadata. Tests in `api/tests`. | `careconnect-api` |
+| `knowledge-service/` | Retrieval sidecar: extract, chunk, embed (`nomic-embed-text`), Qdrant index/search. | `careconnect-knowledge` |
 | `web/` | Next.js 14 dashboard, built as a static export (`basePath /careconnect`) and served by Caddy. | `careconnect-web` |
 | `xiaozhi-server/` | Voice server (fork of xiaozhi-esp32-server) with the CareConnect changes: per-patient persona from the DB, chat persistence + dashboard notify, multi-engine TTS, per-device voice, voice-triggered camera + vision, reminders, English-only pipeline. `data/.config.yaml` is the runtime config. | `careconnect-xiaozhi-server` |
 | `mqtt-gateway/` | Container files for the upstream `xiaozhi-mqtt-gateway` (used only for LAN/MQTT transport; remote devices use WebSocket). | `careconnect-mqtt-gateway` |
@@ -33,7 +34,8 @@ Browser             --https-> cloudflared --> caddy:443 --> /srv/web (dashboard)
                                                        --> api:8080 (REST + WS)
 xiaozhi-server --> mariadb (chat history, agents, devices)   --> api (notify chat-turn)
 xiaozhi-server --> piper-tts:5500 (Kokoro / Piper / Edge TTS)
-xiaozhi-server, api --> Ollama on the host (:11434): cc-llm (chat), cc-vision (camera), nomic-embed-text
+xiaozhi-server, api, knowledge-service --> Ollama on the host (:11434): cc-llm (chat), cc-vision (camera), nomic-embed-text
+api --> knowledge-service:8090 --> Qdrant (nexus_knowledge)
 ```
 
 Ollama runs natively on the Jetson (GPU), not in compose. Model variants and the

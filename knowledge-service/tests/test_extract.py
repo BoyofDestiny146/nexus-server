@@ -1,0 +1,143 @@
+"""Knowledge-service extract / chunk tests. No Ollama, no Qdrant."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from knowledge_service.chunk import chunk_units
+from knowledge_service.extract import extract_chunks
+from knowledge_service.settings import settings
+
+
+@pytest.fixture
+def source_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    dest = tmp_path / "knowledge-sources"
+    dest.mkdir()
+    monkeypatch.setattr(settings, "source_dir", str(dest))
+    return dest
+
+
+def _write(source_dir: Path, rel: str, content: bytes) -> str:
+    path = source_dir / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return rel
+
+
+def test_txt_and_markdown_chunk(source_dir: Path):
+    rel = _write(
+        source_dir,
+        "1/1/source.txt",
+        b"The Bio-EV adult brief sensor measures humidity and posts a silent alert.",
+    )
+    out = extract_chunks("text", rel)
+    assert out["chunkCount"] == 1
+    assert "adult brief sensor" in out["chunks"][0]["text"]
+    assert out["chunks"][0]["contentHash"]
+    assert out["metadata"]["parser"] == "utf8"
+
+    md = _write(source_dir, "1/2/source.md", b"# Overview\n\nHumidity posts a silent alert.")
+    md_out = extract_chunks("markdown", md)
+    assert md_out["chunkCount"] >= 1
+
+
+def test_pdf_by_page(source_dir: Path):
+    from pypdf import PdfWriter
+
+    rel = "1/3/source.pdf"
+    path = source_dir / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    writer = PdfWriter()
+    writer.add_blank_page(width=400, height=400)
+    writer.add_blank_page(width=400, height=400)
+    with path.open("wb") as fh:
+        writer.write(fh)
+    out = extract_chunks("pdf", rel)
+    assert out["metadata"]["parser"] == "pypdf"
+    assert out["metadata"]["pages"] == 2
+
+
+def test_chunk_units_keep_page_numbers():
+    chunks = chunk_units(
+        [
+            {
+                "text": "Page one explains the adult brief sensor.",
+                "pageNumber": 1,
+                "slideNumber": None,
+                "sectionTitle": "Page 1",
+            }
+        ]
+    )
+    assert chunks[0]["pageNumber"] == 1
+
+
+def test_docx_headings_and_tables(source_dir: Path):
+    from docx import Document
+
+    doc = Document()
+    doc.add_heading("Adult Brief Sensor", level=1)
+    doc.add_paragraph("The sensor measures humidity.")
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Metric"
+    table.cell(0, 1).text = "Value"
+    table.cell(1, 0).text = "Alert"
+    table.cell(1, 1).text = "Silent"
+    rel = "1/4/source.docx"
+    path = source_dir / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc.save(path)
+    out = extract_chunks("docx", rel)
+    texts = " ".join(c["text"] for c in out["chunks"])
+    assert "humidity" in texts.lower()
+    assert "Silent" in texts
+    assert any(c.get("sectionTitle") == "Adult Brief Sensor" for c in out["chunks"])
+
+
+def test_pptx_slide_text_and_notes(source_dir: Path):
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    pres = Presentation()
+    layout = pres.slide_layouts[5] if len(pres.slide_layouts) > 5 else pres.slide_layouts[0]
+    slide = pres.slides.add_slide(layout)
+    box = slide.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(8), Inches(1))
+    box.text_frame.text = "How the adult brief sensor works"
+    notes = slide.notes_slide.notes_text_frame
+    notes.text = "Mention silent humidity alerts."
+    rel = "1/5/source.pptx"
+    path = source_dir / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pres.save(path)
+    out = extract_chunks("pptx", rel)
+    assert out["chunkCount"] >= 1
+    chunk = out["chunks"][0]
+    assert chunk["slideNumber"] == 1
+    assert "adult brief sensor" in chunk["text"].lower()
+    assert "silent humidity" in chunk["text"].lower()
+
+
+def test_image_is_metadata_only(source_dir: Path):
+    rel = _write(source_dir, "1/6/source.png", b"\x89PNG\r\n\x1a\nnot-a-real-png")
+    out = extract_chunks("image", rel)
+    assert out["chunkCount"] == 0
+    assert out["metadata"]["skipped"] == "image"
+
+
+def test_chunk_units_keep_slide_boundary():
+    units = [
+        {
+            "text": "Slide one body " * 3,
+            "pageNumber": None,
+            "slideNumber": 1,
+            "sectionTitle": "Slide 1",
+        },
+        {
+            "text": "Slide two body",
+            "pageNumber": None,
+            "slideNumber": 2,
+            "sectionTitle": "Slide 2",
+        },
+    ]
+    chunks = chunk_units(units)
+    assert {c["slideNumber"] for c in chunks} == {1, 2}

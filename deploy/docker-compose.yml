@@ -136,6 +136,9 @@ services:
       # Empty = no outbound CareConnect HTTP. Set only to a *separate* receiver;
       # same-host URLs (care.nexus.warehouse-13.biz) are skipped.
       CC_CARECONNECT_INGEST_URL: "${CC_CARECONNECT_INGEST_URL:-}"
+      # Knowledge retrieval sidecar (extract/embed/Qdrant). Empty disables indexing.
+      CC_KNOWLEDGE_SERVICE_URL: "http://knowledge-service:8090"
+      CC_OLLAMA_EMBED_MODEL: "${CC_OLLAMA_EMBED_MODEL:-nomic-embed-text}"
     volumes:
       - cc-secrets:/run/secrets:ro
       - cc-voice:/data
@@ -367,6 +370,64 @@ services:
       retries: 5
       start_period: 5s
 
+  # ── Qdrant (Knowledge Fabric vectors) ──────────────────────────────────────
+  # REST :6333 on the careconnect network only — not published to the host.
+  # Persistent named volume. Collection nexus_knowledge is created by
+  # knowledge-service on first boot. Does not move /data source files.
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    <<: [*restart, *logging]
+    expose:
+      - "6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - careconnect
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'echo > /dev/tcp/127.0.0.1/6333' || exit 1",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
+
+  # ── Knowledge retrieval sidecar ────────────────────────────────────────────
+  # Extract / chunk / embed / index / search. Reads source files from the
+  # shared cc-voice volume at /data (read-only). Talks to native Ollama for
+  # nomic-embed-text. Never pulls models. Not proxied by Caddy.
+  knowledge-service:
+    image: ${REGISTRY:-localhost:5000}/careconnect-knowledge:${TAG:-latest}
+    <<: [*restart, *logging]
+    expose:
+      - "8090"
+    environment:
+      TZ: "${CC_TZ:-America/Chicago}"
+      KS_HOST: "0.0.0.0"
+      KS_PORT: "8090"
+      KS_SOURCE_DIR: "/data/knowledge-sources"
+      KS_OLLAMA_URL: "${CC_OLLAMA_URL:-http://host-gateway:11434}"
+      KS_OLLAMA_EMBED_MODEL: "${CC_OLLAMA_EMBED_MODEL:-nomic-embed-text}"
+      KS_QDRANT_URL: "http://qdrant:6333"
+      KS_QDRANT_COLLECTION: "nexus_knowledge"
+    volumes:
+      - cc-voice:/data:ro
+    networks:
+      - careconnect
+    extra_hosts:
+      - "host-gateway:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8090/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      qdrant:
+        condition: service_started
+
   # ── Cloudflare Tunnel — public internet ingress for haizel.online ───────────
   # Outbound-only connector: no port-forward, home/Jetson IP hidden. The tunnel's
   # ingress is remotely-managed (set by deploy/scripts/cf-tunnel-setup.py):
@@ -420,6 +481,9 @@ volumes:
     driver: local
   # Captured Watcher camera frames (vision); served by Caddy at /photos/
   cc-photos:
+    driver: local
+  # Qdrant vector storage for Knowledge Fabric (collection nexus_knowledge)
+  qdrant-data:
     driver: local
 
 

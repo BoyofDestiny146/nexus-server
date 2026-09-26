@@ -282,6 +282,46 @@ class KnowledgeSource(Base):
         nullable=True,
     )
     error_message: Mapped[str | None] = mapped_column(String(512))
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KnowledgeChunk(Base):
+    """Extracted retrieval chunk. Text stays here; vectors live in Qdrant."""
+
+    __tablename__ = "cc_knowledge_chunk"
+    __table_args__ = ({"sqlite_autoincrement": True},)
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    source_id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        ForeignKey("cc_knowledge_source.id", ondelete="CASCADE"),
+        index=True,
+    )
+    knowledge_base_id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        ForeignKey("cc_knowledge_base.id", ondelete="CASCADE"),
+        index=True,
+    )
+    topic_id: Mapped[int | None] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        ForeignKey("cc_knowledge_topic.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, default=0)
+    text: Mapped[str] = mapped_column(Text)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    slide_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    section_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
