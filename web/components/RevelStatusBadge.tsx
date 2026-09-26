@@ -1,8 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { apiGet, ApiError } from "@/lib/api";
 import { classNames } from "@/lib/format";
 import {
   revelBadgeLabel,
@@ -10,43 +8,20 @@ import {
   type RevelStatus,
 } from "@/lib/revelStatus";
 
+/** Presentational header chip. Parent owns Revel status fetching. */
 export function RevelStatusBadge({
-  agentId,
-  refreshKey = 0,
-  onStatus,
+  status,
+  loading = false,
+  error = null,
 }: {
-  agentId: string;
-  refreshKey?: number;
-  onStatus?: (status: RevelStatus | null) => void;
+  status: RevelStatus | null;
+  loading?: boolean;
+  error?: string | null;
 }) {
-  const [status, setStatus] = useState<RevelStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    try {
-      const data = await apiGet<RevelStatus>(`/agent/${agentId}/revel/status`);
-      setStatus(data);
-      onStatus?.(data);
-      setError(null);
-    } catch (e) {
-      setStatus(null);
-      onStatus?.(null);
-      setError(e instanceof ApiError ? e.message : "Could not load Revel status.");
-    } finally {
-      setLoading(false);
-    }
-  }, [agentId, onStatus]);
-
-  useEffect(() => {
-    setLoading(true);
-    void load();
-  }, [load, refreshKey]);
-
   const tone = revelStatusTone(status?.mode);
   const label = loading
     ? "Revel…"
-    : error
+    : error || !status
       ? "Revel status unavailable"
       : revelBadgeLabel(status);
   const dot =

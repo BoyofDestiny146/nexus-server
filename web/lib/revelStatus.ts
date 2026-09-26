@@ -80,3 +80,78 @@ export function revelDiscussionContext(
     display,
   };
 }
+
+/** Same derivation PatientDetailClient uses for the conversation chrome. */
+export const parentConversationRevelContext = revelDiscussionContext;
+
+export function revelStatusPath(agentId: string): string {
+  return `/agent/${agentId}/revel/status`;
+}
+
+export async function loadRevelStatus(
+  agentId: string,
+  get: <T>(path: string) => Promise<T>,
+): Promise<{ status: RevelStatus | null; error: string | null }> {
+  try {
+    const status = await get<RevelStatus>(revelStatusPath(agentId));
+    return { status, error: null };
+  } catch (e) {
+    const error =
+      e instanceof Error && e.message
+        ? e.message
+        : "Could not load Revel status.";
+    return { status: null, error };
+  }
+}
+
+export type RevelContextCardRow = { label: string; value: string };
+
+export type RevelContextCardModel = {
+  title: "REVEL CONTEXT";
+  rows: RevelContextCardRow[];
+};
+
+/** Visible rows for the conversation REVEL CONTEXT card. Display is omitted when empty. */
+export function revelContextCardModel(context: RevelDiscussionContext): RevelContextCardModel {
+  const rows: RevelContextCardRow[] = [
+    { label: "Tag", value: context.tag },
+    { label: "Auto Trigger", value: context.autoTriggerLabel },
+  ];
+  if (context.display) rows.push({ label: "Display", value: context.display });
+  return { title: "REVEL CONTEXT", rows };
+}
+
+export function formatRevelContextCard(
+  context: RevelDiscussionContext | null | undefined,
+): string | null {
+  if (!context) return null;
+  const card = revelContextCardModel(context);
+  const lines = [
+    card.title,
+    ...card.rows.map((row) => `${row.label.padEnd(15)}${row.value}`),
+  ];
+  return lines.join("\n");
+}
+
+/**
+ * Parent conversation path: owned RevelStatus → REVEL CONTEXT card.
+ * PatientDetailClient must call this; do not derive conversation chrome from the badge.
+ */
+export function patientDetailConversationRevel(
+  status: Pick<RevelStatus, "tag" | "autoTrigger" | "device"> | null | undefined,
+): {
+  revelContext: RevelDiscussionContext | null;
+  card: string | null;
+} {
+  const revelContext = parentConversationRevelContext(status);
+  return {
+    revelContext,
+    card: formatRevelContextCard(revelContext),
+  };
+}
+
+export function conversationRendersRevelContext(
+  status: Pick<RevelStatus, "tag" | "autoTrigger" | "device"> | null | undefined,
+): string | null {
+  return patientDetailConversationRevel(status).card;
+}

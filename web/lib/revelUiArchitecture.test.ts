@@ -77,9 +77,16 @@ test("live test control is present and disabled unless execute is enabled", () =
   assert.match(integrations, /Run Dry Test/);
 });
 
-test("header badge is status-only and does not own diagnostics", () => {
+test("header badge is presentational; parent owns GET /agent/{id}/revel/status", () => {
   assert.doesNotMatch(badge, /<Modal/);
   assert.doesNotMatch(badge, /RevelDiagnosticsList/);
+  assert.doesNotMatch(badge, /apiGet/);
+  assert.doesNotMatch(badge, /onStatus/);
+  assert.doesNotMatch(badge, /useEffect/);
+  assert.match(detail, /loadRevelStatus\(id, apiGet\)/);
+  assert.match(detail, /patientDetailConversationRevel\(revelStatus\)/);
+  assert.match(detail, /status=\{revelStatus\}/);
+  assert.doesNotMatch(detail, /onStatus=\{setRevelStatus\}/);
 });
 
 test("desktop layout remains approximately 26 \/ 48 \/ 26", () => {
@@ -91,17 +98,17 @@ test("desktop layout remains approximately 26 \/ 48 \/ 26", () => {
   assert.match(detail, /PATIENT_DETAIL_RIGHT/);
 });
 
-test("REVEL CONTEXT appears from topic tag and stays separate from DISPLAY EVENT", () => {
-  assert.match(detail, /revelDiscussionContext/);
+test("REVEL CONTEXT appears from parent-owned topic tag and stays separate from DISPLAY EVENT", () => {
+  assert.match(detail, /patientDetailConversationRevel\(revelStatus\)/);
   assert.match(detail, /RevelContextCard/);
   assert.match(detail, /data-testid="revel-context-item"/);
   assert.match(detail, /gi === 0 && revelContext/);
   assert.match(contextCard, /data-testid="revel-context-card"/);
-  assert.match(contextCard, /Revel context/);
-  assert.match(contextCard, /Auto Trigger/);
+  assert.match(contextCard, /revelContextCardModel/);
+  assert.match(contextCard, /card\.title/);
   assert.doesNotMatch(contextCard, /Display event/);
   assert.doesNotMatch(contextCard, /DRY RUN/);
-  assert.doesNotMatch(eventCard, /Revel context/);
+  assert.doesNotMatch(eventCard, /REVEL CONTEXT/);
   assert.match(detail, /RevelDisplayEvent/);
   assert.doesNotMatch(contextCard, /"caregiver"/);
 });

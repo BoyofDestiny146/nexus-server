@@ -21,7 +21,11 @@ import {
   PATIENT_DETAIL_RIGHT,
   PATIENT_DETAIL_SECTION,
 } from "@/lib/patientDetailLayout";
-import { revelDiscussionContext, type RevelStatus } from "@/lib/revelStatus";
+import {
+  loadRevelStatus,
+  patientDetailConversationRevel,
+} from "@/lib/patientDetailRevel";
+import type { RevelStatus } from "@/lib/revelStatus";
 import { useLiveChat } from "@/lib/useLiveChat";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -112,6 +116,8 @@ function PatientDetailView({ id }: { id: string }) {
   const [attachOpen, setAttachOpen] = useState(false);
   const [knowledgeTick, setKnowledgeTick] = useState(0);
   const [revelStatus, setRevelStatus] = useState<RevelStatus | null>(null);
+  const [revelStatusError, setRevelStatusError] = useState<string | null>(null);
+  const [revelStatusLoading, setRevelStatusLoading] = useState(true);
 
   const live = useLiveChat(id);
 
@@ -163,6 +169,20 @@ function PatientDetailView({ id }: { id: string }) {
     load();
     return () => { cancelled = true; };
   }, [id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRevelStatus(null);
+    setRevelStatusError(null);
+    setRevelStatusLoading(true);
+    loadRevelStatus(id, apiGet).then((result) => {
+      if (cancelled) return;
+      setRevelStatus(result.status);
+      setRevelStatusError(result.error);
+      setRevelStatusLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [id, knowledgeTick]);
 
   // Load messages when active session changes
   useEffect(() => {
@@ -321,7 +341,10 @@ function PatientDetailView({ id }: { id: string }) {
     return out;
   }, [messages]);
 
-  const revelContext = useMemo(() => revelDiscussionContext(revelStatus), [revelStatus]);
+  const { revelContext } = useMemo(
+    () => patientDetailConversationRevel(revelStatus),
+    [revelStatus],
+  );
 
   if (agentError) {
     return (
@@ -355,7 +378,11 @@ function PatientDetailView({ id }: { id: string }) {
             <div className="flex items-center gap-2.5 mb-2 min-w-0">
               <span className="kicker">Client detail</span>
               <LiveBadge status={live.status} />
-              <RevelStatusBadge agentId={id} refreshKey={knowledgeTick} onStatus={setRevelStatus} />
+              <RevelStatusBadge
+                status={revelStatus}
+                loading={revelStatusLoading}
+                error={revelStatusError}
+              />
             </div>
             <h1 className="display-1 text-slate-deep leading-[1.05]">{agent.agentName}</h1>
             <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[12px] text-slate-muted">
