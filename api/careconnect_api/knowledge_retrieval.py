@@ -7,7 +7,7 @@ wired. Revel tags are returned as metadata only.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -155,7 +155,7 @@ async def process_source(db: AsyncSession, source: KnowledgeSource) -> Knowledge
                 log.warning("qdrant delete skipped for empty source %s", source.id)
         source.status = "ready"
         source.error_message = None
-        source.indexed_at = datetime.utcnow()
+        source.indexed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await db.commit()
         await db.refresh(source)
         log.info(
