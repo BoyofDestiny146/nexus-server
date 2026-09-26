@@ -17,13 +17,20 @@ import type {
   KnowledgeTopic,
 } from "@/lib/types";
 import {
+  formatExtractedChars,
   formatSourceBytes,
   isKnowledgeWorkspaceTab,
   KNOWLEDGE_SOURCE_TYPES,
   KNOWLEDGE_WORKSPACE_TABS,
   parseKnowledgeIdFromPath,
+  processingStageLabel,
+  shouldPollSourceProgress,
+  SOURCE_POLL_MS,
+  sourceChunkProgressLabel,
   sourceLocationLabel,
   sourceNeedsFile,
+  sourceProgressHeadline,
+  sourceProgressPercent,
   sourceStatusLabel,
   sourceStatusTone,
   sourceTypeLabel,
@@ -105,6 +112,27 @@ function KnowledgeWorkspace({ id }: { id: string }) {
 
   useEffect(() => { void reload(); }, [reload]);
 
+  const pollSources = useCallback(async () => {
+    if (!Number.isFinite(kbId)) return;
+    try {
+      const sourceList = await apiGet<KnowledgeSourceList>(`/knowledge-base/${kbId}/sources`);
+      setSources(sourceList.list || []);
+    } catch {
+      /* keep the last known list; reload() still surfaces hard errors */
+    }
+  }, [kbId]);
+
+  const anyProcessing = shouldPollSourceProgress(sources);
+  useEffect(() => {
+    if (!anyProcessing) return;
+    const timer = window.setInterval(() => { void pollSources(); }, SOURCE_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [anyProcessing, pollSources]);
+
+  function patchSource(id: number, patch: Partial<KnowledgeSource>) {
+    setSources((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  }
+
   function go(next: KnowledgeWorkspaceTab) {
     setTab(next);
     if (typeof window !== "undefined") {
@@ -177,7 +205,7 @@ function KnowledgeWorkspace({ id }: { id: string }) {
           <OverviewTab kb={kb} sources={sources} onSaved={reload} />
         )}
         {tab === "sources" && (
-          <SourcesTab kb={kb} sources={sources} topics={topics} onChanged={reload} />
+          <SourcesTab kb={kb} sources={sources} topics={topics} onChanged={reload} onPatch={patchSource} />
         )}
         {tab === "topics" && (
           <TopicsTab kb={kb} topics={topics} onChanged={reload} />
@@ -312,12 +340,13 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function SourcesTab({
-  kb, sources, topics, onChanged,
+  kb, sources, topics, onChanged, onPatch,
 }: {
   kb: KnowledgeBase;
   sources: KnowledgeSource[];
   topics: KnowledgeTopic[];
   onChanged: () => Promise<void>;
+  onPatch: (id: number, patch: Partial<KnowledgeSource>) => void;
 }) {
   const [editor, setEditor] = useState<null | "new" | KnowledgeSource>(null);
   const [confirm, setConfirm] = useState<KnowledgeSource | null>(null);
@@ -338,6 +367,15 @@ function SourcesTab({
   }
 
   async function reprocess(source: KnowledgeSource) {
+    onPatch(source.id, {
+      status: "processing",
+      processingStage: "extracting",
+      processingProgress: null,
+      errorMessage: null,
+      chunkCount: 0,
+      indexedChunkCount: 0,
+      processedAt: null,
+    });
     setBusyId(source.id);
     setErr(null);
     try {
@@ -350,6 +388,7 @@ function SourcesTab({
       }
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Could not reprocess.");
+      await onChanged();
     } finally {
       setBusyId(null);
     }
@@ -422,14 +461,12 @@ function SourcesTab({
                   {source.description ? (
                     <p className="mt-1.5 text-[13px] text-slate-muted leading-snug">{source.description}</p>
                   ) : null}
-                  {source.status === "failed" && source.errorMessage ? (
-                    <p className="mt-1.5 text-[13px] text-risk-urgent leading-snug">{source.errorMessage}</p>
+                  <SourceProgress source={source} />
+                  {source.status !== "processing" && source.status !== "ready" ? (
+                    <div className="mt-2 text-[11px] text-slate-muted num">
+                      Uploaded {relativeTime(source.createdAt)}
+                    </div>
                   ) : null}
-                  <div className="mt-2 text-[11px] text-slate-muted num">
-                    {source.chunkCount ?? 0} chunks
-                    {source.indexedAt ? ` · Indexed ${relativeTime(source.indexedAt)}` : ""}
-                    {" · "}Uploaded {relativeTime(source.createdAt)}
-                  </div>
                 </div>
                 <StatusChip label={sourceStatusLabel(source)} tone={sourceStatusTone(source)} />
               </div>
@@ -451,7 +488,7 @@ function SourcesTab({
                 <button
                   type="button"
                   className="btn-secondary text-[12px] px-2.5 py-1"
-                  disabled={busyId === source.id}
+                  disabled={busyId === source.id || source.status === "processing"}
                   onClick={() => void reprocess(source)}
                 >
                   <RefreshCw size={12} /> Reprocess
@@ -478,7 +515,7 @@ function SourcesTab({
         open={editor !== null}
         knowledgeBaseId={kb.id}
         topics={topics}
-        source={editor === "new" || editor === null ? null : editor}
+        source={editor === "new" || editor === null ? null : (sources.find((s) => s.id === editor.id) ?? editor)}
         onClose={() => setEditor(null)}
         onSaved={async () => { setEditor(null); await onChanged(); }}
       />
@@ -519,6 +556,45 @@ function StatusChip({ label, tone }: { label: string; tone?: "ok" | "warn" | "fa
     <span className={classNames("shrink-0 text-[11px] uppercase tracking-[0.12em] px-2 py-0.5 rounded-chip border", cls)}>
       {label}
     </span>
+  );
+}
+
+function SourceProgress({ source }: { source: KnowledgeSource }) {
+  const status = (source.status || "").toLowerCase();
+  const percent = sourceProgressPercent(source);
+  const chunks = sourceChunkProgressLabel(source);
+  const headline = sourceProgressHeadline(source);
+  const failed = status === "failed";
+
+  return (
+    <div className="mt-3 space-y-1.5">
+      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-muted">
+        {headline}
+      </div>
+      {status === "processing" || status === "ready" ? (
+        <div className="flex items-center gap-2">
+          <div className="h-1.5 flex-1 rounded-full bg-slate-line/50 overflow-hidden" aria-hidden>
+            {percent != null ? (
+              <div
+                className="h-full rounded-full bg-teal transition-[width] duration-300"
+                style={{ width: `${percent}%` }}
+              />
+            ) : (
+              <div className="h-full w-full bg-teal/25 animate-pulse" />
+            )}
+          </div>
+          {percent != null ? (
+            <span className="text-[12px] num text-slate-muted w-9 text-right">{percent}%</span>
+          ) : null}
+        </div>
+      ) : null}
+      {chunks ? (
+        <div className="text-[12px] num text-slate-muted">{chunks}</div>
+      ) : null}
+      {failed && source.errorMessage ? (
+        <p className="text-[13px] text-risk-urgent leading-snug">{source.errorMessage}</p>
+      ) : null}
+    </div>
   );
 }
 
@@ -563,7 +639,7 @@ function SourceEditor({
       setTopicId("");
       setBodyText("");
     }
-  }, [open, source]);
+  }, [open, source?.id]);
 
   const needsFile = sourceNeedsFile(sourceType);
 
@@ -699,14 +775,22 @@ function SourceEditor({
         {!creating && source ? (
           <div className="rounded-card border border-slate-line/70 bg-bone-soft px-3 py-3 space-y-1.5 text-[13px] text-slate-deep">
             <div className="kicker">Processing</div>
-            <div>Status: {sourceStatusLabel(source)}</div>
-            <div>Extracted chunks: {source.chunkCount ?? 0}</div>
-            <div>Indexed: {source.indexedAt ? relativeTime(source.indexedAt) : "Not indexed"}</div>
+            <div>Processing status: {sourceStatusLabel(source)}</div>
+            <div>Current stage: {processingStageLabel(source.processingStage, source.status)}</div>
+            <div>
+              Progress: {sourceProgressPercent(source) != null ? `${sourceProgressPercent(source)}%` : "—"}
+            </div>
+            <div>Extracted character count: {formatExtractedChars(source.extractedCharCount)}</div>
+            <div>Chunk count: {source.chunkCount ?? 0}</div>
+            <div>Indexed chunk count: {source.indexedChunkCount ?? 0}</div>
+            <div>Last processed time: {source.processedAt ? relativeTime(source.processedAt) : "—"}</div>
+            {source.errorMessage ? (
+              <div className="text-risk-urgent">Error message: {source.errorMessage}</div>
+            ) : (
+              <div>Error message: none</div>
+            )}
             <div>Source path: <span className="font-mono text-[12px]">{source.storagePath || "—"}</span></div>
             <div>Associated topic: {source.topicTitle || "None"}</div>
-            {source.errorMessage ? (
-              <div className="text-risk-urgent">Error: {source.errorMessage}</div>
-            ) : null}
           </div>
         ) : null}
         {err && (

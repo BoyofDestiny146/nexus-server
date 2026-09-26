@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     knowledge_service_url: str = ""
     knowledge_service_timeout_s: float = 120.0
     ollama_embed_model: str = "nomic-embed-text"
+    # Embed+upsert batch size so the Sources UI can poll real indexed counts.
+    knowledge_index_batch_size: int = 8
 
     # Bootstrap admin credentials — read from env or secret files.
     # Usernames are fixed as admin1 / admin2 (generic, not personal).

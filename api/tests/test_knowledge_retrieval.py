@@ -1,8 +1,8 @@
 """Phase 3 Knowledge retrieval: scoped search, processing, device resolver."""
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -80,11 +80,41 @@ class FakeKS:
         self.indexed: list[dict] = []
         self.deleted: list[int] = []
         self.search_calls: list[dict] = []
+        self.calls: list[str] = []
+        self.fail_extract = False
 
     async def __call__(self, method: str, path: str, json: dict | None = None):
         json = json or {}
+        self.calls.append(path)
         if path == "/v1/extract":
+            if self.fail_extract:
+                from careconnect_api.envelope import APIException
+
+                raise APIException(502, "extractor exploded")
+            units = [
+                {
+                    "text": row["text"],
+                    "pageNumber": row.get("pageNumber"),
+                    "slideNumber": row.get("slideNumber"),
+                    "sectionTitle": row.get("sectionTitle"),
+                }
+                for row in self.extract_chunks
+            ]
+            text = " ".join(u["text"] for u in units)
+            return {
+                "units": units,
+                "characterCount": len(text),
+                "unitCount": len(units),
+                "metadata": {"characterCount": len(text)},
+            }
+        if path == "/v1/chunk":
             return {"chunks": self.extract_chunks, "chunkCount": len(self.extract_chunks)}
+        if path == "/v1/embed":
+            texts = list(json.get("texts") or [])
+            return {"embeddings": [[0.01] * 8 for _ in texts], "count": len(texts)}
+        if path == "/v1/upsert":
+            self.indexed.append(json)
+            return {"indexed": len(json.get("chunks") or [])}
         if path == "/v1/index":
             self.indexed.append(json)
             return {"indexed": len(json.get("chunks") or [])}
@@ -128,6 +158,23 @@ async def _create_text_source(client: AsyncClient, token: str, kb_id: int, **kwa
     )
     assert res.json()["code"] == 0, res.json()
     return res.json()["data"]
+
+
+async def _latest_source(client: AsyncClient, token: str, source_id: int) -> dict:
+    res = await client.get(f"/api/knowledge-source/{source_id}", headers=_auth(token))
+    assert res.json()["code"] == 0, res.json()
+    return res.json()["data"]
+
+
+async def _settle_source(client: AsyncClient, token: str, source_id: int) -> dict:
+    last: dict | None = None
+    for _ in range(40):
+        last = await _latest_source(client, token, source_id)
+        if last["status"] != "processing":
+            return last
+        await asyncio.sleep(0.05)
+    assert last is not None
+    return last
 
 
 @pytest.mark.asyncio
@@ -183,9 +230,22 @@ async def test_reprocess_indexes_chunks_and_scoped_search(
     )
     topic_id = topic_res.json()["data"]["id"]
     source = await _create_text_source(client, admin_token, kb["id"], topicId=topic_id)
+    assert source["status"] == "processing"
+    assert source["processingStage"] == "extracting"
+    assert source["errorMessage"] is None
+    source = await _settle_source(client, admin_token, source["id"])
     assert source["status"] == "ready"
+    assert source["processingStage"] == "ready"
+    assert source["processingProgress"] == 100
     assert source["chunkCount"] == 1
+    assert source["indexedChunkCount"] == 1
+    assert source["extractedCharCount"] and source["extractedCharCount"] > 0
     assert source["indexedAt"] is not None
+    assert source["processedAt"] is not None
+    assert fake_ks.calls.count("/v1/extract") >= 1
+    assert fake_ks.calls.count("/v1/chunk") >= 1
+    assert fake_ks.calls.count("/v1/embed") >= 1
+    assert fake_ks.calls.count("/v1/upsert") >= 1
 
     db_session.expire_all()
     chunks = list((await db_session.execute(select(KnowledgeChunk))).scalars().all())
@@ -245,9 +305,14 @@ async def test_image_source_ready_with_zero_chunks(
         files={"file": ("J-Stlye Image.png", b"\x89PNG\r\n\x1a\n", "image/png")},
         headers=_auth(admin_token),
     )
-    source = res.json()["data"]
+    created = res.json()["data"]
+    assert created["status"] in {"processing", "ready"}
+    source = await _settle_source(client, admin_token, created["id"])
     assert source["status"] == "ready"
+    assert source["processingStage"] == "ready"
+    assert source["processingProgress"] == 100
     assert source["chunkCount"] == 0
+    assert source["indexedChunkCount"] == 0
     assert fake_ks.indexed == []
 
 
@@ -271,6 +336,8 @@ async def test_device_search_is_scoped_and_requires_internal_token(
     source = await _create_text_source(
         client, admin_token, kb["id"], topicId=topic_res.json()["data"]["id"]
     )
+    source = await _settle_source(client, admin_token, source["id"])
+    assert source["status"] == "ready"
     agent_id = await _onboard(client, admin_token, "Fargo Bio-EV Demo")
     await client.put(
         f"/api/agent/{agent_id}/knowledge-bases",
@@ -340,6 +407,7 @@ async def test_delete_source_removes_chunks_and_vectors(
 ):
     kb = await _create_kb(client, admin_token)
     source = await _create_text_source(client, admin_token, kb["id"])
+    source = await _settle_source(client, admin_token, source["id"])
     source_id = source["id"]
     deleted = await client.delete(
         f"/api/knowledge-source/{source_id}", headers=_auth(admin_token)
@@ -351,3 +419,109 @@ async def test_delete_source_removes_chunks_and_vectors(
     assert source_id in fake_ks.deleted
     sources = (await db_session.execute(select(KnowledgeSource))).scalars().all()
     assert sources == []
+
+
+@pytest.mark.asyncio
+async def test_processing_commits_real_stage_progress(
+    client: AsyncClient,
+    admin_token: str,
+    source_dir: Path,
+    fake_ks: FakeKS,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from careconnect_api import knowledge_retrieval as kr
+
+    snapshots: list[dict] = []
+    original = kr._save_progress
+    fake_ks.extract_chunks = [
+        {
+            "chunkIndex": i,
+            "text": f"Chunk {i} of the Bio-EV adult brief sensor humidity alert.",
+            "pageNumber": i + 1,
+            "slideNumber": None,
+            "sectionTitle": f"Page {i + 1}",
+            "contentHash": f"hash{i}",
+        }
+        for i in range(3)
+    ]
+    monkeypatch.setattr(settings, "knowledge_index_batch_size", 1)
+
+    async def spy(db, source, **fields):
+        row = await original(db, source, **fields)
+        snapshots.append(
+            {
+                "status": row.status,
+                "stage": row.processing_stage,
+                "progress": row.processing_progress,
+                "chunks": row.chunk_count,
+                "indexed": row.indexed_chunk_count,
+            }
+        )
+        return row
+
+    monkeypatch.setattr(kr, "_save_progress", spy)
+    kb = await _create_kb(client, admin_token)
+    created = await _create_text_source(client, admin_token, kb["id"])
+    assert created["status"] == "processing"
+    source = await _settle_source(client, admin_token, created["id"])
+    assert source["status"] == "ready"
+    assert source["processingStage"] == "ready"
+    assert source["processingProgress"] == 100
+    assert source["chunkCount"] == 3
+    assert source["indexedChunkCount"] == 3
+
+    stages = [row["stage"] for row in snapshots]
+    assert "extracting" in stages or created["processingStage"] == "extracting"
+    assert "chunking" in stages
+    assert "generating_embeddings" in stages
+    assert "indexing" in stages
+    assert stages[-1] == "ready"
+    assert snapshots[-1]["status"] == "ready"
+    embed_snaps = [row for row in snapshots if row["stage"] == "generating_embeddings"]
+    assert embed_snaps[0]["indexed"] == 0
+    assert embed_snaps[0]["progress"] == 0
+    assert embed_snaps[-1]["indexed"] == 2
+    assert embed_snaps[-1]["progress"] == 67
+    assert any(row["indexed"] == 3 and row["progress"] == 100 for row in snapshots)
+
+
+@pytest.mark.asyncio
+async def test_reprocess_clears_error_and_rebuilds(
+    client: AsyncClient,
+    admin_token: str,
+    source_dir: Path,
+    fake_ks: FakeKS,
+):
+    fake_ks.fail_extract = True
+    kb = await _create_kb(client, admin_token)
+    created = await _create_text_source(client, admin_token, kb["id"])
+    failed = await _settle_source(client, admin_token, created["id"])
+    assert failed["status"] == "failed"
+    assert "exploded" in (failed["errorMessage"] or "").lower()
+
+    fake_ks.fail_extract = False
+    listed = await client.get(
+        f"/api/knowledge-base/{kb['id']}/sources", headers=_auth(admin_token)
+    )
+    listed_row = listed.json()["data"]["list"][0]
+    assert listed_row["status"] == "failed"
+    assert listed_row["errorMessage"]
+
+    reprocess = await client.post(
+        f"/api/knowledge-source/{created['id']}/reprocess",
+        headers=_auth(admin_token),
+    )
+    body = reprocess.json()["data"]
+    assert body["reprocess"] is True
+    assert body["status"] in {"processing", "ready"}
+    if body["status"] == "processing":
+        assert body["errorMessage"] is None
+        assert body["processingStage"] == "extracting"
+    ready = await _settle_source(client, admin_token, created["id"])
+    assert ready["status"] == "ready"
+    assert ready["errorMessage"] is None
+    assert ready["processingStage"] == "ready"
+    assert ready["processingProgress"] == 100
+    assert ready["chunkCount"] == 1
+    assert ready["indexedChunkCount"] == 1
+    assert ready["processedAt"] is not None

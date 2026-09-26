@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from knowledge_service.chunk import chunk_units
-from knowledge_service.extract import extract_chunks
+from knowledge_service.extract import chunks_from_units, extract_chunks, extract_file
 from knowledge_service.settings import settings
 
 
@@ -23,6 +23,22 @@ def _write(source_dir: Path, rel: str, content: bytes) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
     return rel
+
+
+def test_extract_file_returns_units_not_chunks(source_dir: Path):
+    rel = _write(
+        source_dir,
+        "1/0/source.txt",
+        b"The Bio-EV adult brief sensor measures humidity and posts a silent alert.",
+    )
+    extracted = extract_file("text", rel)
+    assert "chunks" not in extracted
+    assert extracted["unitCount"] == 1
+    assert extracted["characterCount"] > 0
+    assert "adult brief sensor" in extracted["units"][0]["text"]
+    chunked = chunks_from_units(extracted["units"])
+    assert chunked["chunkCount"] == 1
+    assert chunked["chunks"][0]["contentHash"]
 
 
 def test_txt_and_markdown_chunk(source_dir: Path):

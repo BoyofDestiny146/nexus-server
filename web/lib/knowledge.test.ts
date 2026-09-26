@@ -2,14 +2,21 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   assignedKnowledgeIds,
+  formatExtractedChars,
   formatSourceBytes,
   isKnowledgeWorkspaceTab,
   knowledgeAssignmentPutBody,
   knowledgeAssignmentStatus,
   knowledgeIdsEqual,
   parseKnowledgeIdFromPath,
+  processingStageLabel,
+  shouldPollSourceProgress,
   slugifyKnowledge,
+  SOURCE_POLL_MS,
+  sourceChunkProgressLabel,
   sourceNeedsFile,
+  sourceProgressHeadline,
+  sourceProgressPercent,
   sourceStatusLabel,
   sourceStatusTone,
   sourceTypeLabel,
@@ -83,6 +90,42 @@ test("formatSourceBytes and status chips", () => {
   assert.equal(sourceNeedsFile("pdf"), true);
   assert.equal(isKnowledgeWorkspaceTab("sources"), true);
   assert.equal(isKnowledgeWorkspaceTab("rag"), false);
+});
+
+test("live source processing progress is derived from API state", () => {
+  assert.equal(SOURCE_POLL_MS, 2000);
+  assert.equal(processingStageLabel("generating_embeddings"), "Generating Embeddings");
+  assert.equal(processingStageLabel("extracting"), "Extracting");
+  assert.equal(processingStageLabel(null, "uploaded"), "Uploaded");
+  assert.equal(
+    sourceProgressHeadline({
+      enabled: true,
+      status: "processing",
+      processingStage: "generating_embeddings",
+    }),
+    "PROCESSING — Generating Embeddings",
+  );
+  assert.equal(sourceProgressHeadline({ enabled: true, status: "ready" }), "Ready");
+  assert.equal(sourceProgressPercent({ processingProgress: 68 }), 68);
+  assert.equal(sourceProgressPercent({ processingProgress: null }), null);
+  assert.equal(
+    sourceChunkProgressLabel({ chunkCount: 47, indexedChunkCount: 32 }),
+    "32 / 47 chunks indexed",
+  );
+  assert.equal(sourceChunkProgressLabel({ chunkCount: 0, indexedChunkCount: 0 }), null);
+  assert.equal(formatExtractedChars(12403), "12,403");
+  assert.equal(
+    shouldPollSourceProgress([
+      { status: "ready" },
+      { status: "uploaded" },
+      { status: "failed" },
+    ]),
+    false,
+  );
+  assert.equal(
+    shouldPollSourceProgress([{ status: "ready" }, { status: "processing" }]),
+    true,
+  );
 });
 
 test("parseKnowledgeIdFromPath matches the Patient-detail static-export pattern", () => {

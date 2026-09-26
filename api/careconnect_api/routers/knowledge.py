@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
@@ -40,7 +40,6 @@ from ..db import get_db
 from ..envelope import APIException
 from ..knowledge import (
     _flag,
-    chunk_counts,
     client_counts,
     keyword_test_search,
     list_assigned_clients,
@@ -61,7 +60,7 @@ from ..knowledge import (
 from ..knowledge_retrieval import (
     delete_indexed_source,
     maybe_process_source,
-    process_source,
+    queue_source_processing,
     retrieval_configured,
     semantic_search,
     serialize_source_detail,
@@ -441,17 +440,14 @@ async def list_sources(
 ) -> dict[str, Any]:
     await _get_base(db, knowledge_base_id)
     rows = await load_sources(db, knowledge_base_id)
-    counts = await chunk_counts(db, [source.id for source, _topic in rows])
-    items = [
-        serialize_source(source, topic=topic, chunk_count=counts.get(source.id, 0))
-        for source, topic in rows
-    ]
+    items = [serialize_source(source, topic=topic) for source, topic in rows]
     return {"list": items, "total": len(items)}
 
 
 @router.post("/knowledge-base/{knowledge_base_id}/sources", response_model=None)
 async def create_source(
     knowledge_base_id: int,
+    background: BackgroundTasks,
     name: str = Form(...),
     sourceType: str = Form(...),
     description: str | None = Form(None),
@@ -493,6 +489,9 @@ async def create_source(
         description=(description or "").strip() or None,
         enabled=_flag(enabled, 1),
         status="uploaded",
+        processing_stage="uploaded",
+        chunk_count=0,
+        indexed_chunk_count=0,
         mime_type=mime_for(source_type, ext),
         file_size=len(content),
         topic_id=topic.id if topic is not None else None,
@@ -502,7 +501,7 @@ async def create_source(
     row.storage_path = write_source_bytes(knowledge_base_id, row.id, ext, content)
     await db.commit()
     await db.refresh(row)
-    row = await maybe_process_source(db, row)
+    row = await maybe_process_source(db, row, background)
     return await _source_with_topic(db, row)
 
 
@@ -520,6 +519,7 @@ async def get_source(
 async def update_source(
     source_id: int,
     payload: KnowledgeSourceMetaIn,
+    background: BackgroundTasks,
     _user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
@@ -554,15 +554,17 @@ async def update_source(
         )
         row.file_size = len(content)
         row.status = "uploaded"
+        row.processing_stage = "uploaded"
         row.error_message = None
         row.original_filename = display_filename(row.name, ext)
         row.mime_type = mime_for(row.source_type, ext)
         row.indexed_at = None
+        row.processed_at = None
     enabled_changed = "enabled" in provided
     await db.commit()
     await db.refresh(row)
     if "bodyText" in provided:
-        row = await maybe_process_source(db, row)
+        row = await maybe_process_source(db, row, background)
     elif enabled_changed:
         await sync_source_enabled(row.id, bool(row.enabled))
     return await _source_with_topic(db, row)
@@ -571,6 +573,7 @@ async def update_source(
 @router.post("/knowledge-source/{source_id}/replace", response_model=None)
 async def replace_source_file(
     source_id: int,
+    background: BackgroundTasks,
     file: UploadFile | None = File(None),
     bodyText: str | None = Form(None),
     _user: CurrentUser = Depends(get_current_user),
@@ -603,22 +606,25 @@ async def replace_source_file(
     row.mime_type = mime_for(row.source_type, ext)
     row.file_size = len(content)
     row.status = "uploaded"
+    row.processing_stage = "uploaded"
     row.error_message = None
     row.indexed_at = None
+    row.processed_at = None
     await db.commit()
     await db.refresh(row)
-    row = await maybe_process_source(db, row)
+    row = await maybe_process_source(db, row, background)
     return await _source_with_topic(db, row)
 
 
 @router.post("/knowledge-source/{source_id}/reprocess", response_model=None)
 async def reprocess_source(
     source_id: int,
+    background: BackgroundTasks,
     _user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     row = await _get_source(db, source_id)
-    row = await process_source(db, row)
+    row = await queue_source_processing(db, row, background, force=True)
     detail = await _source_with_topic(db, row)
     detail["reprocess"] = True
     detail["retrievalConfigured"] = retrieval_configured()

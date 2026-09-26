@@ -172,23 +172,56 @@ def _extract_pptx(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     return units, {"parser": "python-pptx", "slides": len(list(pres.slides)), "textSlides": len(units)}
 
 
-def extract_chunks(source_type: str, storage_path: str) -> dict[str, Any]:
+def extract_file(source_type: str, storage_path: str) -> dict[str, Any]:
     path = absolute_source_path(storage_path)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="source file not found")
     units, metadata = extract_units(source_type, path)
+    character_count = int(metadata.get("characters") or 0)
+    if character_count <= 0:
+        character_count = sum(len((unit.get("text") or "")) for unit in units)
+    metadata["characterCount"] = character_count
+    metadata["sourceType"] = source_type
+    metadata["storagePath"] = storage_path
+    metadata["unitCount"] = len(units)
+    log.info(
+        "extracted type=%s path=%s units=%s chars=%s",
+        source_type,
+        storage_path,
+        len(units),
+        character_count,
+    )
+    return {
+        "units": units,
+        "metadata": metadata,
+        "characterCount": character_count,
+        "unitCount": len(units),
+    }
+
+
+def chunks_from_units(units: list[dict[str, Any]]) -> dict[str, Any]:
     chunks = chunk_units(units)
     for index, chunk in enumerate(chunks):
         chunk["chunkIndex"] = index
         chunk["contentHash"] = content_hash(chunk["text"])
-    metadata["chunkCount"] = len(chunks)
-    metadata["sourceType"] = source_type
-    metadata["storagePath"] = storage_path
+    return {"chunks": chunks, "chunkCount": len(chunks)}
+
+
+def extract_chunks(source_type: str, storage_path: str) -> dict[str, Any]:
+    extracted = extract_file(source_type, storage_path)
+    chunked = chunks_from_units(list(extracted.get("units") or []))
+    metadata = dict(extracted.get("metadata") or {})
+    metadata["chunkCount"] = chunked["chunkCount"]
     log.info(
-        "extracted type=%s path=%s units=%s chunks=%s",
+        "chunked type=%s path=%s chunks=%s",
         source_type,
         storage_path,
-        len(units),
-        len(chunks),
+        chunked["chunkCount"],
     )
-    return {"chunks": chunks, "metadata": metadata, "chunkCount": len(chunks)}
+    return {
+        "chunks": chunked["chunks"],
+        "units": extracted.get("units") or [],
+        "metadata": metadata,
+        "chunkCount": chunked["chunkCount"],
+        "characterCount": extracted.get("characterCount") or 0,
+    }

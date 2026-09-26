@@ -15,6 +15,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -60,6 +61,7 @@ _int_key_path.chmod(0o600)
 
 from careconnect_api.models import Base  # noqa: E402
 from careconnect_api.db import get_db  # noqa: E402
+from careconnect_api.knowledge_retrieval import set_process_session_factory  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +75,11 @@ SQLITE_URL = "sqlite+aiosqlite:///:memory:"
 @pytest_asyncio.fixture(scope="function")
 async def db_engine():
     """Create a fresh SQLite engine + schema for each test."""
-    engine = create_async_engine(SQLITE_URL, connect_args={"check_same_thread": False})
+    engine = create_async_engine(
+        SQLITE_URL,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
 
     # SQLite doesn't enforce FK by default — enable it so tests are realistic.
     @event.listens_for(engine.sync_engine, "connect")
@@ -103,6 +109,7 @@ async def client(db_engine) -> AsyncIterator[AsyncClient]:
     from careconnect_api.main import app
 
     factory = async_sessionmaker(db_engine, expire_on_commit=False, class_=AsyncSession)
+    set_process_session_factory(factory)
 
     async def _override_get_db():
         async with factory() as session:
@@ -114,3 +121,4 @@ async def client(db_engine) -> AsyncIterator[AsyncClient]:
         yield ac
 
     app.dependency_overrides.clear()
+    set_process_session_factory(None)

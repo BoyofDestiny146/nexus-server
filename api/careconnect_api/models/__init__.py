@@ -283,6 +283,12 @@ class KnowledgeSource(Base):
     )
     error_message: Mapped[str | None] = mapped_column(String(512))
     indexed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    processing_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    processing_progress: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    extracted_char_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    indexed_chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

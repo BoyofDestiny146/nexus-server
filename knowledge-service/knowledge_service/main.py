@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from . import __version__
 from .embed import embed_texts
-from .extract import extract_chunks
+from .extract import chunks_from_units, extract_file
 from .qdrant import delete_by_source, ensure_collection, search_vectors, set_source_enabled, upsert_points
 from .settings import settings
 
@@ -39,8 +39,21 @@ class IndexChunkIn(BaseModel):
     clientId: str | None = None
 
 
+class ChunkIn(BaseModel):
+    units: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class EmbedIn(BaseModel):
+    texts: list[str] = Field(default_factory=list)
+
+
 class IndexIn(BaseModel):
     chunks: list[IndexChunkIn] = Field(default_factory=list)
+
+
+class UpsertIn(BaseModel):
+    chunks: list[IndexChunkIn] = Field(default_factory=list)
+    embeddings: list[list[float]] = Field(default_factory=list)
 
 
 class SearchIn(BaseModel):
@@ -100,7 +113,32 @@ def healthz() -> dict[str, Any]:
 
 @app.post("/v1/extract")
 def extract(payload: ExtractIn) -> dict[str, Any]:
-    return extract_chunks(payload.sourceType, payload.storagePath)
+    return extract_file(payload.sourceType, payload.storagePath)
+
+
+@app.post("/v1/chunk")
+def chunk(payload: ChunkIn) -> dict[str, Any]:
+    return chunks_from_units(list(payload.units or []))
+
+
+@app.post("/v1/embed")
+async def embed(payload: EmbedIn) -> dict[str, Any]:
+    vectors = await embed_texts(list(payload.texts or []))
+    return {"embeddings": vectors, "count": len(vectors)}
+
+
+@app.post("/v1/upsert")
+async def upsert(payload: UpsertIn) -> dict[str, Any]:
+    if not payload.chunks:
+        return {"indexed": 0}
+    if len(payload.embeddings) != len(payload.chunks):
+        raise HTTPException(status_code=400, detail="embeddings length must match chunks")
+    await ensure_collection()
+    points = []
+    for row, vector in zip(payload.chunks, payload.embeddings, strict=True):
+        points.append({"id": int(row.chunkId), "vector": vector, "payload": chunk_payload(row)})
+    count = await upsert_points(points)
+    return {"indexed": count}
 
 
 @app.post("/v1/index")

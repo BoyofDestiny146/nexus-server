@@ -14,12 +14,38 @@ import httpx
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .db import async_session_factory
 from .envelope import APIException
-from .knowledge import chunk_counts, resolve_device_knowledge_context, serialize_source
+from .knowledge import resolve_device_knowledge_context, serialize_source
 from .models import KnowledgeChunk, KnowledgeSource, KnowledgeTopic
 from .settings import settings
 
 log = logging.getLogger("knowledge")
+
+STAGE_EXTRACTING = "extracting"
+STAGE_CHUNKING = "chunking"
+STAGE_EMBEDDINGS = "generating_embeddings"
+STAGE_INDEXING = "indexing"
+STAGE_READY = "ready"
+
+_process_session_factory = None
+_in_flight: set[int] = set()
+
+
+def set_process_session_factory(factory) -> None:
+    """Tests point background jobs at the in-memory SQLite engine."""
+    global _process_session_factory
+    _process_session_factory = factory
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _percent(indexed: int, total: int) -> int | None:
+    if total <= 0:
+        return None
+    return int(round(100.0 * max(0, min(indexed, total)) / total))
 
 
 def retrieval_configured() -> bool:
@@ -97,92 +123,237 @@ async def replace_chunks(
     return rows
 
 
-async def process_source(db: AsyncSession, source: KnowledgeSource) -> KnowledgeSource:
-    """uploaded → processing → ready | failed. Does not pull embedding models."""
+def _index_payload(source: KnowledgeSource, row: KnowledgeChunk, topic: KnowledgeTopic | None) -> dict[str, Any]:
+    return {
+        "chunkId": row.id,
+        "text": row.text,
+        "knowledgeBaseId": source.knowledge_base_id,
+        "sourceId": source.id,
+        "topicId": source.topic_id,
+        "sourceType": source.source_type,
+        "filename": source.original_filename or source.name,
+        "enabled": bool(source.enabled),
+        "pageNumber": row.page_number,
+        "slideNumber": row.slide_number,
+        "revelTag": topic.revel_tag if topic is not None else None,
+        "revelAutoTrigger": bool(topic.revel_auto_trigger) if topic is not None else None,
+    }
+
+
+async def _save_progress(db: AsyncSession, source: KnowledgeSource, **fields: Any) -> KnowledgeSource:
+    for key, value in fields.items():
+        setattr(source, key, value)
+    await db.commit()
+    await db.refresh(source)
+    return source
+
+
+def mark_processing(source: KnowledgeSource) -> None:
+    """Reset progress fields and mark the row processing. Caller commits."""
     source.status = "processing"
+    source.processing_stage = STAGE_EXTRACTING
+    source.processing_progress = None
     source.error_message = None
+    source.extracted_char_count = None
+    source.chunk_count = 0
+    source.indexed_chunk_count = 0
+    source.processed_at = None
+    source.indexed_at = None
+
+
+async def process_source(db: AsyncSession, source: KnowledgeSource) -> KnowledgeSource:
+    """uploaded → processing (extract/chunk/embed/index) → ready | failed.
+
+    Progress fields are committed after each real stage so the Sources UI can
+    poll. Ready is set only after Qdrant upsert finishes (or 0-chunk sources).
+    """
+    mark_processing(source)
     await db.commit()
     await db.refresh(source)
 
     if not retrieval_configured():
-        source.status = "failed"
-        source.error_message = "Knowledge service not configured"
-        await db.commit()
-        await db.refresh(source)
-        return source
+        return await _save_progress(
+            db,
+            source,
+            status="failed",
+            processing_stage=STAGE_EXTRACTING,
+            error_message="Knowledge service not configured",
+            processed_at=_now(),
+        )
 
     try:
+        await db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.source_id == source.id))
+        await _save_progress(db, source, chunk_count=0, indexed_chunk_count=0)
+        try:
+            await ks_request("POST", "/v1/delete-source", {"sourceId": source.id})
+        except APIException:
+            log.warning("qdrant delete skipped at start source=%s", source.id)
+
         extracted = await ks_request(
             "POST",
             "/v1/extract",
-            {
-                "storagePath": source.storage_path,
-                "sourceType": source.source_type,
-            },
+            {"storagePath": source.storage_path, "sourceType": source.source_type},
         )
-        chunks = await replace_chunks(db, source, list(extracted.get("chunks") or []))
-        await db.commit()
-        await db.refresh(source)
-        if chunks:
-            topic = await _topic_for(db, source.topic_id)
+        units = list(extracted.get("units") or [])
+        char_count = extracted.get("characterCount")
+        if char_count is None:
+            char_count = sum(len((unit.get("text") or "")) for unit in units)
+        await _save_progress(
+            db,
+            source,
+            processing_stage=STAGE_CHUNKING,
+            extracted_char_count=int(char_count or 0),
+        )
+
+        chunked = await ks_request("POST", "/v1/chunk", {"units": units})
+        chunks = await replace_chunks(db, source, list(chunked.get("chunks") or []))
+        total = len(chunks)
+        await _save_progress(
+            db,
+            source,
+            chunk_count=total,
+            indexed_chunk_count=0,
+            processing_progress=None,
+        )
+
+        if total == 0:
+            return await _save_progress(
+                db,
+                source,
+                status="ready",
+                processing_stage=STAGE_READY,
+                processing_progress=100,
+                error_message=None,
+                indexed_at=_now(),
+                processed_at=_now(),
+            )
+
+        topic = await _topic_for(db, source.topic_id)
+        batch_size = max(1, int(settings.knowledge_index_batch_size or 8))
+        indexed = 0
+        for start in range(0, total, batch_size):
+            batch = chunks[start : start + batch_size]
+            await _save_progress(
+                db,
+                source,
+                processing_stage=STAGE_EMBEDDINGS,
+                processing_progress=_percent(indexed, total),
+                indexed_chunk_count=indexed,
+            )
+            embedded = await ks_request(
+                "POST",
+                "/v1/embed",
+                {"texts": [row.text for row in batch]},
+            )
+            vectors = list(embedded.get("embeddings") or [])
+            if len(vectors) != len(batch):
+                raise APIException(502, "embedding batch size mismatch")
+            await _save_progress(
+                db,
+                source,
+                processing_stage=STAGE_INDEXING,
+                processing_progress=_percent(indexed, total),
+                indexed_chunk_count=indexed,
+            )
             await ks_request(
                 "POST",
-                "/v1/index",
+                "/v1/upsert",
                 {
-                    "chunks": [
-                        {
-                            "chunkId": row.id,
-                            "text": row.text,
-                            "knowledgeBaseId": source.knowledge_base_id,
-                            "sourceId": source.id,
-                            "topicId": source.topic_id,
-                            "sourceType": source.source_type,
-                            "filename": source.original_filename or source.name,
-                            "enabled": bool(source.enabled),
-                            "pageNumber": row.page_number,
-                            "slideNumber": row.slide_number,
-                            "revelTag": topic.revel_tag if topic is not None else None,
-                            "revelAutoTrigger": bool(topic.revel_auto_trigger) if topic is not None else None,
-                        }
-                        for row in chunks
-                    ]
+                    "chunks": [_index_payload(source, row, topic) for row in batch],
+                    "embeddings": vectors,
                 },
             )
-        else:
-            try:
-                await ks_request("POST", "/v1/delete-source", {"sourceId": source.id})
-            except APIException:
-                log.warning("qdrant delete skipped for empty source %s", source.id)
-        source.status = "ready"
-        source.error_message = None
-        source.indexed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        await db.commit()
-        await db.refresh(source)
+            indexed += len(batch)
+            await _save_progress(
+                db,
+                source,
+                indexed_chunk_count=indexed,
+                processing_progress=_percent(indexed, total),
+            )
+
+        if indexed != total:
+            raise APIException(502, f"indexed {indexed} of {total} chunks")
+
+        source = await _save_progress(
+            db,
+            source,
+            status="ready",
+            processing_stage=STAGE_READY,
+            processing_progress=100,
+            indexed_chunk_count=indexed,
+            error_message=None,
+            indexed_at=_now(),
+            processed_at=_now(),
+        )
         log.info(
             "knowledge processed source=%s chunks=%s status=ready revel_execute=false",
             source.id,
-            len(chunks),
+            total,
         )
         return source
     except APIException as exc:
-        source.status = "failed"
-        source.error_message = (exc.msg or "processing failed")[:512]
-        await db.commit()
-        await db.refresh(source)
-        return source
+        return await _save_progress(
+            db,
+            source,
+            status="failed",
+            error_message=(exc.msg or "processing failed")[:512],
+            processed_at=_now(),
+        )
     except Exception as exc:
         log.exception("knowledge processing failed source=%s", source.id)
-        source.status = "failed"
-        source.error_message = str(exc)[:512]
-        await db.commit()
-        await db.refresh(source)
+        return await _save_progress(
+            db,
+            source,
+            status="failed",
+            error_message=str(exc)[:512],
+            processed_at=_now(),
+        )
+
+
+async def process_source_job(source_id: int) -> None:
+    factory = _process_session_factory or async_session_factory
+    try:
+        async with factory() as db:
+            row = (
+                await db.execute(select(KnowledgeSource).where(KnowledgeSource.id == source_id))
+            ).scalar_one_or_none()
+            if row is None:
+                return
+            await process_source(db, row)
+    except Exception:
+        log.exception("knowledge background job failed source=%s", source_id)
+    finally:
+        _in_flight.discard(source_id)
+
+
+async def queue_source_processing(
+    db: AsyncSession,
+    source: KnowledgeSource,
+    background: Any | None = None,
+    *,
+    force: bool = False,
+) -> KnowledgeSource:
+    """Commit processing state, then run in a background task when possible."""
+    if source.id in _in_flight:
         return source
-
-
-async def maybe_process_source(db: AsyncSession, source: KnowledgeSource) -> KnowledgeSource:
-    if not retrieval_configured():
+    if not retrieval_configured() and not force:
+        return source
+    mark_processing(source)
+    await db.commit()
+    await db.refresh(source)
+    if background is not None and retrieval_configured():
+        _in_flight.add(source.id)
+        background.add_task(process_source_job, source.id)
         return source
     return await process_source(db, source)
+
+
+async def maybe_process_source(
+    db: AsyncSession,
+    source: KnowledgeSource,
+    background: Any | None = None,
+) -> KnowledgeSource:
+    return await queue_source_processing(db, source, background, force=False)
 
 
 async def sync_source_enabled(source_id: int, enabled: bool) -> None:
@@ -348,5 +519,4 @@ async def serialize_source_detail(
 ) -> dict[str, Any]:
     if topic is None and source.topic_id:
         topic = await _topic_for(db, source.topic_id)
-    counts = await chunk_counts(db, [source.id])
-    return serialize_source(source, topic=topic, chunk_count=counts.get(source.id, 0))
+    return serialize_source(source, topic=topic)

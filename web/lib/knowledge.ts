@@ -118,6 +118,77 @@ export function sourceNeedsFile(type: KnowledgeSourceType): boolean {
   return type !== "text";
 }
 
+export const SOURCE_POLL_MS = 2000;
+
+export const PROCESSING_STAGE_LABELS: Record<string, string> = {
+  uploaded: "Uploaded",
+  extracting: "Extracting",
+  chunking: "Chunking",
+  generating_embeddings: "Generating Embeddings",
+  indexing: "Indexing",
+  ready: "Ready",
+};
+
+export function shouldPollSourceProgress(
+  sources: Array<{ status?: string | null }>,
+): boolean {
+  return sources.some((source) => (source.status || "").toLowerCase() === "processing");
+}
+
+export function processingStageLabel(
+  stage: string | null | undefined,
+  status?: string | null,
+): string {
+  const normalized = (stage || "").toLowerCase();
+  if (normalized && PROCESSING_STAGE_LABELS[normalized]) {
+    return PROCESSING_STAGE_LABELS[normalized];
+  }
+  const fallback = (status || "").toLowerCase();
+  if (fallback === "uploaded") return "Uploaded";
+  if (fallback === "ready") return "Ready";
+  if (fallback === "failed") return "Failed";
+  if (fallback === "processing") return "Processing";
+  return stage ? stage.replace(/_/g, " ") : "—";
+}
+
+export function sourceProgressHeadline(source: {
+  enabled: boolean;
+  status: string;
+  processingStage?: string | null;
+}): string {
+  const status = (source.status || "").toLowerCase();
+  if (status === "processing") {
+    return `PROCESSING — ${processingStageLabel(source.processingStage, status)}`;
+  }
+  if (status === "ready") return "Ready";
+  if (status === "failed") return "Failed";
+  if (status === "uploaded") return "Uploaded";
+  return sourceStatusLabel(source);
+}
+
+export function sourceProgressPercent(
+  source: { processingProgress?: number | null },
+): number | null {
+  const value = source.processingProgress;
+  if (value == null || !Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+export function sourceChunkProgressLabel(source: {
+  chunkCount?: number | null;
+  indexedChunkCount?: number | null;
+}): string | null {
+  const total = source.chunkCount ?? 0;
+  const indexed = source.indexedChunkCount ?? 0;
+  if (total <= 0 && indexed <= 0) return null;
+  return `${indexed} / ${total} chunks indexed`;
+}
+
+export function formatExtractedChars(count: number | null | undefined): string {
+  if (count == null || !Number.isFinite(count)) return "—";
+  return Math.trunc(count).toLocaleString("en-US");
+}
+
 /** Client-side id from the browser URL. Static export only prerenders
  *  `/knowledge/_/`; Caddy serves that HTML for `/careconnect/knowledge/{id}/`
  *  and this parser reads the real id (same pattern as Patient detail). */

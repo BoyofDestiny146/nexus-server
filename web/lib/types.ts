@@ -284,7 +284,12 @@ export interface KnowledgeSource {
   hasFile: boolean;
   storagePath?: string | null;
   chunkCount?: number;
+  indexedChunkCount?: number;
+  extractedCharCount?: number | null;
+  processingStage?: string | null;
+  processingProgress?: number | null;
   indexedAt?: string | null;
+  processedAt?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }
