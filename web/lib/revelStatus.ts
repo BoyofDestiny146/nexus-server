@@ -57,3 +57,26 @@ export function revelBadgeLabel(status: Pick<RevelStatus, "header"> | null | und
 export function revelYesNo(value: boolean | null | undefined): "YES" | "NO" {
   return value ? "YES" : "NO";
 }
+
+export type RevelDiscussionContext = {
+  tag: string;
+  autoTrigger: boolean;
+  autoTriggerLabel: "Enabled" | "Manual";
+  display: string;
+};
+
+/** Topic metadata for the current discussion. Null when no revel_tag is assigned. */
+export function revelDiscussionContext(
+  status: Pick<RevelStatus, "tag" | "autoTrigger" | "device"> | null | undefined,
+): RevelDiscussionContext | null {
+  const tag = (status?.tag || "").trim();
+  if (!tag) return null;
+  const display = (status?.device?.name || "").trim();
+  const autoTrigger = status?.autoTrigger === true;
+  return {
+    tag,
+    autoTrigger,
+    autoTriggerLabel: autoTrigger ? "Enabled" : "Manual",
+    display,
+  };
+}

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   revelBadgeLabel,
+  revelDiscussionContext,
   revelStatusTone,
   revelYesNo,
   type RevelStatus,
@@ -72,4 +73,59 @@ test("frontend cannot invent a success header", () => {
 test("missing header is unavailable, not OFF", () => {
   assert.equal(revelBadgeLabel({ header: "" }), "Revel status unavailable");
   assert.equal(revelBadgeLabel(null), "Revel status unavailable");
+});
+
+test("tag present -> REVEL CONTEXT with auto trigger and mapped display", () => {
+  const ctx = revelDiscussionContext(
+    status({
+      tag: "care_overview",
+      autoTrigger: true,
+      device: { id: "dev-1", name: "Lobby", status: "online" },
+    }),
+  );
+  assert.ok(ctx);
+  assert.equal(ctx.tag, "care_overview");
+  assert.equal(ctx.autoTrigger, true);
+  assert.equal(ctx.autoTriggerLabel, "Enabled");
+  assert.equal(ctx.display, "Lobby");
+});
+
+test("tag absent -> no REVEL CONTEXT card", () => {
+  assert.equal(revelDiscussionContext(status({ tag: null, autoTrigger: true })), null);
+  assert.equal(revelDiscussionContext(status({ tag: "  ", device: { id: "x", name: "Lobby", status: "online" } })), null);
+  assert.equal(revelDiscussionContext(null), null);
+});
+
+test("auto trigger false is Manual, not Enabled", () => {
+  const ctx = revelDiscussionContext(status({ tag: "care_overview", autoTrigger: false }));
+  assert.ok(ctx);
+  assert.equal(ctx.autoTriggerLabel, "Manual");
+  assert.equal(ctx.autoTrigger, false);
+});
+
+test("mapped display is shown only when a name exists; never invent Media1", () => {
+  const named = revelDiscussionContext(
+    status({ tag: "care_overview", device: { id: "dev-1", name: "Lobby", status: "offline" } }),
+  );
+  assert.equal(named?.display, "Lobby");
+  const unnamed = revelDiscussionContext(
+    status({ tag: "care_overview", device: { id: "dev-1", name: "  ", status: "unknown" } }),
+  );
+  assert.equal(unnamed?.display, "");
+  const missing = revelDiscussionContext(status({ tag: "care_overview", device: null, lastEvent: null }));
+  assert.equal(missing?.display, "");
+  assert.notEqual(missing?.display, "Media1");
+});
+
+test("context is independent of whether a Revel display event exists", () => {
+  const ctx = revelDiscussionContext(
+    status({
+      tag: "care_overview",
+      autoTrigger: true,
+      lastEvent: null,
+      device: { id: "dev-1", name: "Lobby", status: "online" },
+    }),
+  );
+  assert.ok(ctx);
+  assert.equal(ctx.tag, "care_overview");
 });

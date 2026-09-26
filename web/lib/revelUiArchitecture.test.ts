@@ -26,6 +26,10 @@ const eventCard = readFileSync(
   join(here, "../components/RevelDisplayEvent.tsx"),
   "utf8",
 );
+const contextCard = readFileSync(
+  join(here, "../components/RevelContextCard.tsx"),
+  "utf8",
+);
 
 test("clicking Revel opens the integration drawer, not a page navigation", () => {
   assert.match(integrations, /testId="revel-connection-row"/);
@@ -85,6 +89,21 @@ test("desktop layout remains approximately 26 \/ 48 \/ 26", () => {
   assert.match(detail, /PATIENT_DETAIL_LEFT/);
   assert.match(detail, /PATIENT_DETAIL_CENTER/);
   assert.match(detail, /PATIENT_DETAIL_RIGHT/);
+});
+
+test("REVEL CONTEXT appears from topic tag and stays separate from DISPLAY EVENT", () => {
+  assert.match(detail, /revelDiscussionContext/);
+  assert.match(detail, /RevelContextCard/);
+  assert.match(detail, /data-testid="revel-context-item"/);
+  assert.match(detail, /gi === 0 && revelContext/);
+  assert.match(contextCard, /data-testid="revel-context-card"/);
+  assert.match(contextCard, /Revel context/);
+  assert.match(contextCard, /Auto Trigger/);
+  assert.doesNotMatch(contextCard, /Display event/);
+  assert.doesNotMatch(contextCard, /DRY RUN/);
+  assert.doesNotMatch(eventCard, /Revel context/);
+  assert.match(detail, /RevelDisplayEvent/);
+  assert.doesNotMatch(contextCard, /"caregiver"/);
 });
 
 test("REVEL_EXECUTE_ENABLED remains false in env example and live test has no write handler", () => {

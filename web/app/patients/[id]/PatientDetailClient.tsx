@@ -21,6 +21,7 @@ import {
   PATIENT_DETAIL_RIGHT,
   PATIENT_DETAIL_SECTION,
 } from "@/lib/patientDetailLayout";
+import { revelDiscussionContext, type RevelStatus } from "@/lib/revelStatus";
 import { useLiveChat } from "@/lib/useLiveChat";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -31,6 +32,7 @@ import { Modal } from "@/components/Modal";
 import { ToastProvider, useToast } from "@/components/Toast";
 import { ClientIntegrations } from "@/components/ClientIntegrations";
 import { EditClientWorkspace } from "@/components/EditClientWorkspace";
+import { RevelContextCard } from "@/components/RevelContextCard";
 import { RevelDisplayEvent } from "@/components/RevelDisplayEvent";
 import { RevelStatusBadge } from "@/components/RevelStatusBadge";
 
@@ -109,6 +111,7 @@ function PatientDetailView({ id }: { id: string }) {
   const [editOpen, setEditOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [knowledgeTick, setKnowledgeTick] = useState(0);
+  const [revelStatus, setRevelStatus] = useState<RevelStatus | null>(null);
 
   const live = useLiveChat(id);
 
@@ -318,6 +321,8 @@ function PatientDetailView({ id }: { id: string }) {
     return out;
   }, [messages]);
 
+  const revelContext = useMemo(() => revelDiscussionContext(revelStatus), [revelStatus]);
+
   if (agentError) {
     return (
       <EmptyState
@@ -350,7 +355,7 @@ function PatientDetailView({ id }: { id: string }) {
             <div className="flex items-center gap-2.5 mb-2 min-w-0">
               <span className="kicker">Client detail</span>
               <LiveBadge status={live.status} />
-              <RevelStatusBadge agentId={id} refreshKey={knowledgeTick} />
+              <RevelStatusBadge agentId={id} refreshKey={knowledgeTick} onStatus={setRevelStatus} />
             </div>
             <h1 className="display-1 text-slate-deep leading-[1.05]">{agent.agentName}</h1>
             <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[12px] text-slate-muted">
@@ -525,11 +530,22 @@ function PatientDetailView({ id }: { id: string }) {
           )}
 
           {!loadingMsgs && grouped.length === 0 && (
-            <EmptyState
-              icon={MessageCircle}
-              title="No messages in this session"
-              body="When the client speaks to the Watcher, the conversation will stream in here."
-            />
+            <>
+              {revelContext ? (
+                <div className="mb-7 max-w-2xl mx-auto">
+                  <ol className="space-y-4">
+                    <li className="flex justify-center" data-testid="revel-context-item">
+                      <RevelContextCard context={revelContext} />
+                    </li>
+                  </ol>
+                </div>
+              ) : null}
+              <EmptyState
+                icon={MessageCircle}
+                title="No messages in this session"
+                body="When the client speaks to the Watcher, the conversation will stream in here."
+              />
+            </>
           )}
 
           {!loadingMsgs && grouped.map((group, gi) => (
@@ -539,6 +555,11 @@ function PatientDetailView({ id }: { id: string }) {
                 <div className="flex-1 h-px grid-rule" />
               </div>
               <ol className="space-y-4">
+                {gi === 0 && revelContext ? (
+                  <li className="flex justify-center" data-testid="revel-context-item">
+                    <RevelContextCard context={revelContext} />
+                  </li>
+                ) : null}
                 {group.items.map((m) => {
                   const revel = revelTimelineFromMessage(m);
                   const gcal = parseGcalTimeline(m.content);

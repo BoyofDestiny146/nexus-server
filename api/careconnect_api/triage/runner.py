@@ -38,10 +38,12 @@ from ..chat_events import (
     CHAT_TYPE_CAREGIVER,
     CHAT_TYPE_SYSTEM,
     revel_assessment_context,
+    revel_topic_assessment_context,
     system_dialogue_line,
 )
 from ..db import async_session_factory
 from ..models import AiAgent, AiAgentChatHistory, AiMedicalAssessment
+from ..revel_status import discussion_topic_fields, revel_status_for_agent
 from ..settings import settings
 
 
@@ -104,6 +106,21 @@ def _render_dialogue(messages: list[AiAgentChatHistory]) -> str:
             continue
         parts.append(f"{role}: {text}\n")
     return "".join(parts)
+
+
+def compose_assessment_dialogue(
+    messages: list[AiAgentChatHistory],
+    *,
+    topic_context: str | None = None,
+) -> str:
+    """REVEL_CONTEXT metadata first, then chronological conversation/events."""
+    body = _render_dialogue(messages)
+    block = (topic_context or "").strip()
+    if not block:
+        return body
+    if not body:
+        return block + "\n"
+    return f"{block}\n{body}"
 
 
 def _coerce_string_list(o: Any) -> list[str]:
@@ -255,7 +272,19 @@ async def run_for_agent(
         result = TriageResult("low", 0.0, [], [])
         source_count = 0
     else:
-        dialogue = _render_dialogue(rows)
+        topic_block = None
+        try:
+            status = await revel_status_for_agent(db, agent_id)
+            fields = discussion_topic_fields(status)
+            if fields:
+                topic_block = revel_topic_assessment_context(
+                    tag=fields.get("tag"),
+                    auto_trigger=bool(fields.get("auto_trigger")),
+                    display=fields.get("display"),
+                )
+        except Exception:
+            log.debug("triage: revel topic context skipped agent=%s", agent_id, exc_info=True)
+        dialogue = compose_assessment_dialogue(rows, topic_context=topic_block)
         try:
             result = await _invoke_llm(dialogue)
         except Exception as exc:  # noqa: BLE001 — every LLM failure becomes a parse-error row

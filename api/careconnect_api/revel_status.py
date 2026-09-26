@@ -328,6 +328,22 @@ async def revel_status_for_agent(
     return _strip_secrets(payload)
 
 
+def discussion_topic_fields(status: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Public discussion metadata only. No device IDs, control IDs, or secrets."""
+    if not isinstance(status, dict):
+        return None
+    tag = str(status.get("tag") or "").strip()
+    if not tag:
+        return None
+    device = status.get("device") if isinstance(status.get("device"), dict) else {}
+    display = str(device.get("name") or "").strip()
+    return {
+        "tag": tag[:128],
+        "auto_trigger": bool(status.get("autoTrigger")),
+        "display": display[:80] if display else None,
+    }
+
+
 def result_for_attempt(*, executed: bool, reason: str | None) -> str:
     if executed:
         return "sent"

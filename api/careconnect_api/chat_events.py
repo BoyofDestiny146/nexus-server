@@ -302,6 +302,27 @@ def _sanitize_context_value(raw: Any, *, max_len: int = 80) -> str:
     return text[:max_len]
 
 
+def revel_topic_assessment_context(
+    *,
+    tag: str | None,
+    auto_trigger: bool | None = False,
+    display: str | None = None,
+) -> str | None:
+    """Discussion metadata for analysis. Not a display event and not an instruction."""
+    safe_tag = _sanitize_context_value(tag, max_len=64)
+    if not safe_tag:
+        return None
+    lines = [
+        "REVEL_CONTEXT",
+        f"tag: {safe_tag}",
+        f"auto_trigger: {'true' if auto_trigger else 'false'}",
+    ]
+    safe_display = _sanitize_context_value(display, max_len=80)
+    if safe_display:
+        lines.append(f"display: {safe_display}")
+    return "\n".join(lines)
+
+
 def revel_display_name(parsed: dict[str, Any]) -> str:
     """Human display id: mapped player name, else normalized screen. Never invented."""
     name = _sanitize_context_value(
