@@ -343,7 +343,16 @@ async def test_status_requires_auth_and_internal_matches(
     _assert_clean(body)
     assert _SECRET not in caplog.text
     devices = await client.get("/api/internal/revel/devices", headers=_internal())
-    assert devices.json()["code"] in (0, 503)
+    assert devices.json()["code"] == 0
+    data = devices.json()["data"]
+    assert data["ok"] in (True, False)
+    if data["ok"] is False:
+        assert data.get("devices") == []
+        assert data.get("reason") in {
+            "revel_not_configured",
+            "revel_auth_failed",
+            "revel_unavailable",
+        }
 
 
 @pytest.mark.asyncio

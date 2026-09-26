@@ -3,21 +3,23 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { apiGet, ApiError } from "@/lib/api";
-import { classNames, longTime } from "@/lib/format";
+import { classNames } from "@/lib/format";
 import {
   revelBadgeLabel,
   revelStatusTone,
-  revelYesNo,
   type RevelStatus,
 } from "@/lib/revelStatus";
 import { Modal } from "@/components/Modal";
+import { RevelDiagnosticsList } from "@/components/RevelDiagnosticsList";
 
 export function RevelStatusBadge({
   agentId,
   refreshKey = 0,
+  onStatus,
 }: {
   agentId: string;
   refreshKey?: number;
+  onStatus?: (status: RevelStatus | null) => void;
 }) {
   const [status, setStatus] = useState<RevelStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,14 +30,16 @@ export function RevelStatusBadge({
     try {
       const data = await apiGet<RevelStatus>(`/agent/${agentId}/revel/status`);
       setStatus(data);
+      onStatus?.(data);
       setError(null);
     } catch (e) {
       setStatus(null);
+      onStatus?.(null);
       setError(e instanceof ApiError ? e.message : "Could not load Revel status.");
     } finally {
       setLoading(false);
     }
-  }, [agentId]);
+  }, [agentId, onStatus]);
 
   useEffect(() => {
     setLoading(true);
@@ -48,11 +52,11 @@ export function RevelStatusBadge({
   }, [open, load]);
 
   const tone = revelStatusTone(status?.mode);
-    const label = loading
-      ? "Revel…"
-      : error
-        ? "Revel status unavailable"
-        : revelBadgeLabel(status);
+  const label = loading
+    ? "Revel…"
+    : error
+      ? "Revel status unavailable"
+      : revelBadgeLabel(status);
   const dot =
     tone === "enabled" ? "bg-teal" : tone === "manual" ? "bg-risk-moderate" : "bg-slate-line";
   const text =
@@ -90,30 +94,7 @@ export function RevelStatusBadge({
         centered
       >
         {status ? (
-          <dl className="space-y-2 text-[13px] text-slate-deep">
-            <Row label="Enabled" value={revelYesNo(status.enabled)} />
-            <Row label="Auto Trigger" value={revelYesNo(status.autoTrigger)} />
-            <Row label="Revel Tag" value={status.tag || "—"} mono />
-            <Row label="Device Key" value={status.deviceKey || "—"} mono />
-            <Row label="Revel Player" value={status.device?.name || "—"} />
-            <Row label="Player Status" value={status.device?.status || "unknown"} />
-            <div className="pt-2 mt-2 border-t border-slate-line/70">
-              <div className="kicker mb-2">Last Revel Event</div>
-              {status.lastEvent ? (
-                <div className="space-y-2">
-                  <Row label="Intent" value={status.lastEvent.intent || "—"} />
-                  <Row label="Screen" value={status.lastEvent.screen || "—"} />
-                  <Row label="Message" value={status.lastEvent.summary || "—"} />
-                  <Row label="Sent At" value={longTime(status.lastEvent.createdAt) || "—"} />
-                  <Row label="Result" value={(status.lastEvent.result || "—").toString().toUpperCase()} />
-                  <Row label="Reason" value={status.lastEvent.reason || "—"} />
-                  <Row label="Error" value={status.lastEvent.error || "—"} />
-                </div>
-              ) : (
-                <p className="text-slate-muted">No Revel events recorded for this discussion yet.</p>
-              )}
-            </div>
-          </dl>
+          <RevelDiagnosticsList status={status} />
         ) : (
           <p className="text-[13px] text-slate-muted">
             {error || "Revel status is not available for this discussion."}
@@ -121,22 +102,5 @@ export function RevelStatusBadge({
         )}
       </Modal>
     </>
-  );
-}
-
-function Row({
-  label, value, mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <dt className="text-slate-muted shrink-0">{label}</dt>
-      <dd className={classNames("text-right min-w-0 break-all", mono && "font-mono text-[12px]")}>
-        {value}
-      </dd>
-    </div>
   );
 }

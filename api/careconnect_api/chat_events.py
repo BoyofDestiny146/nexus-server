@@ -25,6 +25,7 @@ from .gcal_ical import CalendarOccurrence, spoken_text
 from .models import AiAgentChatHistory
 from .pubsub import publish_chat_turn
 from .revel_client import _safe_revel_error
+from .revel_errors import normalize_reason, reason_label
 
 
 log = logging.getLogger("chat_events")
@@ -167,6 +168,7 @@ def encode_revel_timeline(
 ) -> str:
     """Pack a display-action system row. No API keys, hosts, or GraphQL."""
     allowed_result = normalize_revel_result(result)
+    reason_code = (normalize_reason(reason) or reason or "")[:80]
     header = {
         "provider": provider or SOURCE_REVEL,
         "event_type": (event_type or REVEL_EVENT_TYPE)[:32],
@@ -180,7 +182,8 @@ def encode_revel_timeline(
         "control_table_id": (control_table_id or "")[:128],
         "control_row_id": (control_row_id or "")[:128],
         "result": allowed_result,
-        "reason": (reason or "")[:80],
+        "reason": reason_code,
+        "reason_label": (reason_label(reason_code) or "")[:80],
         "requested": (requested or "")[:180],
         "summary": (summary or requested or "")[:180],
         "error": _safe_revel_error(error or "")[:180],
@@ -239,6 +242,7 @@ def parse_revel_timeline(content: str | None) -> dict[str, Any] | None:
         "control_row_id": str(header.get("control_row_id") or ""),
         "result": normalize_revel_result(str(header.get("result") or "")),
         "reason": str(header.get("reason") or ""),
+        "reason_label": str(header.get("reason_label") or ""),
         "requested": str(header.get("requested") or ""),
         "summary": str(header.get("summary") or header.get("requested") or ""),
         "error": str(header.get("error") or ""),

@@ -142,7 +142,8 @@ When the flag is false the display path still:
 4. Binds columns to exact live `column.key` values (labels are never keys)
 5. Selects the unique row where `data[device_key] == cc_revel_player_map.device_key`
 6. Builds `PUT /datatables/{tableId}/rows/{rowId}` `{ "data": { ...allowlisted keys } }`
-7. Records `result=skipped`, `reason=Revel execution disabled`
+7. Records `result=skipped`, `reason=revel_write_disabled`
+   (timeline label: `Revel execution disabled`)
 8. Does **not** issue the PUT, GraphQL mutation, or `sendDeviceCommand`
 
 REST write (documented Swagger, used only when the flag is true):
@@ -245,3 +246,32 @@ Reason: Revel execution disabled
 ```
 
 `SENT` is recorded only after the backend confirms a 2xx Revel PUT.
+
+## Activate one real Revel player (after Developer API auth works)
+
+Keep production defaults until this checklist is done:
+
+- `REVEL_EXECUTE_ENABLED=false`
+- `REVEL_CONTROL_TABLE_ID=` (empty)
+- `REVEL_DEFAULT_DEVICE_ID=` (empty)
+
+Then, on Nexus, with a working Developer API key in `cc-secrets/revel-api-key`:
+
+1. Apply `020` + `021` if not already applied (`./deploy/scripts/apply-revel-player-map.sh`).
+2. `GET /api/internal/revel/devices` and copy **one** operator-selected immutable `id`. Do not pick the first device or a name.
+3. `PUT /api/agent/{agentId}/integrations/revel` with that `deviceId` and discovered `deviceName`.
+4. `GET /api/internal/revel/datatables`, choose the control table, set `REVEL_CONTROL_TABLE_ID` on the API container, recreate **api** only.
+5. `GET /api/internal/revel/control` and confirm live `column.key` values plus exactly one row whose `device_key` matches the stored mapping.
+6. Dry-run with `REVEL_EXECUTE_ENABLED` still false:
+
+```sh
+POST /api/internal/revel/display/test
+{"agentId":"<AGENT_ID>","title":"Betty Room","message":"Welcome home."}
+```
+
+Expect `result=skipped`, `reason=revel_write_disabled`, and zero PUTs.
+
+7. Flip `REVEL_EXECUTE_ENABLED=true`, recreate **api**, send the same test POST once, confirm `result=sent`.
+8. Set `REVEL_EXECUTE_ENABLED=false` immediately and recreate **api**.
+
+Do not enable refresh, reboot, or `sendDeviceCommand`. Calendar and sensor hooks (`request_appointment_reminder`, `request_sensor_alert`) stay unwired until a later phase.

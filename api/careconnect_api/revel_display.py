@@ -18,6 +18,15 @@ from .envelope import APIException
 from .models import ClientIntegration
 from .revel_client import RevelMutationDisabled, _safe_revel_error
 from .revel_config import load_meta
+from .revel_errors import (
+    AMBIGUOUS_CONTROL_ROW,
+    CONTROL_ROW_NOT_FOUND,
+    CONTROL_TABLE_NOT_CONFIGURED,
+    MISSING_CONTROL_COLUMNS,
+    REVEL_WRITE_DISABLED,
+    UNMAPPED_PLAYER,
+    classify_api_exception,
+)
 from .revel_player_map import cache_control_row, resolve_player_map
 from .revel_status import result_for_attempt
 from .revel_write import (
@@ -94,7 +103,7 @@ EXPIRES_MAX_DAYS = 7
 ALLOWED_SOURCES = frozenset(
     {"calendar", "knowledge", "voice", "internal", "caregiver", "sensor"}
 )
-REASON_EXECUTE_DISABLED = "Revel execution disabled"
+REASON_EXECUTE_DISABLED = REVEL_WRITE_DISABLED
 
 _FORBIDDEN_REQUEST_KEYS = frozenset(
     {
@@ -349,9 +358,9 @@ async def apply_display_state(
             tag=tag,
             requested=heading or intent,
             executed=False,
-            reason="unmapped_player",
+            reason=UNMAPPED_PLAYER,
         )
-        return _outcome(result="failed", reason="unmapped_player", state=None)
+        return _outcome(result="failed", reason=UNMAPPED_PLAYER, state=None)
 
     state = build_display_state(
         device_key=mapped.device_key,
@@ -379,17 +388,22 @@ async def apply_display_state(
             tag=tag,
             requested=state["title"] or intent,
             executed=False,
-            reason="control_table_not_configured",
+            reason=CONTROL_TABLE_NOT_CONFIGURED,
         )
         return _outcome(
             result="failed",
-            reason="control_table_not_configured",
+            reason=CONTROL_TABLE_NOT_CONFIGURED,
             state=state,
         )
 
     try:
         fetched = await fetch_control_table()
     except APIException as exc:
+        why = classify_api_exception(exc)
+        stored_row = (mapped.control_row_id or None) if getattr(mapped, "control_row_id", None) else None
+        stored_table = (
+            (mapped.control_table_id or None) if getattr(mapped, "control_table_id", None) else table_id
+        )
         await _record(
             db,
             agent_id=agent_id,
@@ -401,11 +415,18 @@ async def apply_display_state(
             tag=tag,
             requested=state["title"] or intent,
             executed=False,
-            reason="revel_failed",
+            reason=why,
             error=str(exc.msg),
-            control_table_id=table_id,
+            control_table_id=stored_table,
+            control_row_id=stored_row,
         )
-        return _outcome(result="failed", reason="revel_failed", state=state, table_id=table_id)
+        return _outcome(
+            result="failed",
+            reason=why,
+            state=state,
+            table_id=stored_table,
+            row_id=stored_row,
+        )
 
     table = fetched.get("table") if isinstance(fetched.get("table"), dict) else {}
     binding = bind_column_keys(table.get("columns") if isinstance(table, dict) else [])
@@ -422,12 +443,12 @@ async def apply_display_state(
             tag=tag,
             requested=state["title"] or intent,
             executed=False,
-            reason="missing_control_columns",
+            reason=MISSING_CONTROL_COLUMNS,
             control_table_id=table_id,
         )
         return _outcome(
             result="failed",
-            reason="missing_control_columns",
+            reason=MISSING_CONTROL_COLUMNS,
             state=state,
             table_id=table_id,
             missing=missing,
@@ -440,7 +461,9 @@ async def apply_display_state(
         device_key_column=device_col,
     )
     if not picked.get("ok"):
-        reason = str(picked.get("reason") or "control_row_not_found")
+        reason = str(picked.get("reason") or CONTROL_ROW_NOT_FOUND)
+        if reason not in {CONTROL_ROW_NOT_FOUND, AMBIGUOUS_CONTROL_ROW}:
+            reason = CONTROL_ROW_NOT_FOUND
         await _record(
             db,
             agent_id=agent_id,
@@ -524,14 +547,7 @@ async def apply_display_state(
             row_id=row_id,
         )
     except APIException as exc:
-        why = "revel_failed"
-        data = exc.data if isinstance(exc.data, dict) else {}
-        if data.get("reason") == "timeout":
-            why = "timeout"
-        elif data.get("reason") == "malformed":
-            why = "malformed_response"
-        elif data.get("reason") == "http_error":
-            why = "http_error"
+        why = classify_api_exception(exc)
         await _record(
             db,
             agent_id=agent_id,

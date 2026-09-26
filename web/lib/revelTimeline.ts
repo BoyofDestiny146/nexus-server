@@ -17,6 +17,7 @@ export type RevelTimeline = {
   controlRowId: string;
   result: "sent" | "failed" | "skipped" | "disabled";
   reason: string;
+  reasonLabel: string;
   requested: string;
   summary: string;
   error: string;
@@ -57,6 +58,7 @@ export function parseRevelTimeline(content: string | null | undefined): RevelTim
       controlRowId: String(header.control_row_id || ""),
       result: normalizeResult(String(header.result || "")),
       reason: String(header.reason || ""),
+      reasonLabel: String(header.reason_label || ""),
       requested: String(header.requested || ""),
       summary: String(header.summary || header.requested || ""),
       error: String(header.error || ""),
@@ -84,7 +86,10 @@ export function formatRevelEventLines(event: RevelTimeline): string[] {
   if (event.tag) lines.push(`Tag: ${event.tag}`);
   if (event.deviceKey) lines.push(`Device Key: ${event.deviceKey}`);
   lines.push(`Result: ${event.result.toUpperCase()}`);
-  if (event.reason) lines.push(`Reason: ${event.reason}`);
+  const reasonText = event.reasonLabel || event.reason;
+  if (reasonText) lines.push(`Reason: ${reasonText}`);
+  if (event.controlTableId) lines.push(`Control Table: ${event.controlTableId}`);
+  if (event.controlRowId) lines.push(`Control Row: ${event.controlRowId}`);
   if (event.error) lines.push(`Error: ${event.error}`);
   if (event.deliveredAt) lines.push(`Time: ${event.deliveredAt}`);
   return lines;

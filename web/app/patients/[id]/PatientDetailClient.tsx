@@ -15,6 +15,13 @@ import { deviceSetupUrl } from "@/lib/serverConfig";
 import { classNames, dayLabel, relativeTime, shortTime } from "@/lib/format";
 import { parseGcalTimeline, isSystemChat } from "@/lib/calendarTimeline";
 import { formatRevelEventLines, revelTimelineFromMessage } from "@/lib/revelTimeline";
+import {
+  PATIENT_DETAIL_CENTER,
+  PATIENT_DETAIL_LEFT,
+  PATIENT_DETAIL_RIGHT,
+  PATIENT_DETAIL_SECTION,
+} from "@/lib/patientDetailLayout";
+import type { RevelStatus } from "@/lib/revelStatus";
 import { useLiveChat } from "@/lib/useLiveChat";
 import { AppShell } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -25,6 +32,7 @@ import { Modal } from "@/components/Modal";
 import { ToastProvider, useToast } from "@/components/Toast";
 import { ClientIntegrations } from "@/components/ClientIntegrations";
 import { EditClientWorkspace } from "@/components/EditClientWorkspace";
+import { RevelDiagnosticsList } from "@/components/RevelDiagnosticsList";
 import { RevelStatusBadge } from "@/components/RevelStatusBadge";
 
 const WATCHER_ONLINE_MS = 5 * 60_000;
@@ -102,6 +110,7 @@ function PatientDetailView({ id }: { id: string }) {
   const [editOpen, setEditOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [knowledgeTick, setKnowledgeTick] = useState(0);
+  const [revelStatus, setRevelStatus] = useState<RevelStatus | null>(null);
 
   const live = useLiveChat(id);
 
@@ -343,7 +352,7 @@ function PatientDetailView({ id }: { id: string }) {
             <div className="flex items-center gap-2.5 mb-2 min-w-0">
               <span className="kicker">Client detail</span>
               <LiveBadge status={live.status} />
-              <RevelStatusBadge agentId={id} refreshKey={knowledgeTick} />
+              <RevelStatusBadge agentId={id} refreshKey={knowledgeTick} onStatus={setRevelStatus} />
             </div>
             <h1 className="display-1 text-slate-deep leading-[1.05]">{agent.agentName}</h1>
             <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[12px] text-slate-muted">
@@ -372,10 +381,9 @@ function PatientDetailView({ id }: { id: string }) {
         </div>
       </header>
 
-      {/* Three-pane layout: controls | conversation | assessment */}
-      <section className="flex flex-col xl:flex-row min-h-[calc(100vh-11.5rem)] xl:h-[calc(100vh-11.5rem)] xl:overflow-hidden">
-        {/* Left: client controls + sessions */}
-        <aside className="w-full xl:w-[17.5rem] xl:shrink-0 border-b xl:border-b-0 xl:border-r border-slate-line/70 bg-bone-soft/60 flex flex-col xl:h-full xl:min-h-0">
+      <section className={PATIENT_DETAIL_SECTION}>
+        {/* Left: connections, Revel, knowledge, devices, sessions */}
+        <aside className={PATIENT_DETAIL_LEFT}>
           <div className="px-3 pt-5 pb-4 space-y-5 border-b border-slate-line/70">
             <div>
               <SectionLabel>Client</SectionLabel>
@@ -383,7 +391,6 @@ function PatientDetailView({ id }: { id: string }) {
               <PanelAction icon={Plus} label="Attach device" onClick={() => setAttachOpen(true)} />
             </div>
             <div>
-              <SectionLabel>Connections</SectionLabel>
               <ClientIntegrations
                 agentId={id}
                 botName={agent.botName}
@@ -502,7 +509,7 @@ function PatientDetailView({ id }: { id: string }) {
         {/* Center: chat transcript */}
         <div
           ref={scrollerRef}
-          className="flex-1 min-w-0 px-6 md:px-10 py-7 overflow-y-auto bg-white xl:h-full xl:min-h-0"
+          className={PATIENT_DETAIL_CENTER}
         >
           {loadingMsgs && (
             <div className="space-y-3 max-w-2xl">
@@ -619,12 +626,14 @@ function PatientDetailView({ id }: { id: string }) {
         {/* Right: risk panel */}
         <aside
           className={classNames(
-            "w-full xl:w-[16.5rem] xl:shrink-0 border-t xl:border-t-0 xl:border-l border-slate-line/70 bg-bone-soft/60 px-5 py-6 transition xl:h-full xl:min-h-0 xl:overflow-y-auto",
+            PATIENT_DETAIL_RIGHT,
             live.assessmentTick > 0 && "ring-1 ring-teal/30",
           )}
         >
           <div className="kicker mb-2">14-day risk</div>
-          <Sparkline data={history} width={232} height={48} />
+          <div className="w-full overflow-hidden">
+            <Sparkline data={history} width={280} height={48} />
+          </div>
 
           <div className="mt-6">
             <div className="kicker mb-3">Latest assessment</div>
@@ -696,6 +705,25 @@ function PatientDetailView({ id }: { id: string }) {
                 )}
               </div>
             )}
+          </div>
+
+          <div className="mt-8 pt-6 border-t border-slate-line/70">
+            <div className="kicker mb-3">Revel diagnostics</div>
+            {revelStatus ? (
+              <RevelDiagnosticsList status={revelStatus} compact />
+            ) : (
+              <p className="text-[12px] text-slate-muted leading-relaxed">
+                Revel status is not available for this discussion.
+              </p>
+            )}
+          </div>
+
+          <div className="mt-8 pt-6 border-t border-slate-line/70">
+            <div className="kicker mb-2">Automation</div>
+            <p className="text-[12px] text-slate-muted leading-relaxed">
+              Calendar reminders and sensor alerts can request display screens through
+              an internal hook. They are not connected yet.
+            </p>
           </div>
         </aside>
       </section>

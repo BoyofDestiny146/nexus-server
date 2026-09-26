@@ -62,7 +62,8 @@ test("skipped display event shows SKIPPED and screen", () => {
     intent: "SHOW_APPOINTMENT_REMINDER",
     screen: "appointment",
     result: "skipped",
-    reason: "Revel execution disabled",
+    reason: "revel_write_disabled",
+    reason_label: "Revel execution disabled",
     created_at: "2026-09-26T20:24:18Z",
   })}\nREVEL DISPLAY EVENT`;
   const parsed = parseRevelTimeline(content);

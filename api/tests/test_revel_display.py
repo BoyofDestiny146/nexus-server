@@ -371,6 +371,9 @@ async def test_display_skipped_when_execute_disabled(
     assert event["intent"] == "SHOW_APPOINTMENT_REMINDER"
     assert event["screen"] == "appointment"
     assert event["reason"] == REASON_EXECUTE_DISABLED
+    assert event["reasonLabel"] == "Revel execution disabled"
+    assert event["controlTableId"] == "tbl-control"
+    assert event["controlRowId"] == "row-betty"
     _assert_clean(status.json())
 
     db_session.expire_all()
@@ -706,6 +709,70 @@ async def test_all_intents_skip_via_http(
         assert data["result"] == "skipped", intent
         assert data["displayState"]["screen"] == screen
         assert data["displayState"]["intent"] == intent
+
+
+@pytest.mark.asyncio
+async def test_return_home_maps_to_home_and_keeps_expires(
+    client: AsyncClient, admin_token: str, stub_control
+):
+    agent_id = await _onboard(client, admin_token)
+    await _connect_and_map(client, admin_token, agent_id)
+    expires = _future_iso(3)
+    resp = await client.post(
+        "/api/internal/revel/display",
+        json={
+            "agentId": agent_id,
+            "intent": "RETURN_HOME",
+            "message": "Returning to home.",
+            "expiresAt": expires,
+            "source": "internal",
+        },
+        headers=_internal(),
+    )
+    data = resp.json()["data"]
+    assert data["result"] == "skipped"
+    assert data["displayState"]["intent"] == "RETURN_HOME"
+    assert data["displayState"]["screen"] == "home"
+    assert data["displayState"]["expiresAt"] == expires
+    assert data["write"]["body"]["data"]["screen"] == "home"
+
+
+@pytest.mark.asyncio
+async def test_display_test_uses_show_home_and_rejects_screen(
+    client: AsyncClient, admin_token: str, stub_control
+):
+    agent_id = await _onboard(client, admin_token)
+    await _connect_and_map(client, admin_token, agent_id)
+    ok = await client.post(
+        "/api/internal/revel/display/test",
+        json={
+            "agentId": agent_id,
+            "title": "Betty Room",
+            "message": "Welcome home.",
+            "imageUrl": "https://cdn.example.com/home.png",
+            "priority": 40,
+            "expiresAt": _future_iso(),
+        },
+        headers=_internal(),
+    )
+    data = ok.json()["data"]
+    assert ok.json()["code"] == 0, ok.json()
+    assert data["result"] == "skipped"
+    assert data["displayState"]["intent"] == "SHOW_HOME"
+    assert data["displayState"]["screen"] == "home"
+    assert data["displayState"]["title"] == "Betty Room"
+    rejected = await client.post(
+        "/api/internal/revel/display/test",
+        json={"agentId": agent_id, "intent": "SHOW_PHOTOS", "screen": "photos"},
+        headers=_internal(),
+    )
+    assert rejected.json()["code"] == 400
+    row = await client.post(
+        "/api/internal/revel/display/test",
+        json={"agentId": agent_id, "rowId": "attacker"},
+        headers=_internal(),
+    )
+    assert row.json()["code"] == 400
 
 
 @pytest.mark.asyncio

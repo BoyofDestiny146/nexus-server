@@ -27,6 +27,13 @@ from .revel_client import (
     _safe_revel_error,
 )
 from .revel_datatables import get_data_table, normalize_table_id
+from .revel_errors import (
+    AMBIGUOUS_CONTROL_ROW,
+    CONTROL_ROW_NOT_FOUND,
+    CONTROL_TABLE_NOT_CONFIGURED,
+    controlled_read_payload,
+    reason_label,
+)
 from .revel_signage import (
     DEFAULT_API_BASE,
     _require_https_url,
@@ -151,9 +158,9 @@ def select_control_row(
         if value == device_key:
             matches.append(row)
     if not matches:
-        return {"ok": False, "reason": "control_row_not_found", "row": None}
+        return {"ok": False, "reason": CONTROL_ROW_NOT_FOUND, "row": None}
     if len(matches) > 1:
-        return {"ok": False, "reason": "ambiguous_control_row", "row": None}
+        return {"ok": False, "reason": AMBIGUOUS_CONTROL_ROW, "row": None}
     return {"ok": True, "reason": None, "row": matches[0]}
 
 
@@ -318,12 +325,19 @@ async def inspect_control_table() -> dict[str, Any]:
         return {
             "ok": False,
             "executeEnabled": revel_execute_enabled(),
-            "reason": "control_table_not_configured",
+            "writesEnabled": False,
+            "reason": CONTROL_TABLE_NOT_CONFIGURED,
+            "reasonLabel": reason_label(CONTROL_TABLE_NOT_CONFIGURED),
             "table": None,
             "binding": None,
             "rows": [],
         }
-    fetched = await fetch_control_table()
+    try:
+        fetched = await fetch_control_table()
+    except APIException as exc:
+        payload = controlled_read_payload(exc, kind="table")
+        payload["executeEnabled"] = revel_execute_enabled()
+        return payload
     table = fetched.get("table") if isinstance(fetched.get("table"), dict) else {}
     rows = fetched.get("rows") if isinstance(fetched.get("rows"), list) else []
     binding = bind_column_keys(table.get("columns") if isinstance(table, dict) else [])
@@ -331,6 +345,7 @@ async def inspect_control_table() -> dict[str, Any]:
         "ok": True,
         "executeEnabled": revel_execute_enabled(),
         "writesEnabled": revel_execute_enabled(),
+        "reason": None,
         "table": {
             "id": table.get("id"),
             "name": table.get("name"),

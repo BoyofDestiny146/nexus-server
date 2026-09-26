@@ -21,6 +21,7 @@ export interface RevelStatusEvent {
   controlRowId?: string | null;
   result?: RevelResult | string | null;
   reason?: string | null;
+  reasonLabel?: string | null;
   error?: string | null;
   summary?: string | null;
   createdAt?: string | null;
@@ -34,8 +35,11 @@ export interface RevelStatus {
   tag: string | null;
   deviceKey: string | null;
   device: RevelStatusDevice | null;
+  controlTableId?: string | null;
+  controlRowId?: string | null;
   lastEvent: RevelStatusEvent | null;
   header: string;
+  revelExecuteEnabled?: boolean;
 }
 
 export function revelStatusTone(mode: string | null | undefined): "enabled" | "manual" | "off" {

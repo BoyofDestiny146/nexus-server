@@ -322,10 +322,11 @@ async def test_internal_revel_devices_missing_key(client: AsyncClient, monkeypat
         headers={"X-Internal-Token": settings.internal_token},
     )
     body = resp.json()
-    assert body["code"] == 503
+    assert body["code"] == 0
     assert body["data"]["ok"] is False
     assert body["data"]["devices"] == []
-    assert "not configured" in body["msg"]
+    assert body["data"]["reason"] == "revel_not_configured"
+    assert "not configured" in (body["data"].get("reasonLabel") or body["msg"] or "")
     assert _SECRET not in str(body)
 
 

@@ -202,6 +202,7 @@ async def poll_one(
             fired.append(key)
             fired_set.add(key)
             delivered += 1
+            # Revel display is not requested from the calendar poller.
         else:
             skipped += 1
 

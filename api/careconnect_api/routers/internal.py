@@ -47,6 +47,8 @@ from ..pubsub import publish_chat_turn
 from ..revel_command import evaluate_voice_command
 from ..revel_datatables import get_data_table, list_data_tables
 from ..revel_display import apply_display_state
+from ..revel_errors import controlled_read_payload
+from ..revel_hooks import apply_test_display
 from ..revel_signage import list_signage_devices
 from ..revel_status import revel_status_for_agent
 from ..revel_write import inspect_control_table
@@ -143,10 +145,13 @@ async def revel_devices() -> dict[str, Any]:
 
     Uses the allowlisted GraphQL ``device`` query and the Nexus-system API key
     from ``REVEL_API_KEY_FILE``. Callers cannot supply GraphQL, command names,
-    or device mutations.
+    or device mutations. Auth/key failures return a controlled payload.
     """
-    devices = await list_signage_devices()
-    return {"ok": True, "devices": devices}
+    try:
+        devices = await list_signage_devices()
+    except APIException as exc:
+        return controlled_read_payload(exc, kind="devices")
+    return {"ok": True, "devices": devices, "reason": None}
 
 
 @router.get(
@@ -158,7 +163,10 @@ async def revel_datatables(
     pageSize: int | None = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
     """Read-only Data Table list. Does not mutate Revel."""
-    return await list_data_tables(page_size=pageSize)
+    try:
+        return await list_data_tables(page_size=pageSize)
+    except APIException as exc:
+        return controlled_read_payload(exc, kind="tables")
 
 
 @router.get(
@@ -171,7 +179,12 @@ async def revel_datatable(
     pageSize: int | None = Query(default=50, ge=1, le=100),
 ) -> dict[str, Any]:
     """Read-only table definition + rows. Does not mutate Revel."""
-    return await get_data_table(table_id, page_size=pageSize)
+    try:
+        return await get_data_table(table_id, page_size=pageSize)
+    except APIException as exc:
+        if exc.code == 400:
+            raise
+        return controlled_read_payload(exc, kind="table")
 
 
 @router.get(
@@ -225,6 +238,50 @@ async def revel_display(
         "revel display agent=%s intent=%s result=%s reason=%s executed=%s",
         payload.agentId,
         payload.intent,
+        result.get("result"),
+        result.get("reason"),
+        result.get("executed"),
+    )
+    return result
+
+
+class RevelTestDisplayIn(BaseModel):
+    """First-screen dry-run. Intent is SHOW_HOME; callers cannot pick a screen."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    agentId: str = Field(min_length=1, max_length=64)
+    title: str | None = Field(default=None, max_length=500)
+    message: str | None = Field(default=None, max_length=2000)
+    imageUrl: str | None = Field(default=None, max_length=2048)
+    priority: int | None = Field(default=None, ge=0, le=100)
+    expiresAt: str | None = Field(default=None, max_length=64)
+    tag: str | None = Field(default=None, max_length=128)
+
+
+@router.post(
+    "/revel/display/test",
+    response_model=None,
+    dependencies=[Depends(require_internal_token)],
+)
+async def revel_display_test(
+    payload: RevelTestDisplayIn,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Allowlisted test display state. Never enables live Revel writes."""
+    result = await apply_test_display(
+        db,
+        agent_id=payload.agentId,
+        title=payload.title,
+        message=payload.message,
+        image_url=payload.imageUrl,
+        priority=payload.priority,
+        expires_at=payload.expiresAt,
+        tag=payload.tag,
+    )
+    log.info(
+        "revel display test agent=%s result=%s reason=%s executed=%s",
+        payload.agentId,
         result.get("result"),
         result.get("reason"),
         result.get("executed"),

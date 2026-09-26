@@ -577,6 +577,7 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
   return (
     <>
       <div className="-mx-1">
+        <div className="kicker px-2 mb-1.5">Connections</div>
         <ConnectionRow
           name="CareConnect"
           icon={Link2}
@@ -592,6 +593,7 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
           status={gcal?.connected ? "Connected · Read only" : "Connect →"}
           onClick={() => openPanel("google_calendar")}
         />
+        <div className="kicker px-2 mt-4 mb-1.5">Revel</div>
         <ConnectionRow
           name="Revel"
           icon={KeyRound}
@@ -599,6 +601,7 @@ export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick 
           status={revel?.connected ? "Connected" : "Connect →"}
           onClick={() => openPanel("revel")}
         />
+        <div className="kicker px-2 mt-4 mb-1.5">Knowledge</div>
         <ConnectionRow
           name="Knowledge"
           icon={BookOpen}

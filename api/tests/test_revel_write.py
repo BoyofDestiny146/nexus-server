@@ -509,21 +509,21 @@ def _one_row_fetch():
     [
         (
             lambda capture: _PutClient(capture, error=httpx.TimeoutException("timed out")),
-            "timeout",
+            "revel_unavailable",
         ),
         (
             lambda capture: _PutClient(
                 capture, _Resp(status_code=500, payload={"error": "nope"}, text="fail")
             ),
-            "http_error",
+            "revel_write_failed",
         ),
         (
             lambda capture: _PutClient(capture, _Resp(status_code=200, payload=None, text="nope")),
-            "malformed_response",
+            "revel_write_failed",
         ),
         (
             lambda capture: _PutClient(capture, _Resp(status_code=200, payload={"sortOrder": 1})),
-            "malformed_response",
+            "revel_write_failed",
         ),
     ],
 )
@@ -610,15 +610,103 @@ def test_result_for_attempt_write_reasons():
     from careconnect_api.revel_status import result_for_attempt
 
     assert result_for_attempt(executed=True, reason=None) == "sent"
-    assert result_for_attempt(executed=False, reason="Revel execution disabled") == "skipped"
+    assert result_for_attempt(executed=False, reason="revel_write_disabled") == "skipped"
     for why in (
         "unmapped_player",
         "control_row_not_found",
         "ambiguous_control_row",
         "missing_control_columns",
         "control_table_not_configured",
-        "timeout",
-        "http_error",
-        "malformed_response",
+        "revel_not_configured",
+        "revel_auth_failed",
+        "revel_unavailable",
+        "revel_write_failed",
     ):
         assert result_for_attempt(executed=False, reason=why) == "failed"
+
+
+@pytest.mark.asyncio
+async def test_read_failures_are_controlled(client: AsyncClient, admin_token: str, monkeypatch):
+    agent_id = await _mapped_agent(client, admin_token)
+    monkeypatch.setattr(
+        "careconnect_api.revel_display.configured_control_table_id",
+        lambda: "tbl-control",
+    )
+    monkeypatch.setattr("careconnect_api.revel_display.revel_execute_enabled", lambda: False)
+
+    class _ExplodingPut:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("disabled writes must not PUT")
+
+        async def __aenter__(self):
+            raise AssertionError("disabled writes must not PUT")
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr("careconnect_api.revel_write.httpx.AsyncClient", _ExplodingPut)
+
+    async def auth_fail():
+        raise APIException(401, "Revel authentication failed", data={"reason": "auth"})
+
+    monkeypatch.setattr("careconnect_api.revel_display.fetch_control_table", auth_fail)
+    auth = await client.post(
+        "/api/internal/revel/display",
+        json={"agentId": agent_id, "intent": "SHOW_HOME"},
+        headers=_internal(),
+    )
+    assert auth.json()["data"]["reason"] == "revel_auth_failed"
+    assert auth.json()["data"]["result"] == "failed"
+    assert auth.json()["data"]["write"] is None or "data" not in (auth.json()["data"].get("write") or {})
+
+    async def missing_key():
+        raise APIException(503, "Revel API key is not configured", data={"ok": False})
+
+    monkeypatch.setattr("careconnect_api.revel_display.fetch_control_table", missing_key)
+    missing = await client.post(
+        "/api/internal/revel/display",
+        json={"agentId": agent_id, "intent": "SHOW_HOME"},
+        headers=_internal(),
+    )
+    assert missing.json()["data"]["reason"] == "revel_not_configured"
+
+    async def down():
+        raise APIException(502, "Could not reach Revel", data={"reason": "transport"})
+
+    monkeypatch.setattr("careconnect_api.revel_display.fetch_control_table", down)
+    gone = await client.post(
+        "/api/internal/revel/display",
+        json={"agentId": agent_id, "intent": "SHOW_HOME"},
+        headers=_internal(),
+    )
+    assert gone.json()["data"]["reason"] == "revel_unavailable"
+    blob = json.dumps(auth.json()) + json.dumps(missing.json()) + json.dumps(gone.json())
+    for token in _BANNED:
+        assert token not in blob
+
+
+@pytest.mark.asyncio
+async def test_control_inspect_auth_failure_has_no_invented_ids(
+    client: AsyncClient, monkeypatch
+):
+    monkeypatch.setattr(
+        "careconnect_api.revel_write.configured_control_table_id",
+        lambda: "tbl-control",
+    )
+
+    async def auth_fail():
+        raise APIException(401, "Revel authentication failed", data={"reason": "auth"})
+
+    monkeypatch.setattr("careconnect_api.revel_write.fetch_control_table", auth_fail)
+    listed = await client.get("/api/internal/revel/control", headers=_internal())
+    body = listed.json()
+    assert body["code"] == 0, body
+    data = body["data"]
+    assert data["ok"] is False
+    assert data["reason"] == "revel_auth_failed"
+    assert data["table"] is None
+    assert data["rows"] == []
+    assert data.get("binding") is None
+    _blob = json.dumps(body)
+    for token in _BANNED:
+        assert token not in _blob
