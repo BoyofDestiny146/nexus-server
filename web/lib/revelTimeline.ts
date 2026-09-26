@@ -153,7 +153,7 @@ export function revelEventCardModel(
 
 export function formatRevelEventLines(event: RevelTimeline): string[] {
   const card = revelEventCardModel(event);
-  const lines = [card.title];
+  const lines: string[] = [card.title];
   if (card.tag) lines.push(`Revel Tag: ${card.tag}`);
   if (card.display) lines.push(`Display: ${card.display}`);
   lines.push(card.resultLabel);
