@@ -101,6 +101,13 @@ class RevelSignageSettings(BaseSettings):
             "default_device_id",
         ),
     )
+    execute_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "REVEL_EXECUTE_ENABLED",
+            "CC_REVEL_EXECUTE_ENABLED",
+        ),
+    )
 
 
 def load_revel_signage_settings() -> RevelSignageSettings:

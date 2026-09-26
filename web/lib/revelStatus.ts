@@ -17,7 +17,10 @@ export interface RevelStatusEvent {
   revelDeviceName?: string | null;
   intent?: string | null;
   screen?: string | null;
+  controlTableId?: string | null;
+  controlRowId?: string | null;
   result?: RevelResult | string | null;
+  reason?: string | null;
   error?: string | null;
   summary?: string | null;
   createdAt?: string | null;

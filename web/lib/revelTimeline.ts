@@ -13,7 +13,10 @@ export type RevelTimeline = {
   revelDeviceId: string;
   deviceKey: string;
   tag: string;
+  controlTableId: string;
+  controlRowId: string;
   result: "sent" | "failed" | "skipped" | "disabled";
+  reason: string;
   requested: string;
   summary: string;
   error: string;
@@ -50,7 +53,10 @@ export function parseRevelTimeline(content: string | null | undefined): RevelTim
       revelDeviceId: String(header.revel_device_id || ""),
       deviceKey: String(header.device_key || ""),
       tag: String(header.tag || ""),
+      controlTableId: String(header.control_table_id || ""),
+      controlRowId: String(header.control_row_id || ""),
       result: normalizeResult(String(header.result || "")),
+      reason: String(header.reason || ""),
       requested: String(header.requested || ""),
       summary: String(header.summary || header.requested || ""),
       error: String(header.error || ""),
@@ -72,12 +78,13 @@ export function revelTimelineFromMessage(message: {
 
 export function formatRevelEventLines(event: RevelTimeline): string[] {
   const lines = ["REVEL DISPLAY EVENT"];
-  if (event.tag) lines.push(`Tag: ${event.tag}`);
-  if (event.deviceName) lines.push(`Player: ${event.deviceName}`);
-  if (event.deviceKey) lines.push(`Device Key: ${event.deviceKey}`);
   if (event.intent) lines.push(`Intent: ${event.intent}`);
   if (event.screen) lines.push(`Screen: ${event.screen}`);
+  if (event.deviceName) lines.push(`Player: ${event.deviceName}`);
+  if (event.tag) lines.push(`Tag: ${event.tag}`);
+  if (event.deviceKey) lines.push(`Device Key: ${event.deviceKey}`);
   lines.push(`Result: ${event.result.toUpperCase()}`);
+  if (event.reason) lines.push(`Reason: ${event.reason}`);
   if (event.error) lines.push(`Error: ${event.error}`);
   if (event.deliveredAt) lines.push(`Time: ${event.deliveredAt}`);
   return lines;

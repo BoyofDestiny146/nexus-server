@@ -105,6 +105,8 @@ Admin accounts `admin1` / `admin2` are seeded by the api on startup from the
 `.env` passwords. Schema is created by the api on first boot; SQL files in
 `api/migrations/` are applied by hand if the schema is older than the code
 (`docker compose exec mariadb mariadb -u root -p"$(…)" xiaozhi_esp32_server < …`).
+Revel player mapping: `deploy/scripts/apply-revel-player-map.sh` (020 + 021,
+additive, does not drop tables or enable `REVEL_EXECUTE_ENABLED`).
 
 Runtime config for the voice server is the copy in the `xiaozhi-data` volume
 (`data/.config.yaml`); it shadows the file baked into the image. Edit it with

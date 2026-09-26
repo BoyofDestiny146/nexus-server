@@ -214,3 +214,16 @@ async def upsert_from_meta(
         revel_device_id=device_id,
         revel_device_name=name,
     )
+
+
+async def cache_control_row(
+    db: AsyncSession,
+    row: RevelPlayerMap,
+    *,
+    table_id: str,
+    row_id: str,
+) -> None:
+    """Remember the unique matching control row. Does not write to Revel."""
+    row.control_table_id = str(table_id)[:128]
+    row.control_row_id = str(row_id)[:128]
+    row.updated_at = _now()

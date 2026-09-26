@@ -23,8 +23,9 @@ Endpoints
 * ``GET /api/internal/revel/datatables`` — read-only Data Table list.
 * ``GET /api/internal/revel/datatables/{id}`` — read-only table schema + rows.
 * ``POST /api/internal/revel/display`` — validate a V1 display-state intent,
-  resolve the stored player mapping, and record a skipped timeline event
-  while ``EXECUTE_ENABLED`` is false. Does not write to Revel.
+  resolve stored player + control row, and PUT only when
+  ``REVEL_EXECUTE_ENABLED`` is true. Default is skipped (no write).
+* ``GET /api/internal/revel/control`` — read-only control table schema/binding.
 * ``GET /api/internal/revel/status/{agent_id}`` — read-only Revel observability
   for a client discussion. Same payload as ``GET /api/agent/{id}/revel/status``.
 """
@@ -48,6 +49,7 @@ from ..revel_datatables import get_data_table, list_data_tables
 from ..revel_display import apply_display_state
 from ..revel_signage import list_signage_devices
 from ..revel_status import revel_status_for_agent
+from ..revel_write import inspect_control_table
 from ..settings import settings
 
 
@@ -170,6 +172,16 @@ async def revel_datatable(
 ) -> dict[str, Any]:
     """Read-only table definition + rows. Does not mutate Revel."""
     return await get_data_table(table_id, page_size=pageSize)
+
+
+@router.get(
+    "/revel/control",
+    response_model=None,
+    dependencies=[Depends(require_internal_token)],
+)
+async def revel_control_binding() -> dict[str, Any]:
+    """Read-only control-table schema + column binding. Does not mutate Revel."""
+    return await inspect_control_table()
 
 
 class RevelDisplayIn(BaseModel):

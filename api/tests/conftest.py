@@ -44,6 +44,8 @@ os.environ.setdefault("CC_GCAL_POLL_SECONDS", "86400")
 # Phase 1 Revel discovery: point at a missing file so unit tests never
 # accidentally call live Revel. Live tests read REVEL_API_KEY_FILE if set.
 os.environ.setdefault("REVEL_API_KEY_FILE", str(Path(_TMP_CFG) / "revel-api-key-absent"))
+# Phase 2C writes stay off unless a test monkeypatches revel_execute_enabled().
+os.environ["REVEL_EXECUTE_ENABLED"] = "false"
 # Partner outbound push is off unless CC_CARECONNECT_INGEST_URL is set.
 
 # Write the API key into the secret file so the settings can read it.

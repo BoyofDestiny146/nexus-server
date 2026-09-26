@@ -142,6 +142,20 @@ def test_revel_env_aliases(monkeypatch, tmp_path):
     assert resolve_graphql_url(cfg) == DEFAULT_GRAPHQL_URL
 
 
+def test_execute_enabled_only_from_revel_env(monkeypatch):
+    monkeypatch.delenv("REVEL_EXECUTE_ENABLED", raising=False)
+    monkeypatch.delenv("CC_REVEL_EXECUTE_ENABLED", raising=False)
+    monkeypatch.setenv("EXECUTE_ENABLED", "true")
+    assert RevelSignageSettings().execute_enabled is False
+    monkeypatch.setenv("REVEL_EXECUTE_ENABLED", "false")
+    assert RevelSignageSettings().execute_enabled is False
+    monkeypatch.setenv("REVEL_EXECUTE_ENABLED", "true")
+    assert RevelSignageSettings().execute_enabled is True
+    monkeypatch.delenv("REVEL_EXECUTE_ENABLED", raising=False)
+    monkeypatch.setenv("CC_REVEL_EXECUTE_ENABLED", "true")
+    assert RevelSignageSettings().execute_enabled is True
+
+
 def test_cc_prefixed_aliases(monkeypatch, tmp_path):
     key_file = tmp_path / "key"
     key_file.write_text("x")
@@ -360,6 +374,8 @@ def test_compose_declares_nexus_revel_env_on_api_only():
     assert 'REVEL_API_KEY_FILE: "${REVEL_API_KEY_FILE:-/run/secrets/revel-api-key}"' in api
     assert 'REVEL_CONTROL_TABLE_ID: "${REVEL_CONTROL_TABLE_ID:-}"' in api
     assert 'REVEL_DEFAULT_DEVICE_ID: "${REVEL_DEFAULT_DEVICE_ID:-}"' in api
+    assert 'REVEL_EXECUTE_ENABLED: "${REVEL_EXECUTE_ENABLED:-false}"' in api
+    assert "REVEL_EXECUTE_ENABLED" not in xz
     assert "REVEL_API_KEY_FILE" not in xz
     assert "cc-secrets:/run/secrets:ro" in api
 

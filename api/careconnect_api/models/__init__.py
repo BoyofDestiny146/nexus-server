@@ -198,6 +198,8 @@ class RevelPlayerMap(Base):
     device_key: Mapped[str] = mapped_column(String(128))
     revel_device_id: Mapped[str] = mapped_column(String(128))
     revel_device_name: Mapped[str | None] = mapped_column(String(128))
+    control_table_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    control_row_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

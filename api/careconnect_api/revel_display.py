@@ -1,11 +1,8 @@
-"""Phase 2B controlled Revel display state.
+"""Phase 2C controlled Revel display state + skipped/live write path.
 
-Builds a normalized display-state model and maps V1 intents onto screens
-without sending anything to Revel. ``EXECUTE_ENABLED`` stays false; the
-write function is a stub that never opens a network connection.
-
-Callers cannot supply ``revelDeviceId``, ``screen``, GraphQL, or Revel
-commands. The target player is resolved from ``cc_revel_player_map``.
+``REVEL_EXECUTE_ENABLED`` (not the keyword ``EXECUTE_ENABLED`` flag) gates
+the REST PUT. Default is false: the payload is built and a SKIPPED timeline
+row is recorded, with zero Revel writes.
 """
 from __future__ import annotations
 
@@ -20,9 +17,20 @@ from .chat_events import persist_revel_timeline, notify_timeline_best_effort
 from .envelope import APIException
 from .models import ClientIntegration
 from .revel_client import RevelMutationDisabled, _safe_revel_error
-from .revel_config import EXECUTE_ENABLED, load_meta
-from .revel_player_map import resolve_player_map
+from .revel_config import load_meta
+from .revel_player_map import cache_control_row, resolve_player_map
 from .revel_status import result_for_attempt
+from .revel_write import (
+    bind_column_keys,
+    build_update_payload,
+    configured_control_table_id,
+    fetch_control_table,
+    revel_execute_enabled,
+    revel_puts_attempted,
+    select_control_row,
+    update_data_table_row,
+    write_plan,
+)
 
 log = logging.getLogger("revel_display")
 
@@ -88,9 +96,6 @@ ALLOWED_SOURCES = frozenset(
 )
 REASON_EXECUTE_DISABLED = "Revel execution disabled"
 
-# Tests assert this stays zero while EXECUTE_ENABLED is false.
-network_writes_attempted = 0
-
 _FORBIDDEN_REQUEST_KEYS = frozenset(
     {
         "screen",
@@ -105,6 +110,18 @@ _FORBIDDEN_REQUEST_KEYS = frozenset(
         "commands",
         "apiKey",
         "api_key",
+        "tableId",
+        "table_id",
+        "controlTableId",
+        "rowId",
+        "row_id",
+        "controlRowId",
+        "data",
+        "fields",
+        "executeEnabled",
+        "revelExecuteEnabled",
+        "eTag",
+        "If-Match",
     }
 )
 
@@ -250,12 +267,31 @@ async def _connected_revel(db: AsyncSession, agent_id: str) -> ClientIntegration
     ).scalar_one_or_none()
 
 
-def _execute_display_write(state: dict[str, Any]) -> None:
-    """Never call Revel. Phase 2B builds the path with execution disabled."""
-    global network_writes_attempted
-    network_writes_attempted += 1
-    _ = state
-    raise RevelMutationDisabled("revel display writes are not implemented")
+def _outcome(
+    *,
+    result: str,
+    reason: str,
+    state: dict[str, Any] | None,
+    plan: dict[str, Any] | None = None,
+    table_id: str | None = None,
+    row_id: str | None = None,
+    executed: bool = False,
+    missing: list[str] | None = None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "ok": result in {"skipped", "sent"},
+        "executed": executed,
+        "executeEnabled": revel_execute_enabled(),
+        "result": result,
+        "reason": reason,
+        "displayState": state,
+        "controlTableId": table_id,
+        "controlRowId": row_id,
+        "write": plan,
+    }
+    if missing:
+        out["missingColumns"] = missing
+    return out
 
 
 async def apply_display_state(
@@ -274,13 +310,12 @@ async def apply_display_state(
     tag: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Validate, resolve mapping, persist timeline, skip the Revel write."""
+    """Validate, resolve player/table/row, build PUT body, write only if enabled."""
     reject_forbidden_fields(extra)
     screen = screen_for_intent(intent)
     if caller_screen is not None and str(caller_screen).strip() and str(caller_screen).strip() != screen:
         raise APIException(400, "screen is derived from intent and cannot be overridden")
 
-    # Validate payload fields before mapping so oversized text fails closed.
     heading = (title if title is not None else _DEFAULT_TITLES.get(intent, "")).strip()
     if heading and len(heading) > TITLE_MAX:
         raise APIException(400, "title is too long")
@@ -316,14 +351,7 @@ async def apply_display_state(
             executed=False,
             reason="unmapped_player",
         )
-        return {
-            "ok": False,
-            "executed": False,
-            "executeEnabled": EXECUTE_ENABLED,
-            "result": "failed",
-            "reason": "unmapped_player",
-            "displayState": None,
-        }
+        return _outcome(result="failed", reason="unmapped_player", state=None)
 
     state = build_display_state(
         device_key=mapped.device_key,
@@ -338,7 +366,104 @@ async def apply_display_state(
         caller_screen=caller_screen,
     )
 
-    if not EXECUTE_ENABLED:
+    table_id = configured_control_table_id()
+    if not table_id:
+        await _record(
+            db,
+            agent_id=agent_id,
+            intent=state["intent"],
+            screen=state["screen"],
+            device_key=state["deviceKey"],
+            device_name=mapped.revel_device_name,
+            revel_device_id=state["revelDeviceId"],
+            tag=tag,
+            requested=state["title"] or intent,
+            executed=False,
+            reason="control_table_not_configured",
+        )
+        return _outcome(
+            result="failed",
+            reason="control_table_not_configured",
+            state=state,
+        )
+
+    try:
+        fetched = await fetch_control_table()
+    except APIException as exc:
+        await _record(
+            db,
+            agent_id=agent_id,
+            intent=state["intent"],
+            screen=state["screen"],
+            device_key=state["deviceKey"],
+            device_name=mapped.revel_device_name,
+            revel_device_id=state["revelDeviceId"],
+            tag=tag,
+            requested=state["title"] or intent,
+            executed=False,
+            reason="revel_failed",
+            error=str(exc.msg),
+            control_table_id=table_id,
+        )
+        return _outcome(result="failed", reason="revel_failed", state=state, table_id=table_id)
+
+    table = fetched.get("table") if isinstance(fetched.get("table"), dict) else {}
+    binding = bind_column_keys(table.get("columns") if isinstance(table, dict) else [])
+    missing = list(binding.get("missingRequired") or [])
+    if missing:
+        await _record(
+            db,
+            agent_id=agent_id,
+            intent=state["intent"],
+            screen=state["screen"],
+            device_key=state["deviceKey"],
+            device_name=mapped.revel_device_name,
+            revel_device_id=state["revelDeviceId"],
+            tag=tag,
+            requested=state["title"] or intent,
+            executed=False,
+            reason="missing_control_columns",
+            control_table_id=table_id,
+        )
+        return _outcome(
+            result="failed",
+            reason="missing_control_columns",
+            state=state,
+            table_id=table_id,
+            missing=missing,
+        )
+
+    device_col = binding["mapping"]["device_key"]
+    picked = select_control_row(
+        fetched.get("rows") if isinstance(fetched.get("rows"), list) else [],
+        device_key=state["deviceKey"],
+        device_key_column=device_col,
+    )
+    if not picked.get("ok"):
+        reason = str(picked.get("reason") or "control_row_not_found")
+        await _record(
+            db,
+            agent_id=agent_id,
+            intent=state["intent"],
+            screen=state["screen"],
+            device_key=state["deviceKey"],
+            device_name=mapped.revel_device_name,
+            revel_device_id=state["revelDeviceId"],
+            tag=tag,
+            requested=state["title"] or intent,
+            executed=False,
+            reason=reason,
+            control_table_id=table_id,
+        )
+        return _outcome(result="failed", reason=reason, state=state, table_id=table_id)
+
+    control_row = picked["row"]
+    row_id = str(control_row.get("id") or "")
+    payload = build_update_payload(display_state=state, binding=binding)
+    plan = write_plan(table_id=table_id, row_id=row_id, payload=payload)
+    await cache_control_row(db, mapped, table_id=table_id, row_id=row_id)
+
+    if not revel_execute_enabled():
         await _record(
             db,
             agent_id=agent_id,
@@ -351,25 +476,29 @@ async def apply_display_state(
             requested=state["title"] or state["message"] or intent,
             executed=False,
             reason=REASON_EXECUTE_DISABLED,
+            control_table_id=table_id,
+            control_row_id=row_id,
         )
         log.info(
-            "revel display skipped agent=%s intent=%s screen=%s reason=execute_disabled",
+            "revel display skipped agent=%s intent=%s screen=%s table=%s row=%s puts=%s",
             agent_id,
             state["intent"],
             state["screen"],
+            table_id,
+            row_id,
+            revel_puts_attempted,
         )
-        return {
-            "ok": True,
-            "executed": False,
-            "executeEnabled": False,
-            "result": "skipped",
-            "reason": REASON_EXECUTE_DISABLED,
-            "displayState": state,
-        }
+        return _outcome(
+            result="skipped",
+            reason=REASON_EXECUTE_DISABLED,
+            state=state,
+            plan=plan,
+            table_id=table_id,
+            row_id=row_id,
+        )
 
-    # EXECUTE_ENABLED is compiled off. If a test flips it, still do not write.
     try:
-        _execute_display_write(state)
+        await update_data_table_row(table_id=table_id, row_id=row_id, payload=payload)
     except RevelMutationDisabled:
         await _record(
             db,
@@ -382,17 +511,85 @@ async def apply_display_state(
             tag=tag,
             requested=state["title"] or intent,
             executed=False,
-            reason="revel_display_write_not_implemented",
+            reason=REASON_EXECUTE_DISABLED,
+            control_table_id=table_id,
+            control_row_id=row_id,
         )
-        return {
-            "ok": True,
-            "executed": False,
-            "executeEnabled": True,
-            "result": "skipped",
-            "reason": "revel_display_write_not_implemented",
-            "displayState": state,
-        }
-    raise APIException(500, "Revel display write path must not succeed yet")
+        return _outcome(
+            result="skipped",
+            reason=REASON_EXECUTE_DISABLED,
+            state=state,
+            plan=plan,
+            table_id=table_id,
+            row_id=row_id,
+        )
+    except APIException as exc:
+        why = "revel_failed"
+        data = exc.data if isinstance(exc.data, dict) else {}
+        if data.get("reason") == "timeout":
+            why = "timeout"
+        elif data.get("reason") == "malformed":
+            why = "malformed_response"
+        elif data.get("reason") == "http_error":
+            why = "http_error"
+        await _record(
+            db,
+            agent_id=agent_id,
+            intent=state["intent"],
+            screen=state["screen"],
+            device_key=state["deviceKey"],
+            device_name=mapped.revel_device_name,
+            revel_device_id=state["revelDeviceId"],
+            tag=tag,
+            requested=state["title"] or intent,
+            executed=False,
+            reason=why,
+            error=str(exc.msg),
+            control_table_id=table_id,
+            control_row_id=row_id,
+        )
+        return _outcome(
+            result="failed",
+            reason=why,
+            state=state,
+            plan=plan,
+            table_id=table_id,
+            row_id=row_id,
+        )
+
+    await _record(
+        db,
+        agent_id=agent_id,
+        intent=state["intent"],
+        screen=state["screen"],
+        device_key=state["deviceKey"],
+        device_name=mapped.revel_device_name,
+        revel_device_id=state["revelDeviceId"],
+        tag=tag,
+        requested=state["title"] or intent,
+        executed=True,
+        reason=None,
+        control_table_id=table_id,
+        control_row_id=row_id,
+    )
+    log.info(
+        "revel display sent agent=%s intent=%s screen=%s table=%s row=%s puts=%s",
+        agent_id,
+        state["intent"],
+        state["screen"],
+        table_id,
+        row_id,
+        revel_puts_attempted,
+    )
+    return _outcome(
+        result="sent",
+        reason="sent",
+        state=state,
+        plan=plan,
+        table_id=table_id,
+        row_id=row_id,
+        executed=True,
+    )
 
 
 async def _record(
@@ -409,6 +606,8 @@ async def _record(
     executed: bool,
     reason: str | None,
     error: str | None = None,
+    control_table_id: str | None = None,
+    control_row_id: str | None = None,
 ) -> None:
     result = result_for_attempt(executed=executed, reason=reason)
     safe_error = _safe_revel_error(error) if result == "failed" else ""
@@ -427,6 +626,9 @@ async def _record(
             screen=screen,
             error=safe_error or None,
             summary=requested or None,
+            reason=reason,
+            control_table_id=control_table_id,
+            control_row_id=control_row_id,
         )
         await db.commit()
         await notify_timeline_best_effort(payload)

@@ -62,6 +62,7 @@ test("skipped display event shows SKIPPED and screen", () => {
     intent: "SHOW_APPOINTMENT_REMINDER",
     screen: "appointment",
     result: "skipped",
+    reason: "Revel execution disabled",
     created_at: "2026-09-26T20:24:18Z",
   })}\nREVEL DISPLAY EVENT`;
   const parsed = parseRevelTimeline(content);
@@ -71,7 +72,9 @@ test("skipped display event shows SKIPPED and screen", () => {
   assert.match(text, /REVEL DISPLAY EVENT/);
   assert.match(text, /Intent: SHOW_APPOINTMENT_REMINDER/);
   assert.match(text, /Screen: appointment/);
+  assert.match(text, /Player: Betty Room 101/);
   assert.match(text, /Result: SKIPPED/);
+  assert.match(text, /Reason: Revel execution disabled/);
 });
 
 test("legacy delivered maps to sent", () => {

@@ -106,6 +106,7 @@ export function RevelStatusBadge({
                   <Row label="Message" value={status.lastEvent.summary || "—"} />
                   <Row label="Sent At" value={longTime(status.lastEvent.createdAt) || "—"} />
                   <Row label="Result" value={(status.lastEvent.result || "—").toString().toUpperCase()} />
+                  <Row label="Reason" value={status.lastEvent.reason || "—"} />
                   <Row label="Error" value={status.lastEvent.error || "—"} />
                 </div>
               ) : (

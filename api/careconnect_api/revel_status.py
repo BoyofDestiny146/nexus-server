@@ -29,9 +29,10 @@ from .models import (
     KnowledgeBase,
     KnowledgeTopic,
 )
-from .revel_player_map import get_player_map, list_player_maps
 from .revel_client import _safe_revel_error
 from .revel_config import load_meta
+from .revel_player_map import get_player_map, list_player_maps
+from .revel_write import revel_execute_enabled
 
 log = logging.getLogger("revel_status")
 
@@ -113,7 +114,10 @@ def _public_event(parsed: dict[str, Any] | None) -> dict[str, Any] | None:
         "revelDeviceName": parsed.get("revel_device_name") or parsed.get("deviceName") or None,
         "intent": parsed.get("intent") or None,
         "screen": parsed.get("screen") or None,
+        "controlTableId": parsed.get("control_table_id") or None,
+        "controlRowId": parsed.get("control_row_id") or None,
         "result": normalize_revel_result(str(parsed.get("result") or "")),
+        "reason": parsed.get("reason") or None,
         "error": error,
         "summary": (parsed.get("summary") or parsed.get("requested") or None) or None,
         "createdAt": parsed.get("created_at") or parsed.get("delivered_at") or None,
@@ -128,6 +132,12 @@ def _public_event(parsed: dict[str, Any] | None) -> dict[str, Any] | None:
         out["tag"] = None
     if out.get("screen") == "":
         out["screen"] = None
+    if out.get("reason") == "":
+        out["reason"] = None
+    if out.get("controlTableId") == "":
+        out["controlTableId"] = None
+    if out.get("controlRowId") == "":
+        out["controlRowId"] = None
     return out
 
 
@@ -295,6 +305,7 @@ async def revel_status_for_agent(
         "lastEvent": last_event,
         "header": header_text(mode=mode, tag=tag or None, device_name=device_name),
         "provider": SOURCE_REVEL,
+        "revelExecuteEnabled": revel_execute_enabled(),
     }
     log.info(
         "revel status agent=%s mode=%s tag_set=%s auto_trigger=%s device_set=%s "
@@ -316,7 +327,17 @@ def result_for_attempt(*, executed: bool, reason: str | None) -> str:
     why = (reason or "").strip()
     if why in {"feature_disabled", "auto_trigger_false", "action_disabled"}:
         return "disabled"
-    if why in {"unmapped_player", "revel_failed"} or "fail" in why.casefold():
+    if why in {
+        "unmapped_player",
+        "revel_failed",
+        "control_row_not_found",
+        "ambiguous_control_row",
+        "missing_control_columns",
+        "control_table_not_configured",
+        "timeout",
+        "http_error",
+        "malformed_response",
+    } or "fail" in why.casefold():
         return "failed"
     return "skipped"
 

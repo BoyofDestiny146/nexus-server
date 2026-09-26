@@ -149,6 +149,7 @@ services:
       REVEL_API_KEY_FILE: "${REVEL_API_KEY_FILE:-/run/secrets/revel-api-key}"
       REVEL_CONTROL_TABLE_ID: "${REVEL_CONTROL_TABLE_ID:-}"
       REVEL_DEFAULT_DEVICE_ID: "${REVEL_DEFAULT_DEVICE_ID:-}"
+      REVEL_EXECUTE_ENABLED: "${REVEL_EXECUTE_ENABLED:-false}"
     volumes:
       - cc-secrets:/run/secrets:ro
       - cc-voice:/data

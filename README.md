@@ -102,9 +102,9 @@ docker compose exec -T api wget -qO- \
 
 ## Nexus Revel display state (Phase 2B)
 
-Display writes are still **disabled**. `EXECUTE_ENABLED` remains false. A valid
-internal display request records a timeline `SKIPPED` event (`Revel execution
-disabled`) and never POSTs a Data Table mutation.
+Display writes are still **disabled** until Phase 2C is deliberately enabled
+(`REVEL_EXECUTE_ENABLED`, default false). Keyword voice matching still uses
+the separate `EXECUTE_ENABLED = False` constant in `revel_config.py`.
 
 Player targeting uses `cc_revel_player_map` (agent → frozen `deviceKey` →
 immutable Revel `deviceId`). Names, slugs, tags, and AI text are not write
@@ -123,4 +123,125 @@ docker compose exec -T api wget -qO- \
   http://127.0.0.1:8080/api/internal/revel/datatables
 ```
 
-Apply `api/migrations/020_revel_player_map.sql` by hand on existing databases.
+Apply `api/migrations/020_revel_player_map.sql` (and 021) with
+`deploy/scripts/apply-revel-player-map.sh` on existing databases. See Phase 2C.
+
+## Nexus Revel table binding + write path (Phase 2C)
+
+Live Data Table PUTs stay **off**. Only the API process env
+`REVEL_EXECUTE_ENABLED` (default `false`, compose
+`${REVEL_EXECUTE_ENABLED:-false}`) can enable them. Frontend, LLM, chat, and
+API request bodies cannot flip the flag. A generic `EXECUTE_ENABLED` env var
+does not enable Revel writes.
+
+When the flag is false the display path still:
+
+1. Validates the V1 intent
+2. Resolves the stored player map (`unmapped_player` if none was operator-selected)
+3. Loads `REVEL_CONTROL_TABLE_ID` and the live table schema/rows
+4. Binds columns to exact live `column.key` values (labels are never keys)
+5. Selects the unique row where `data[device_key] == cc_revel_player_map.device_key`
+6. Builds `PUT /datatables/{tableId}/rows/{rowId}` `{ "data": { ...allowlisted keys } }`
+7. Records `result=skipped`, `reason=Revel execution disabled`
+8. Does **not** issue the PUT, GraphQL mutation, or `sendDeviceCommand`
+
+REST write (documented Swagger, used only when the flag is true):
+
+```
+PUT https://api.reveldigital.com/datatables/{tableId}/rows/{rowId}
+Header: X-RevelDigital-ApiKey
+Body:   { "data": { "<live-column-key>": <value>, ... } }
+```
+
+Row targeting errors (no write in either case):
+
+- zero matching rows → `control_row_not_found`
+- two or more matching rows → `ambiguous_control_row`
+
+### Safe migration (existing MariaDB, no drop/recreate)
+
+```sh
+# from the repo root, against the running compose MariaDB
+chmod +x deploy/scripts/apply-revel-player-map.sh
+./deploy/scripts/apply-revel-player-map.sh
+```
+
+Equivalent one-liners (database `xiaozhi_esp32_server`, additive only):
+
+```sh
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/020_revel_player_map.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/021_revel_player_control_row.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/020_021_revel_player_map.verify.sql
+```
+
+### Operator-selected test player (do not auto-bind)
+
+List discovered players, then persist **one** immutable id the operator chose.
+Do not pick the first device, a name, a slug, or a tag.
+
+```sh
+TOKEN=$(docker run --rm -v careconnect_cc-secrets:/s:ro alpine cat /s/api-internal-token)
+docker compose -f deploy/docker-compose.yml exec -T api wget -qO- \
+  --header="X-Internal-Token: ${TOKEN}" \
+  http://127.0.0.1:8080/api/internal/revel/devices
+
+# After the operator copies one `id` from that list:
+# PUT /api/agent/{agentId}/integrations/revel
+# { "deviceId": "<immutable Revel id>", "deviceName": "<discovered name>" }
+```
+
+### Control table discovery (read-only)
+
+Set `REVEL_CONTROL_TABLE_ID` on the API container, then:
+
+```sh
+./deploy/scripts/revel-control-inspect.sh
+# or:
+docker compose -f deploy/docker-compose.yml exec -T api wget -qO- \
+  --header="X-Internal-Token: ${TOKEN}" \
+  http://127.0.0.1:8080/api/internal/revel/control
+```
+
+### Skip-path display request (first live test later)
+
+Keep `REVEL_EXECUTE_ENABLED=false`. This validates mapping and records SKIPPED:
+
+```sh
+TOKEN=$(docker run --rm -v careconnect_cc-secrets:/s:ro alpine cat /s/api-internal-token)
+docker compose -f deploy/docker-compose.yml exec -T api wget -qO- \
+  --header="X-Internal-Token: ${TOKEN}" \
+  --header="Content-Type: application/json" \
+  --post-data='{"agentId":"<AGENT_ID>","intent":"SHOW_HOME","source":"internal"}' \
+  http://127.0.0.1:8080/api/internal/revel/display
+```
+
+Eventual first live PUT (do **not** run until an operator sets the env and
+recreates the API container):
+
+```sh
+# deploy/.env  →  REVEL_EXECUTE_ENABLED=true
+# docker compose -f deploy/docker-compose.yml up -d --force-recreate api
+# then the same POST as above
+# immediately set REVEL_EXECUTE_ENABLED=false and recreate api again
+```
+
+Timeline copy when skipped:
+
+```
+REVEL DISPLAY EVENT
+Intent: …
+Screen: …
+Player: …
+Result: SKIPPED
+Reason: Revel execution disabled
+```
+
+`SENT` is recorded only after the backend confirms a 2xx Revel PUT.

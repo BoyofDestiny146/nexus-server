@@ -160,6 +160,9 @@ def encode_revel_timeline(
     screen: str | None = None,
     error: str | None = None,
     summary: str | None = None,
+    reason: str | None = None,
+    control_table_id: str | None = None,
+    control_row_id: str | None = None,
     event_type: str = REVEL_EVENT_TYPE,
 ) -> str:
     """Pack a display-action system row. No API keys, hosts, or GraphQL."""
@@ -174,7 +177,10 @@ def encode_revel_timeline(
         "revel_device_id": (revel_device_id or "")[:128],
         "device_key": (device_key or "")[:128],
         "tag": (tag or "")[:128],
+        "control_table_id": (control_table_id or "")[:128],
+        "control_row_id": (control_row_id or "")[:128],
         "result": allowed_result,
+        "reason": (reason or "")[:80],
         "requested": (requested or "")[:180],
         "summary": (summary or requested or "")[:180],
         "error": _safe_revel_error(error or "")[:180],
@@ -229,7 +235,10 @@ def parse_revel_timeline(content: str | None) -> dict[str, Any] | None:
         "revel_device_id": str(header.get("revel_device_id") or ""),
         "device_key": str(header.get("device_key") or ""),
         "tag": str(header.get("tag") or ""),
+        "control_table_id": str(header.get("control_table_id") or ""),
+        "control_row_id": str(header.get("control_row_id") or ""),
         "result": normalize_revel_result(str(header.get("result") or "")),
+        "reason": str(header.get("reason") or ""),
         "requested": str(header.get("requested") or ""),
         "summary": str(header.get("summary") or header.get("requested") or ""),
         "error": str(header.get("error") or ""),
@@ -359,6 +368,9 @@ async def persist_revel_timeline(
     screen: str | None = None,
     error: str | None = None,
     summary: str | None = None,
+    reason: str | None = None,
+    control_table_id: str | None = None,
+    control_row_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Insert one display-action system_event row. Caller commits."""
     if not agent_id:
@@ -377,6 +389,9 @@ async def persist_revel_timeline(
         screen=screen,
         error=error,
         summary=summary,
+        reason=reason,
+        control_table_id=control_table_id,
+        control_row_id=control_row_id,
     )
     stamp = _naive_local(delivered_at)
     fields: dict[str, Any] = {

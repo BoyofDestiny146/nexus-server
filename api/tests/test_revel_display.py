@@ -32,7 +32,6 @@ from careconnect_api.revel_display import (
     TITLE_MAX,
     apply_display_state,
     build_display_state,
-    network_writes_attempted,
     screen_for_intent,
     validate_expiration,
     validate_image_url,
@@ -41,6 +40,7 @@ from careconnect_api.revel_player_map import (
     allocate_device_key,
     upsert_selected_player,
 )
+from careconnect_api.revel_write import revel_execute_enabled, revel_puts_attempted
 from careconnect_api.settings import settings
 
 
@@ -120,13 +120,80 @@ def _future_iso(hours: int = 2) -> str:
 
 class _ExplodingClient:
     def __init__(self, *args, **kwargs):
-        raise AssertionError("Phase 2B must not open an HTTP client for display writes")
+        raise AssertionError("Phase 2C must not open an HTTP client for display writes")
 
     async def __aenter__(self):
-        raise AssertionError("Phase 2B must not open an HTTP client for display writes")
+        raise AssertionError("Phase 2C must not open an HTTP client for display writes")
 
     async def __aexit__(self, *args):
         return False
+
+
+CONTROL_COLUMNS = [
+    {"id": "c1", "name": "Device Key", "key": "device_key", "type": "TEXT"},
+    {"id": "c2", "name": "Screen", "key": "screen", "type": "TEXT"},
+    {"id": "c3", "name": "Title", "key": "title", "type": "TEXT"},
+    {"id": "c4", "name": "Message", "key": "message", "type": "TEXT"},
+    {"id": "c5", "name": "Image URL", "key": "image_url", "type": "URL"},
+    {"id": "c6", "name": "Priority", "key": "priority", "type": "NUMBER"},
+    {"id": "c7", "name": "Expires", "key": "expires_at", "type": "DATE"},
+    {"id": "c8", "name": "Updated", "key": "updated_at", "type": "DATE"},
+]
+
+
+def _sample_control(*, device_key="betty-room-101", rows=None):
+    if rows is None:
+        rows = [
+            {
+                "id": "row-betty",
+                "sortOrder": 0,
+                "data": {"device_key": device_key, "screen": "home"},
+                "updatedAt": None,
+            }
+        ]
+    return {
+        "ok": True,
+        "table": {
+            "id": "tbl-control",
+            "name": "Nexus Control",
+            "rowCount": len(rows),
+            "columns": CONTROL_COLUMNS,
+            "isControlTable": True,
+        },
+        "rows": rows,
+        "writesEnabled": False,
+    }
+
+
+@pytest.fixture
+def stub_control(monkeypatch):
+    async def fake_fetch():
+        return _sample_control()
+
+    monkeypatch.setattr("careconnect_api.revel_display.fetch_control_table", fake_fetch)
+    monkeypatch.setattr(
+        "careconnect_api.revel_display.configured_control_table_id",
+        lambda: "tbl-control",
+    )
+    monkeypatch.setattr("careconnect_api.revel_write.revel_execute_enabled", lambda: False)
+    monkeypatch.setattr("careconnect_api.revel_display.revel_execute_enabled", lambda: False)
+
+    class _ExplodingPut:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("REVEL_EXECUTE_ENABLED=false must not open a write HTTP client")
+
+        async def __aenter__(self):
+            raise AssertionError("REVEL_EXECUTE_ENABLED=false must not open a write HTTP client")
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr("careconnect_api.revel_write.httpx.AsyncClient", _ExplodingPut)
+    import careconnect_api.revel_write as rw
+
+    rw.revel_puts_attempted = 0
+    yield
+    rw.revel_puts_attempted = 0
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +203,7 @@ class _ExplodingClient:
 
 def test_execute_enabled_stays_false():
     assert EXECUTE_ENABLED is False
+    assert revel_execute_enabled() is False
     import inspect
     import careconnect_api.revel_display as mod
 
@@ -253,12 +321,14 @@ def test_duplicate_device_name_does_not_reuse_key():
 
 @pytest.mark.asyncio
 async def test_display_skipped_when_execute_disabled(
-    client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, stub_control
 ):
     agent_id = await _onboard(client, admin_token)
     await _connect_and_map(client, admin_token, agent_id)
-    before = network_writes_attempted
-    monkeypatch.setattr("httpx.AsyncClient", _ExplodingClient)
+    before = revel_puts_attempted
+    import careconnect_api.revel_write as rw
+
+    rw.revel_puts_attempted = 0
 
     resp = await client.post(
         "/api/internal/revel/display",
@@ -284,7 +354,13 @@ async def test_display_skipped_when_execute_disabled(
     assert data["displayState"]["screen"] == "appointment"
     assert data["displayState"]["intent"] == "SHOW_APPOINTMENT_REMINDER"
     assert data["displayState"]["revelDeviceId"] == "immutable-revel-id"
-    assert careconnect_writes_unchanged(before)
+    assert data["write"]["method"] == "PUT"
+    assert data["write"]["path"] == "/datatables/tbl-control/rows/row-betty"
+    assert set(data["write"]["body"].keys()) == {"data"}
+    assert "revelDeviceId" not in data["write"]["body"]["data"]
+    assert data["write"]["body"]["data"]["device_key"] == "betty-room-101"
+    assert data["write"]["body"]["data"]["screen"] == "appointment"
+    assert rw.revel_puts_attempted == before == 0
 
     status = await client.get(
         f"/api/agent/{agent_id}/revel/status",
@@ -294,6 +370,7 @@ async def test_display_skipped_when_execute_disabled(
     assert event["result"] == "skipped"
     assert event["intent"] == "SHOW_APPOINTMENT_REMINDER"
     assert event["screen"] == "appointment"
+    assert event["reason"] == REASON_EXECUTE_DISABLED
     _assert_clean(status.json())
 
     db_session.expire_all()
@@ -309,6 +386,7 @@ async def test_display_skipped_when_execute_disabled(
     assert parsed["result"] == "skipped"
     assert parsed["screen"] == "appointment"
     assert parsed["intent"] == "SHOW_APPOINTMENT_REMINDER"
+    assert parsed["reason"] == REASON_EXECUTE_DISABLED
     blob = json.dumps(parsed)
     for token in _BANNED:
         assert token not in blob
@@ -316,7 +394,9 @@ async def test_display_skipped_when_execute_disabled(
 
 
 def careconnect_writes_unchanged(before: int) -> bool:
-    return network_writes_attempted == before
+    import careconnect_api.revel_write as rw
+
+    return rw.revel_puts_attempted == before
 
 
 @pytest.mark.asyncio
@@ -360,6 +440,24 @@ async def test_graphql_and_command_fields_rejected(client: AsyncClient, admin_to
         {"mutation": "createDataTableRow"},
         {"command": "restart"},
         {"graphql": "nope"},
+    ):
+        body = {"agentId": agent_id, "intent": "SHOW_HOME", **extra}
+        resp = await client.post(
+            "/api/internal/revel/display", json=body, headers=_internal()
+        )
+        assert resp.json()["code"] == 400, extra
+
+
+@pytest.mark.asyncio
+async def test_caller_cannot_select_row_or_table(client: AsyncClient, admin_token: str):
+    agent_id = await _onboard(client, admin_token)
+    await _connect_and_map(client, admin_token, agent_id)
+    for extra in (
+        {"rowId": "row-attacker"},
+        {"tableId": "tbl-attacker"},
+        {"controlTableId": "tbl-attacker"},
+        {"data": {"screen": "hacked"}},
+        {"executeEnabled": True},
     ):
         body = {"agentId": agent_id, "intent": "SHOW_HOME", **extra}
         resp = await client.post(
@@ -415,7 +513,7 @@ async def test_missing_player_mapping_fails(
 
 @pytest.mark.asyncio
 async def test_duplicate_names_keep_immutable_ids(
-    client: AsyncClient, admin_token: str, db_session: AsyncSession
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch
 ):
     agent_id = await _onboard(client, admin_token)
     await _connect_and_map(
@@ -432,12 +530,43 @@ async def test_duplicate_names_keep_immutable_ids(
     assert second is not None
     assert second.device_key != "lobby"
 
+    async def fake_fetch():
+        return _sample_control(
+            rows=[
+                {"id": "row-a", "data": {"device_key": "lobby", "screen": "home"}},
+                {
+                    "id": "row-b",
+                    "data": {"device_key": second.device_key, "screen": "home"},
+                },
+            ]
+        )
+
+    monkeypatch.setattr("careconnect_api.revel_display.fetch_control_table", fake_fetch)
+    monkeypatch.setattr(
+        "careconnect_api.revel_display.configured_control_table_id",
+        lambda: "tbl-control",
+    )
+    monkeypatch.setattr("careconnect_api.revel_display.revel_execute_enabled", lambda: False)
+
+    class _ExplodingPut:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("disabled writes must not PUT")
+
+        async def __aenter__(self):
+            raise AssertionError("disabled writes must not PUT")
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr("careconnect_api.revel_write.httpx.AsyncClient", _ExplodingPut)
+
     first = await client.post(
         "/api/internal/revel/display",
         json={"agentId": agent_id, "deviceKey": "lobby", "intent": "SHOW_HOME"},
         headers=_internal(),
     )
     assert first.json()["data"]["displayState"]["revelDeviceId"] == "id-alpha"
+    assert first.json()["data"]["controlRowId"] == "row-a"
     other = await client.post(
         "/api/internal/revel/display",
         json={
@@ -449,6 +578,7 @@ async def test_duplicate_names_keep_immutable_ids(
     )
     assert other.json()["data"]["displayState"]["revelDeviceId"] == "id-beta"
     assert other.json()["data"]["displayState"]["screen"] == "care_alert"
+    assert other.json()["data"]["controlRowId"] == "row-b"
     maps = (
         await db_session.execute(
             select(RevelPlayerMap).where(RevelPlayerMap.agent_id == agent_id)
@@ -490,12 +620,13 @@ async def test_display_requires_internal_token(client: AsyncClient, admin_token:
 
 @pytest.mark.asyncio
 async def test_apply_display_state_never_writes_when_disabled(
-    client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, stub_control
 ):
     agent_id = await _onboard(client, admin_token)
     await _connect_and_map(client, admin_token, agent_id)
-    monkeypatch.setattr("httpx.AsyncClient", _ExplodingClient)
-    before = network_writes_attempted
+    import careconnect_api.revel_write as rw
+
+    rw.revel_puts_attempted = 0
     db_session.expire_all()
     result = await apply_display_state(
         db_session,
@@ -507,7 +638,9 @@ async def test_apply_display_state_never_writes_when_disabled(
     assert result["result"] == "skipped"
     assert result["reason"] == REASON_EXECUTE_DISABLED
     assert result["displayState"]["screen"] == "medication"
-    assert network_writes_attempted == before
+    assert result["write"]["method"] == "PUT"
+    assert rw.revel_puts_attempted == 0
+    assert revel_execute_enabled() is False
     assert EXECUTE_ENABLED is False
 
 
@@ -558,7 +691,9 @@ async def test_forbidden_extra_device_id_on_apply(
 
 
 @pytest.mark.asyncio
-async def test_all_intents_skip_via_http(client: AsyncClient, admin_token: str):
+async def test_all_intents_skip_via_http(
+    client: AsyncClient, admin_token: str, stub_control
+):
     agent_id = await _onboard(client, admin_token)
     await _connect_and_map(client, admin_token, agent_id)
     for intent, screen in INTENT_TO_SCREEN.items():
