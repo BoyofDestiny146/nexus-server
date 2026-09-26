@@ -29,7 +29,8 @@ RUN pip install --no-cache-dir --upgrade pip \
         "pyyaml>=6.0" \
         "cryptography>=42.0" \
         "icalendar>=6.0" \
-        "python-dateutil>=2.9"
+        "python-dateutil>=2.9" \
+        "python-multipart>=0.0.9"
 
 # ── Runtime image ─────────────────────────────────────────────────────────────
 FROM python:3.12-slim

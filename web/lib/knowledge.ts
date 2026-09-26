@@ -1,4 +1,4 @@
-import type { KnowledgeBase } from "@/lib/types";
+import type { KnowledgeBase, KnowledgeSourceType } from "@/lib/types";
 
 export function slugifyKnowledge(name: string, maxLen = 64): string {
   return name
@@ -46,4 +46,52 @@ export function knowledgeAssignmentStatus(count: number): string {
   if (!Number.isFinite(count) || count <= 0) return "No knowledge";
   if (count === 1) return "1 Knowledge Base";
   return `${count} Knowledge Bases`;
+}
+
+export const KNOWLEDGE_SOURCE_TYPES: Array<{ value: KnowledgeSourceType; label: string }> = [
+  { value: "pdf", label: "PDF" },
+  { value: "docx", label: "DOCX" },
+  { value: "pptx", label: "PPTX" },
+  { value: "txt", label: "TXT" },
+  { value: "markdown", label: "Markdown" },
+  { value: "image", label: "Image" },
+  { value: "text", label: "Manual text" },
+];
+
+export const KNOWLEDGE_WORKSPACE_TABS = [
+  "overview",
+  "sources",
+  "topics",
+  "revel",
+  "testing",
+] as const;
+
+export type KnowledgeWorkspaceTab = (typeof KNOWLEDGE_WORKSPACE_TABS)[number];
+
+export function isKnowledgeWorkspaceTab(value: string | null | undefined): value is KnowledgeWorkspaceTab {
+  return !!value && (KNOWLEDGE_WORKSPACE_TABS as readonly string[]).includes(value);
+}
+
+export function formatSourceBytes(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
+  const mb = kb / 1024;
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+}
+
+export function sourceTypeLabel(type: string | null | undefined): string {
+  const found = KNOWLEDGE_SOURCE_TYPES.find((t) => t.value === type);
+  return found?.label ?? (type || "Source");
+}
+
+export function sourceStatusLabel(source: { enabled: boolean; status: string }): string {
+  if (!source.enabled) return "Disabled";
+  const status = (source.status || "uploaded").toLowerCase();
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+export function sourceNeedsFile(type: KnowledgeSourceType): boolean {
+  return type !== "text";
 }

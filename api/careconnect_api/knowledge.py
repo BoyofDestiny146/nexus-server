@@ -31,8 +31,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .envelope import APIException
 from .models import (
+    AiAgent,
     ClientKnowledgeBase,
     KnowledgeBase,
+    KnowledgeSource,
     KnowledgeTopic,
 )
 from .watcher_device import get_watcher_device
@@ -103,7 +105,10 @@ def serialize_base(
     row: KnowledgeBase,
     *,
     topic_count: int | None = None,
+    source_count: int | None = None,
+    client_count: int | None = None,
     topics: list[dict[str, Any]] | None = None,
+    assigned_clients: list[dict[str, Any]] | None = None,
     assigned: bool | None = None,
     assignment_enabled: bool | None = None,
 ) -> dict[str, Any]:
@@ -119,13 +124,46 @@ def serialize_base(
     }
     if topic_count is not None:
         out["topicCount"] = topic_count
+    if source_count is not None:
+        out["sourceCount"] = source_count
+    if client_count is not None:
+        out["clientCount"] = client_count
     if topics is not None:
         out["topics"] = topics
+    if assigned_clients is not None:
+        out["assignedClients"] = assigned_clients
     if assigned is not None:
         out["assigned"] = assigned
     if assignment_enabled is not None:
         out["assignmentEnabled"] = assignment_enabled
     return out
+
+
+def serialize_source(
+    row: KnowledgeSource,
+    *,
+    topic: KnowledgeTopic | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "knowledgeBaseId": row.knowledge_base_id,
+        "name": row.name,
+        "sourceType": row.source_type,
+        "originalFilename": row.original_filename,
+        "description": row.description,
+        "enabled": bool(row.enabled),
+        "status": row.status,
+        "mimeType": row.mime_type,
+        "fileSize": row.file_size,
+        "topicId": row.topic_id,
+        "topicTitle": topic.title if topic is not None else None,
+        "topicKey": topic.topic_key if topic is not None else None,
+        "revelTag": topic.revel_tag if topic is not None else None,
+        "errorMessage": row.error_message,
+        "hasFile": bool(row.storage_path),
+        "createdAt": row.created_at,
+        "updatedAt": row.updated_at,
+    }
 
 
 async def topic_counts(
@@ -141,6 +179,74 @@ async def topic_counts(
         )
     ).all()
     return {int(base_id): int(count) for base_id, count in rows}
+
+
+async def source_counts(
+    db: AsyncSession, base_ids: list[int]
+) -> dict[int, int]:
+    if not base_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(KnowledgeSource.knowledge_base_id, func.count(KnowledgeSource.id))
+            .where(KnowledgeSource.knowledge_base_id.in_(base_ids))
+            .group_by(KnowledgeSource.knowledge_base_id)
+        )
+    ).all()
+    return {int(base_id): int(count) for base_id, count in rows}
+
+
+async def client_counts(
+    db: AsyncSession, base_ids: list[int]
+) -> dict[int, int]:
+    if not base_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(
+                ClientKnowledgeBase.knowledge_base_id,
+                func.count(ClientKnowledgeBase.agent_id),
+            )
+            .where(ClientKnowledgeBase.knowledge_base_id.in_(base_ids))
+            .group_by(ClientKnowledgeBase.knowledge_base_id)
+        )
+    ).all()
+    return {int(base_id): int(count) for base_id, count in rows}
+
+
+async def list_assigned_clients(
+    db: AsyncSession, knowledge_base_id: int
+) -> list[dict[str, Any]]:
+    rows = (
+        await db.execute(
+            select(AiAgent.id, AiAgent.agent_name, ClientKnowledgeBase.enabled)
+            .join(ClientKnowledgeBase, ClientKnowledgeBase.agent_id == AiAgent.id)
+            .where(ClientKnowledgeBase.knowledge_base_id == knowledge_base_id)
+            .order_by(AiAgent.agent_name.asc(), AiAgent.id.asc())
+        )
+    ).all()
+    return [
+        {
+            "id": agent_id,
+            "agentName": agent_name,
+            "assignmentEnabled": bool(enabled),
+        }
+        for agent_id, agent_name, enabled in rows
+    ]
+
+
+async def load_sources(
+    db: AsyncSession, knowledge_base_id: int
+) -> list[tuple[KnowledgeSource, KnowledgeTopic | None]]:
+    rows = (
+        await db.execute(
+            select(KnowledgeSource, KnowledgeTopic)
+            .outerjoin(KnowledgeTopic, KnowledgeTopic.id == KnowledgeSource.topic_id)
+            .where(KnowledgeSource.knowledge_base_id == knowledge_base_id)
+            .order_by(KnowledgeSource.name.asc(), KnowledgeSource.id.asc())
+        )
+    ).all()
+    return [(source, topic) for source, topic in rows]
 
 
 async def load_topics(
@@ -349,3 +455,89 @@ async def list_client_assignments(
         )
         for kb, link in rows
     ]
+
+
+def _preview_around(text: str, needle: str, *, width: int = 140) -> str:
+    lower = text.lower()
+    idx = lower.find(needle.lower())
+    if idx < 0:
+        snippet = text.strip().replace("\n", " ")
+        return snippet[:width] + ("…" if len(snippet) > width else "")
+    start = max(0, idx - width // 3)
+    end = min(len(text), idx + len(needle) + width // 2)
+    snippet = text[start:end].replace("\n", " ").strip()
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if end < len(text) else ""
+    return f"{prefix}{snippet}{suffix}"
+
+
+async def keyword_test_search(
+    db: AsyncSession, knowledge_base_id: int, query: str
+) -> dict[str, Any]:
+    """Phase 2 operator test search — keyword over names and text sources.
+
+    Not production RAG. Does not embed, retrieve semantically, or call XiaoZhi.
+    """
+    from .knowledge_storage import TEXT_SOURCE_TYPES, read_text_preview
+
+    q = (query or "").strip()
+    terms = [re.sub(r"[^a-z0-9-]+", "", t) for t in re.split(r"\s+", q.lower())]
+    terms = [t for t in terms if len(t) > 1]
+    payload = {
+        "mode": "keyword",
+        "retrievalConfigured": False,
+        "query": q,
+        "list": [],
+        "total": 0,
+        "message": None,
+    }
+    if not terms:
+        payload["message"] = "Enter a question to run Phase 2 test search."
+        return payload
+
+    rows = await load_sources(db, knowledge_base_id)
+    hits: list[dict[str, Any]] = []
+    for source, topic in rows:
+        haystacks: list[tuple[str, float]] = [
+            (source.name or "", 3.0),
+            (source.original_filename or "", 2.0),
+            (source.description or "", 1.5),
+        ]
+        body = ""
+        if source.source_type in TEXT_SOURCE_TYPES:
+            body = read_text_preview(source.storage_path)
+            if body:
+                haystacks.append((body, 1.0))
+        previews: list[tuple[float, str]] = []
+        score = 0.0
+        for text, weight in haystacks:
+            blob = text.lower()
+            hits_here = sum(1 for term in terms if term in blob)
+            if hits_here == 0:
+                continue
+            score += weight * hits_here
+            previews.append((weight, _preview_around(text, next(t for t in terms if t in blob))))
+        if score <= 0:
+            continue
+        matched_text = min(previews, key=lambda item: item[0])[1]
+        hits.append(
+            {
+                "sourceId": source.id,
+                "source": source.name,
+                "sourceType": source.source_type,
+                "topic": topic.title if topic is not None else None,
+                "topicKey": topic.topic_key if topic is not None else None,
+                "matchedText": matched_text,
+                "score": round(score, 2),
+                "revelTag": topic.revel_tag if topic is not None else None,
+            }
+        )
+    hits.sort(key=lambda row: (-row["score"], row["source"].lower()))
+    payload["list"] = hits
+    payload["total"] = len(hits)
+    if not hits:
+        payload["message"] = (
+            "No keyword matches. Retrieval service not configured — "
+            "this is Phase 2 test search, not production RAG."
+        )
+    return payload

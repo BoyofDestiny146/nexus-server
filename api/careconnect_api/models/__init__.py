@@ -246,3 +246,43 @@ class ClientKnowledgeBase(Base):
     )
     enabled: Mapped[int] = mapped_column(SmallInteger, default=1)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
+
+
+class KnowledgeSource(Base):
+    """File or manual text belonging to a Knowledge Base. Phase 2 stores the
+    original only — no embeddings. topic_id is optional metadata; deleting a
+    source must not delete topics (ON DELETE SET NULL)."""
+
+    __tablename__ = "cc_knowledge_source"
+    __table_args__ = ({"sqlite_autoincrement": True},)
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    knowledge_base_id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        ForeignKey("cc_knowledge_base.id", ondelete="CASCADE"),
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(160))
+    source_type: Mapped[str] = mapped_column(String(16))
+    original_filename: Mapped[str | None] = mapped_column(String(255))
+    storage_path: Mapped[str | None] = mapped_column(String(512))
+    description: Mapped[str | None] = mapped_column(String(512))
+    enabled: Mapped[int] = mapped_column(SmallInteger, default=1)
+    status: Mapped[str] = mapped_column(String(16), default="uploaded")
+    mime_type: Mapped[str | None] = mapped_column(String(128))
+    file_size: Mapped[int | None] = mapped_column(BigInteger().with_variant(Integer, "sqlite"))
+    topic_id: Mapped[int | None] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        ForeignKey("cc_knowledge_topic.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    error_message: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )

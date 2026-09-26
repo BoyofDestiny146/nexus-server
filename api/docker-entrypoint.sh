@@ -12,6 +12,8 @@ if [ -d /data ]; then
   if [ -e /data/voice_config.json ]; then
     chmod 0666 /data/voice_config.json 2>/dev/null || true
   fi
+  mkdir -p /data/knowledge-sources 2>/dev/null || true
+  chmod 0777 /data/knowledge-sources 2>/dev/null || true
 fi
 
 if [ "$(id -u)" = "0" ]; then

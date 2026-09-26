@@ -93,6 +93,9 @@ class Settings(BaseSettings):
     # Per-device voice config JSON — read/written by the voice router.
     # The xiaozhi-server reads the same file via CC_VOICE_CONFIG in its env.
     voice_config_path: str = "/data/voice_config.json"
+    # Knowledge source originals. Same Docker volume as voice_config (/data,
+    # compose: cc-voice). Never served publicly; download is JWT-gated.
+    knowledge_source_dir: str = "/data/knowledge-sources"
 
     # Bootstrap admin credentials — read from env or secret files.
     # Usernames are fixed as admin1 / admin2 (generic, not personal).

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { KnowledgeBase } from "@/lib/types";
 import { classNames } from "@/lib/format";
 
@@ -72,8 +73,17 @@ export function KnowledgeAccessFields({
                   checked={checked}
                   onChange={(e) => onToggle(kb.id, e.target.checked)}
                 />
-                <span className="min-w-0">
-                  <span className="block text-[14px] text-slate-deep tracking-tight">{kb.name}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-start justify-between gap-2">
+                    <span className="block text-[14px] text-slate-deep tracking-tight">{kb.name}</span>
+                    <Link
+                      href={`/knowledge/${kb.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="shrink-0 text-[11px] uppercase tracking-[0.12em] text-teal-deep hover:underline"
+                    >
+                      Open
+                    </Link>
+                  </span>
                   {kb.description ? (
                     <span className="block mt-0.5 text-[12px] text-slate-muted leading-snug">{kb.description}</span>
                   ) : null}

@@ -93,6 +93,48 @@ export const apiPatch = <T = unknown>(path: string, body?: unknown) =>
   api<T>(path, { method: "PATCH", body: body !== undefined ? JSON.stringify(body) : undefined });
 export const apiDelete = <T = unknown>(path: string) => api<T>(path, { method: "DELETE" });
 
+/** Multipart POST/PUT — do not set Content-Type so the browser supplies the boundary. */
+export async function apiForm<T = unknown>(
+  path: string,
+  form: FormData,
+  method: "POST" | "PUT" = "POST",
+): Promise<T> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const t = token();
+  if (t) headers.Authorization = `Bearer ${t}`;
+  const url = path.startsWith("/api/") || path.startsWith("/ws/") ? path : `/api${path.startsWith("/") ? "" : "/"}${path}`;
+  const r = await fetch(url, { method, headers, body: form });
+  let body: { code?: number; msg?: string; data?: T; error?: string; detail?: string } | null = null;
+  try { body = await r.json(); } catch {}
+  if (!body || typeof body.code !== "number") {
+    const msg =
+      (body && (body.msg || body.error || (typeof body.detail === "string" ? body.detail : undefined))) ||
+      `unexpected ${r.status}`;
+    throw new ApiError(r.status, String(msg));
+  }
+  if (body.code !== 0) {
+    if (
+      body.code === 401 &&
+      typeof window !== "undefined" &&
+      shouldClearSessionOn401(path, body.msg)
+    ) {
+      clearSession();
+    }
+    throw new ApiError(body.code, body.msg || body.error || `unexpected ${r.status}`);
+  }
+  return body.data as T;
+}
+
+export async function apiDownload(path: string, filename: string): Promise<void> {
+  const blob = await apiBinary(path);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /**
  * Raw binary fetch — used for endpoints that return audio/wav blobs
  * (e.g. POST /api/voice/preview). Throws ApiError on non-2xx.

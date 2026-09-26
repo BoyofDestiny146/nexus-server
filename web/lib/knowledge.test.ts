@@ -2,10 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   assignedKnowledgeIds,
+  formatSourceBytes,
+  isKnowledgeWorkspaceTab,
   knowledgeAssignmentPutBody,
   knowledgeAssignmentStatus,
   knowledgeIdsEqual,
   slugifyKnowledge,
+  sourceNeedsFile,
+  sourceStatusLabel,
+  sourceTypeLabel,
   toggleKnowledgeSelection,
   topicKeyFromTitle,
 } from "./knowledge.ts";
@@ -56,4 +61,18 @@ test("toggleKnowledgeSelection add and remove without duplicates", () => {
   assert.deepEqual(toggleKnowledgeSelection([1], 2, true), [1, 2]);
   assert.deepEqual(toggleKnowledgeSelection([1, 2], 2, true), [1, 2]);
   assert.deepEqual(toggleKnowledgeSelection([1, 2], 2, false), [1]);
+});
+
+test("formatSourceBytes and status chips", () => {
+  assert.equal(formatSourceBytes(0), "0 B");
+  assert.equal(formatSourceBytes(512), "512 B");
+  assert.equal(formatSourceBytes(2048), "2.0 KB");
+  assert.equal(formatSourceBytes(null), "—");
+  assert.equal(sourceStatusLabel({ enabled: false, status: "ready" }), "Disabled");
+  assert.equal(sourceStatusLabel({ enabled: true, status: "uploaded" }), "Uploaded");
+  assert.equal(sourceTypeLabel("pdf"), "PDF");
+  assert.equal(sourceNeedsFile("text"), false);
+  assert.equal(sourceNeedsFile("pdf"), true);
+  assert.equal(isKnowledgeWorkspaceTab("sources"), true);
+  assert.equal(isKnowledgeWorkspaceTab("rag"), false);
 });

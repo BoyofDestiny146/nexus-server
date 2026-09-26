@@ -252,8 +252,66 @@ export interface KnowledgeBase {
   topics?: KnowledgeTopic[];
   assigned?: boolean;
   assignmentEnabled?: boolean;
+  sourceCount?: number;
+  clientCount?: number;
+  assignedClients?: KnowledgeAssignedClient[];
   createdAt?: string | null;
   updatedAt?: string | null;
+}
+
+export interface KnowledgeAssignedClient {
+  id: string;
+  agentName: string | null;
+  assignmentEnabled: boolean;
+}
+
+export interface KnowledgeSource {
+  id: number;
+  knowledgeBaseId: number;
+  name: string;
+  sourceType: KnowledgeSourceType;
+  originalFilename: string | null;
+  description: string | null;
+  enabled: boolean;
+  status: KnowledgeSourceStatus;
+  mimeType: string | null;
+  fileSize: number | null;
+  topicId: number | null;
+  topicTitle: string | null;
+  topicKey: string | null;
+  revelTag: string | null;
+  errorMessage: string | null;
+  hasFile: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export type KnowledgeSourceType = "pdf" | "docx" | "pptx" | "txt" | "markdown" | "image" | "text";
+export type KnowledgeSourceStatus = "uploaded" | "pending" | "processing" | "ready" | "failed" | "disabled";
+
+export interface KnowledgeSourceList {
+  list: KnowledgeSource[];
+  total: number;
+}
+
+export interface KnowledgeTestHit {
+  sourceId: number;
+  source: string;
+  sourceType: string;
+  topic: string | null;
+  topicKey: string | null;
+  matchedText: string;
+  score: number;
+  revelTag: string | null;
+}
+
+export interface KnowledgeTestSearch {
+  mode: string;
+  retrievalConfigured: boolean;
+  query: string;
+  list: KnowledgeTestHit[];
+  total: number;
+  message: string | null;
 }
 
 export interface KnowledgeBaseList {
