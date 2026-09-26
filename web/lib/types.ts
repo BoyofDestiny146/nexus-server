@@ -226,3 +226,53 @@ export interface ClientIntegration {
   executeEnabled?: boolean;
   voiceRequiresBotName?: boolean;
 }
+
+export interface KnowledgeTopic {
+  id: number;
+  knowledgeBaseId: number;
+  topicKey: string;
+  title: string;
+  description: string | null;
+  enabled: boolean;
+  revelTag: string | null;
+  revelAutoTrigger: boolean;
+  sortOrder: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface KnowledgeBase {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  enabled: boolean;
+  knowledgeType: string | null;
+  topicCount?: number;
+  topics?: KnowledgeTopic[];
+  assigned?: boolean;
+  assignmentEnabled?: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface KnowledgeBaseList {
+  list: KnowledgeBase[];
+  total: number;
+}
+
+export interface DeviceKnowledgeContext {
+  deviceMac: string;
+  clientId: string | null;
+  knowledgeBases: Array<{
+    id: number;
+    slug: string;
+    name: string;
+    topics: Array<{
+      topicKey: string;
+      title: string;
+      revelTag: string | null;
+      revelAutoTrigger: boolean;
+    }>;
+  }>;
+}

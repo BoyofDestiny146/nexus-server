@@ -173,3 +173,76 @@ class ClientIntegration(Base):
     metadata_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class KnowledgeBase(Base):
+    """Reusable localized knowledge catalog. Assigned to clients (ai_agent),
+    not stored on ai_device. Watchers inherit via the bound agent."""
+
+    __tablename__ = "cc_knowledge_base"
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_cc_knowledge_base_slug"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    name: Mapped[str] = mapped_column(String(128))
+    slug: Mapped[str] = mapped_column(String(64))
+    description: Mapped[str | None] = mapped_column(String(512))
+    enabled: Mapped[int] = mapped_column(SmallInteger, default=1)
+    knowledge_type: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KnowledgeTopic(Base):
+    """Topic inside a Knowledge Base. Revel fields are metadata only in Phase 1."""
+
+    __tablename__ = "cc_knowledge_topic"
+    __table_args__ = (
+        UniqueConstraint("knowledge_base_id", "topic_key", name="uq_cc_knowledge_topic_key"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    knowledge_base_id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        ForeignKey("cc_knowledge_base.id", ondelete="CASCADE"),
+        index=True,
+    )
+    topic_key: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str | None] = mapped_column(Text)
+    enabled: Mapped[int] = mapped_column(SmallInteger, default=1)
+    revel_tag: Mapped[str | None] = mapped_column(String(128))
+    revel_auto_trigger: Mapped[int] = mapped_column(SmallInteger, default=0)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ClientKnowledgeBase(Base):
+    """Many-to-many: client (ai_agent.id) ↔ reusable Knowledge Base."""
+
+    __tablename__ = "cc_client_knowledge_base"
+
+    agent_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        ForeignKey("cc_knowledge_base.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    enabled: Mapped[int] = mapped_column(SmallInteger, default=1)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())

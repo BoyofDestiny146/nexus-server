@@ -31,6 +31,15 @@ export const CLIENT_FORM_STEPS = [
   { key: "review", label: "Review" },
 ] as const;
 
+/** Edit Client only — Knowledge is assigned after the client exists. */
+export const EDIT_CLIENT_FORM_STEPS = [
+  { key: "profile", label: "Profile" },
+  { key: "guardrails", label: "Guardrails" },
+  { key: "device", label: "Device" },
+  { key: "knowledge", label: "Knowledge" },
+  { key: "review", label: "Review" },
+] as const;
+
 export const TAG_SUGGESTIONS = [
   "exercise-recommended", "low-sodium", "fall-risk",
   "mobility-aid", "medication-reminder", "hearing-impaired",

@@ -2,20 +2,22 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Cpu, Loader2, Plus } from "lucide-react";
-import { apiPatch, ApiError } from "@/lib/api";
-import type { AgentDetail, DeviceRow } from "@/lib/types";
+import { apiGet, apiPatch, apiPut, ApiError } from "@/lib/api";
+import type { AgentDetail, DeviceRow, KnowledgeBase, KnowledgeBaseList } from "@/lib/types";
 import {
-  CLIENT_FORM_STEPS,
+  EDIT_CLIENT_FORM_STEPS,
   clientPatchBody,
   draftFromAgent,
   draftsEqual,
   type ClientFormDraft,
 } from "@/lib/clientForm";
+import { knowledgeIdsEqual } from "@/lib/knowledge";
 import { classNames, relativeTime } from "@/lib/format";
 import { Modal } from "@/components/Modal";
 import { WizardStepper } from "@/components/Wizard";
 import { ProfileFields } from "@/components/clientForm/ProfileFields";
 import { GuardrailsFields } from "@/components/clientForm/GuardrailsFields";
+import { KnowledgeAccessFields } from "@/components/clientForm/KnowledgeAccessFields";
 import { ProfileReview } from "@/components/clientForm/ReviewFields";
 
 const WATCHER_ONLINE_MS = 5 * 60_000;
@@ -47,6 +49,12 @@ export function EditClientWorkspace({
   const [baseline, setBaseline] = useState<ClientFormDraft>(() => draftFromAgent(agent));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [catalog, setCatalog] = useState<KnowledgeBase[]>([]);
+  const [selectedKbIds, setSelectedKbIds] = useState<number[]>([]);
+  const [baselineKbIds, setBaselineKbIds] = useState<number[]>([]);
+  const [kbLoading, setKbLoading] = useState(false);
+  const [kbError, setKbError] = useState<string | null>(null);
+  const [kbReady, setKbReady] = useState(false);
   const agentRef = useRef(agent);
   agentRef.current = agent;
 
@@ -58,21 +66,52 @@ export function EditClientWorkspace({
     setStep(0);
     setErr(null);
     setBusy(false);
+    setKbReady(false);
+    setKbError(null);
+    setKbLoading(true);
+    const agentId = agentRef.current.id;
+    Promise.all([
+      apiGet<KnowledgeBaseList>("/knowledge-base"),
+      apiGet<KnowledgeBaseList>(`/agent/${agentId}/knowledge-bases`),
+    ])
+      .then(([all, assigned]) => {
+        setCatalog(all.list || []);
+        const ids = (assigned.list || [])
+          .filter((kb) => kb.assignmentEnabled !== false)
+          .map((kb) => kb.id);
+        setSelectedKbIds(ids);
+        setBaselineKbIds(ids);
+        setKbReady(true);
+      })
+      .catch((e) => {
+        setKbError(e instanceof ApiError ? e.message : "Failed to load knowledge access.");
+      })
+      .finally(() => setKbLoading(false));
   }, [open]);
 
   function update<K extends keyof ClientFormDraft>(key: K, value: ClientFormDraft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
   }
 
-  const dirty = !draftsEqual(draft, baseline);
+  const profileDirty = !draftsEqual(draft, baseline);
+  const knowledgeDirty = kbReady && !knowledgeIdsEqual(selectedKbIds, baselineKbIds);
+  const dirty = profileDirty || knowledgeDirty;
   const nameOk = draft.name.trim().length > 0;
+  const lastStep = EDIT_CLIENT_FORM_STEPS.length - 1;
 
   async function save() {
     if (busy || !dirty || !nameOk) return;
     setBusy(true);
     setErr(null);
     try {
-      await apiPatch(`/agent/${agent.id}`, clientPatchBody(draft));
+      if (profileDirty) {
+        await apiPatch(`/agent/${agent.id}`, clientPatchBody(draft));
+      }
+      if (knowledgeDirty) {
+        await apiPut(`/agent/${agent.id}/knowledge-bases`, {
+          assignments: selectedKbIds.map((id) => ({ knowledgeBaseId: id, enabled: true })),
+        });
+      }
       onSaved();
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Could not save client.");
@@ -91,12 +130,12 @@ export function EditClientWorkspace({
           <button type="button" className="btn-secondary" disabled={busy} onClick={onClose}>
             Cancel
           </button>
-          {step < CLIENT_FORM_STEPS.length - 1 ? (
+          {step < lastStep ? (
             <button
               type="button"
               className="btn-primary"
               disabled={step === 0 && !nameOk}
-              onClick={() => setStep((s) => Math.min(CLIENT_FORM_STEPS.length - 1, s + 1))}
+              onClick={() => setStep((s) => Math.min(lastStep, s + 1))}
             >
               Next <ChevronRight size={14} />
             </button>
@@ -117,7 +156,7 @@ export function EditClientWorkspace({
       <div className="space-y-6">
         <div className="card p-2">
           <WizardStepper
-            steps={[...CLIENT_FORM_STEPS]}
+            steps={[...EDIT_CLIENT_FORM_STEPS]}
             current={step}
             onJump={(i) => setStep(i)}
           />
@@ -141,6 +180,19 @@ export function EditClientWorkspace({
               />
             )}
             {step === 3 && (
+              <KnowledgeAccessFields
+                catalog={catalog}
+                selectedIds={selectedKbIds}
+                loading={kbLoading}
+                error={kbError}
+                onToggle={(id, checked) => {
+                  setSelectedKbIds((prev) => (
+                    checked ? Array.from(new Set([...prev, id])) : prev.filter((x) => x !== id)
+                  ));
+                }}
+              />
+            )}
+            {step === 4 && (
               <div className="space-y-6">
                 <ProfileReview draft={draft} />
                 <div className="border-t border-slate-line/70 pt-6">
@@ -153,6 +205,18 @@ export function EditClientWorkspace({
                         <li key={d.id} className="font-mono text-[13px]">
                           {d.alias || d.macAddress}
                         </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className="border-t border-slate-line/70 pt-6">
+                  <div className="kicker mb-3">Knowledge Access</div>
+                  {selectedKbIds.length === 0 ? (
+                    <p className="text-[14px] text-slate-muted">No knowledge bases assigned.</p>
+                  ) : (
+                    <ul className="space-y-1 text-[14px] text-slate-deep">
+                      {catalog.filter((kb) => selectedKbIds.includes(kb.id)).map((kb) => (
+                        <li key={kb.id}>{kb.name}</li>
                       ))}
                     </ul>
                   )}
@@ -179,12 +243,13 @@ export function EditClientWorkspace({
           </div>
           <aside className="xl:col-span-1">
             <div className="card p-5 bg-bone-soft/70">
-              <div className="kicker mb-3">{CLIENT_FORM_STEPS[step].label}</div>
+              <div className="kicker mb-3">{EDIT_CLIENT_FORM_STEPS[step].label}</div>
               <p className="text-[13.5px] leading-relaxed text-slate-deep">
                 {step === 0 && "These are the same profile fields as Add a client. Bot name starts voice display commands."}
                 {step === 1 && "Guardrails stay with this client. Existing persona text is kept unless you edit it."}
                 {step === 2 && "Device bind and unbind stay on the existing Attach device control. This step shows current assignment only."}
-                {step === 3 && "Save updates this client. Integrations, chat history, and assessments are not changed."}
+                {step === 3 && "Assign reusable Knowledge Bases. Bound Watchers inherit these. Revel tags are metadata only."}
+                {step === 4 && "Save updates this client and knowledge assignments. Integrations, chat history, and assessments are not changed."}
               </p>
             </div>
           </aside>

@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  Users, Cpu, Shield, Settings, LogOut, Activity, HeartPulse,
+  Users, Cpu, Shield, Settings, LogOut, Activity, HeartPulse, BookOpen,
 } from "lucide-react";
 import { clearSession } from "@/lib/api";
 import { useAuthedUser } from "./RequireAuth";
@@ -12,6 +12,7 @@ import { classNames } from "@/lib/format";
 const NAV = [
   { href: "/patients", label: "Clients",       icon: Users },
   { href: "/devices",  label: "Devices",        icon: Cpu },
+  { href: "/knowledge", label: "Knowledge",     icon: BookOpen },
   { href: "/health",   label: "System Status",  icon: HeartPulse },
   { href: "/admins",   label: "Admins",          icon: Shield, rootOnly: true },
   { href: "/settings", label: "Settings",        icon: Settings },

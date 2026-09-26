@@ -5,6 +5,8 @@ import {
   draftFromAgent,
   draftsEqual,
   EMPTY_CLIENT_DRAFT,
+  CLIENT_FORM_STEPS,
+  EDIT_CLIENT_FORM_STEPS,
   normalizeDraft,
   type ClientFormDraft,
 } from "./clientForm.ts";
@@ -108,4 +110,15 @@ test("draftsEqual ignores surrounding whitespace so Cancel/dirty is stable", () 
     tags: ["fall-risk"],
   };
   assert.equal(draftsEqual(a, b), true);
+});
+
+test("Create Client stepper stays four steps and does not include Knowledge", () => {
+  assert.deepEqual(CLIENT_FORM_STEPS.map((s) => s.key), ["profile", "guardrails", "device", "review"]);
+});
+
+test("Edit Client inserts Knowledge between Device and Review", () => {
+  assert.deepEqual(
+    EDIT_CLIENT_FORM_STEPS.map((s) => s.key),
+    ["profile", "guardrails", "device", "knowledge", "review"],
+  );
 });
