@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Search, Cpu, Wifi, Volume2, ChevronDown, ChevronUp, Pencil, Check, X, Loader2 } from "lucide-react";
+import { Search, Cpu, Wifi, Volume2, Pencil, Check, X, Loader2 } from "lucide-react";
 import { apiGet, apiPatch, ApiError } from "@/lib/api";
 import type { DeviceRow } from "@/lib/types";
 import { classNames, relativeTime } from "@/lib/format";
@@ -115,84 +115,74 @@ function ClientIdCell({ d }: { d: DeviceRow }) {
   );
 }
 
-// ── Desktop table row pair ────────────────────────────────────────────────────
+// ── Desktop table row ─────────────────────────────────────────────────────────
 
 function DeviceTableRow({ d, onDeleted }: { d: DeviceRow; onDeleted: () => void }) {
   const [voiceOpen, setVoiceOpen] = useState(false);
   const online = isOnline(d.lastConnectedAt);
 
   return (
-    <>
-      <tr className="border-b border-slate-line/50 last:border-b-0 hover:bg-bone-soft/60 transition">
-        <td className="px-5 py-4 font-mono text-[13px] text-slate-deep tracking-tight">
-          {d.macAddress}
-        </td>
-        <td className="px-5 py-4">
-          {d.agentId ? (
-            <Link href={`/patients/${d.agentId}`} className="text-teal-deep hover:underline">
-              {d.agentName ?? "—"}
-            </Link>
-          ) : (
-            <span className="text-slate-muted">unbound</span>
-          )}
-        </td>
-        <td className="px-5 py-4 text-slate">{d.alias ?? "—"}</td>
-        <td className="px-5 py-4"><ClientIdCell d={d} /></td>
-        <td className="px-5 py-4 text-slate-muted text-[12px]">{d.board ?? "—"}</td>
-        <td className="px-5 py-4">
-          <div className="flex items-center gap-2">
-            {online && (
-              <span className="inline-flex items-center gap-1.5 chip-teal text-[11px]">
-                <Wifi size={10} /> online
-              </span>
-            )}
-            <span className="text-[12px] text-slate-muted num">
-              {d.lastConnectedAt ? relativeTime(d.lastConnectedAt) : "never"}
+    <tr className="border-b border-slate-line/50 last:border-b-0 hover:bg-bone-soft/60 transition">
+      <td className="px-5 py-4 font-mono text-[13px] text-slate-deep tracking-tight">
+        {d.macAddress}
+      </td>
+      <td className="px-5 py-4">
+        {d.agentId ? (
+          <Link href={`/patients/${d.agentId}`} className="text-teal-deep hover:underline">
+            {d.agentName ?? "—"}
+          </Link>
+        ) : (
+          <span className="text-slate-muted">unbound</span>
+        )}
+      </td>
+      <td className="px-5 py-4 text-slate">{d.alias ?? "—"}</td>
+      <td className="px-5 py-4"><ClientIdCell d={d} /></td>
+      <td className="px-5 py-4 text-slate-muted text-[12px]">{d.board ?? "—"}</td>
+      <td className="px-5 py-4">
+        <div className="flex items-center gap-2">
+          {online && (
+            <span className="inline-flex items-center gap-1.5 chip-teal text-[11px]">
+              <Wifi size={10} /> online
             </span>
-          </div>
-        </td>
-        <td className="px-5 py-4">
-          <button
-            onClick={() => setVoiceOpen((v) => !v)}
-            className={classNames(
-              "inline-flex items-center gap-1.5 text-[12px] tracking-tight transition px-2.5 py-1 rounded-card border",
-              voiceOpen
-                ? "bg-teal-tint border-teal/20 text-teal-deep"
-                : "border-slate-line/70 text-slate-muted hover:text-slate-deep hover:border-slate-line",
-            )}
-            aria-expanded={voiceOpen}
-            aria-controls={`voice-panel-${d.id}`}
-            aria-label="Control"
-          >
-            <Volume2 size={12} strokeWidth={1.75} />
-            Control
-            {voiceOpen ? (
-              <ChevronUp size={11} strokeWidth={1.75} />
-            ) : (
-              <ChevronDown size={11} strokeWidth={1.75} />
-            )}
-          </button>
-        </td>
-      </tr>
-
-      {/* Voice expander row — occupies the full table width */}
-      {voiceOpen && (
-        <tr id={`voice-panel-${d.id}`}>
-          <td
-            colSpan={7}
-            className="px-5 py-4 bg-bone-soft border-b border-slate-line/50"
-          >
-            <VoiceSelector
-              mac={d.macAddress}
-              deviceId={d.id}
-              agentId={d.agentId}
-              agentName={d.agentName}
-              onDeleted={onDeleted}
-            />
-          </td>
-        </tr>
-      )}
-    </>
+          )}
+          <span className="text-[12px] text-slate-muted num">
+            {d.lastConnectedAt ? relativeTime(d.lastConnectedAt) : "never"}
+          </span>
+        </div>
+      </td>
+      <td className="px-5 py-4">
+        <button
+          type="button"
+          onClick={() => setVoiceOpen(true)}
+          className={classNames(
+            "inline-flex items-center gap-1.5 text-[12px] tracking-tight transition px-2.5 py-1 rounded-card border",
+            voiceOpen
+              ? "bg-teal-tint border-teal/20 text-teal-deep"
+              : "border-slate-line/70 text-slate-muted hover:text-slate-deep hover:border-slate-line",
+          )}
+          aria-haspopup="dialog"
+          aria-expanded={voiceOpen}
+          aria-label="Control"
+        >
+          <Volume2 size={12} strokeWidth={1.75} />
+          Control
+        </button>
+        {voiceOpen && (
+          <VoiceSelector
+            open={voiceOpen}
+            onClose={() => setVoiceOpen(false)}
+            mac={d.macAddress}
+            deviceId={d.id}
+            agentId={d.agentId}
+            agentName={d.agentName}
+            onDeleted={() => {
+              setVoiceOpen(false);
+              onDeleted();
+            }}
+          />
+        )}
+      </td>
+    </tr>
   );
 }
 
@@ -221,42 +211,36 @@ function DeviceCard({ d, onDeleted }: { d: DeviceRow; onDeleted: () => void }) {
         {d.lastConnectedAt ? relativeTime(d.lastConnectedAt) : "never"}
       </div>
 
-      {/* Voice toggle */}
       <div className="mt-3">
         <button
-          onClick={() => setVoiceOpen((v) => !v)}
+          type="button"
+          onClick={() => setVoiceOpen(true)}
           className={classNames(
             "inline-flex items-center gap-1.5 text-[12px] tracking-tight transition px-2.5 py-1 rounded-card border",
             voiceOpen
               ? "bg-teal-tint border-teal/20 text-teal-deep"
               : "border-slate-line/70 text-slate-muted hover:text-slate-deep hover:border-slate-line",
           )}
+          aria-haspopup="dialog"
           aria-expanded={voiceOpen}
-          aria-controls={`voice-panel-card-${d.id}`}
           aria-label="Control"
         >
           <Volume2 size={12} strokeWidth={1.75} />
           Control
-          {voiceOpen ? (
-            <ChevronUp size={11} strokeWidth={1.75} />
-          ) : (
-            <ChevronDown size={11} strokeWidth={1.75} />
-          )}
         </button>
-
         {voiceOpen && (
-          <div
-            id={`voice-panel-card-${d.id}`}
-            className="mt-3 p-4 bg-white border border-slate-line/70 rounded-card"
-          >
-            <VoiceSelector
-              mac={d.macAddress}
-              deviceId={d.id}
-              agentId={d.agentId}
-              agentName={d.agentName}
-              onDeleted={onDeleted}
-            />
-          </div>
+          <VoiceSelector
+            open={voiceOpen}
+            onClose={() => setVoiceOpen(false)}
+            mac={d.macAddress}
+            deviceId={d.id}
+            agentId={d.agentId}
+            agentName={d.agentName}
+            onDeleted={() => {
+              setVoiceOpen(false);
+              onDeleted();
+            }}
+          />
         )}
       </div>
     </li>

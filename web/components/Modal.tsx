@@ -12,13 +12,20 @@ export function Modal({
   children,
   footer,
   size = "md",
+  centered = false,
+  panelClassName,
+  zClassName = "z-[80]",
 }: {
   open: boolean;
   onClose: () => void;
   title?: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
-  size?: "sm" | "md" | "lg" | "workspace";
+  size?: "sm" | "md" | "lg" | "xl" | "workspace";
+  /** Vertically center the panel instead of pinning it below the top padding. */
+  centered?: boolean;
+  panelClassName?: string;
+  zClassName?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -50,11 +57,16 @@ export function Modal({
   const widthCls =
     size === "sm" ? "max-w-md"
     : size === "lg" ? "max-w-3xl"
+    : size === "xl" ? "max-w-4xl"
     : size === "workspace" ? "max-w-5xl"
     : "max-w-xl";
-  const overlayPad = size === "workspace" ? "pt-6 sm:pt-10 pb-6" : "pt-24";
-  const panelExtra = size === "workspace" ? "max-h-[min(92vh,58rem)] flex flex-col" : "";
-  const bodyExtra = size === "workspace" ? "overflow-y-auto min-h-0 flex-1" : "";
+  const overlayPad = centered
+    ? "items-center py-6 sm:py-10"
+    : size === "workspace" ? "items-start pt-6 sm:pt-10 pb-6"
+    : "items-start pt-24";
+  const scrollable = centered || size === "workspace";
+  const panelExtra = scrollable ? "max-h-[min(92vh,58rem)] flex flex-col" : "";
+  const bodyExtra = scrollable ? "overflow-y-auto min-h-0 flex-1" : "";
 
   return createPortal(
     <div
@@ -62,7 +74,8 @@ export function Modal({
       aria-modal="true"
       aria-labelledby={title ? "modal-title" : undefined}
       className={classNames(
-        "fixed inset-0 z-[80] flex items-start justify-center px-4",
+        "fixed inset-0 flex justify-center px-4",
+        zClassName,
         overlayPad,
       )}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onCloseRef.current(); }}
@@ -79,12 +92,13 @@ export function Modal({
           "relative z-10 pointer-events-auto w-full bg-white border border-slate-line rounded-card outline-none toast-in",
           widthCls,
           panelExtra,
+          panelClassName,
         )}
         onMouseDown={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
       >
         {title && (
-          <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-slate-line/70">
+          <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-slate-line/70 shrink-0">
             {title && (
               <h2 id="modal-title" className="display-3 text-slate-deep">
                 {title}
@@ -102,7 +116,7 @@ export function Modal({
         )}
         <div className={classNames("px-6 py-5", bodyExtra)}>{children}</div>
         {footer && (
-          <div className="px-6 py-4 border-t border-slate-line/70 bg-bone-soft rounded-b-card flex items-center justify-end gap-3">
+          <div className="px-6 py-4 border-t border-slate-line/70 bg-bone-soft rounded-b-card flex items-center justify-end gap-3 shrink-0">
             {footer}
           </div>
         )}
