@@ -189,6 +189,28 @@ export function formatExtractedChars(count: number | null | undefined): string {
   return Math.trunc(count).toLocaleString("en-US");
 }
 
+export function contentKindLabel(kind: string | null | undefined): string {
+  const value = (kind || "").toLowerCase();
+  if (value === "narrative") return "Narrative";
+  if (value === "specification") return "Specification";
+  if (value === "telemetry") return "Telemetry";
+  if (value === "table") return "Table";
+  if (value === "mixed") return "Mixed";
+  return kind || "—";
+}
+
+export function knowledgeCitation(hit: {
+  sourceName?: string | null;
+  source?: string | null;
+  slideNumber?: number | null;
+  pageNumber?: number | null;
+}): string {
+  const name = (hit.sourceName || hit.source || "Source").trim() || "Source";
+  if (hit.slideNumber != null) return `${name} — Slide ${hit.slideNumber}`;
+  if (hit.pageNumber != null) return `${name} — Page ${hit.pageNumber}`;
+  return name;
+}
+
 /** Client-side id from the browser URL. Static export only prerenders
  *  `/knowledge/_/`; Caddy serves that HTML for `/careconnect/knowledge/{id}/`
  *  and this parser reads the real id (same pattern as Patient detail). */

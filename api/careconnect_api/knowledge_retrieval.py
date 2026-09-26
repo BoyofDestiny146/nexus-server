@@ -17,6 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .db import async_session_factory
 from .envelope import APIException
 from .knowledge import resolve_device_knowledge_context, serialize_source
+from .knowledge_rank import (
+    classify_content,
+    prepare_grounded_context,
+    rank_results,
+)
 from .models import KnowledgeChunk, KnowledgeSource, KnowledgeTopic
 from .settings import settings
 
@@ -116,6 +121,7 @@ async def replace_chunks(
             slide_number=item.get("slideNumber"),
             section_title=(item.get("sectionTitle") or None),
             content_hash=item.get("contentHash") or "",
+            content_kind=classify_content(text, hint=item.get("kindHint") or item.get("contentKind")),
         )
         db.add(row)
         rows.append(row)
@@ -135,6 +141,8 @@ def _index_payload(source: KnowledgeSource, row: KnowledgeChunk, topic: Knowledg
         "enabled": bool(source.enabled),
         "pageNumber": row.page_number,
         "slideNumber": row.slide_number,
+        "sectionTitle": row.section_title,
+        "contentKind": row.content_kind,
         "revelTag": topic.revel_tag if topic is not None else None,
         "revelAutoTrigger": bool(topic.revel_auto_trigger) if topic is not None else None,
     }
@@ -442,15 +450,21 @@ async def hydrate_search_results(
             score_f = round(float(score), 4) if score is not None else None
         except (TypeError, ValueError):
             score_f = None
+        kind = chunk.content_kind or classify_content(chunk.text)
         results.append(
             {
+                "chunkId": chunk.id,
                 "knowledgeBaseId": chunk.knowledge_base_id,
                 "sourceId": chunk.source_id,
                 "sourceName": source.name if source is not None else payload.get("filename"),
+                "originalFilename": source.original_filename if source is not None else None,
                 "topicId": topic.id if topic is not None else topic_id,
                 "topic": topic.title if topic is not None else None,
                 "text": chunk.text,
                 "score": score_f,
+                "vectorScore": score_f,
+                "contentKind": kind,
+                "sectionTitle": chunk.section_title,
                 "pageNumber": chunk.page_number,
                 "slideNumber": chunk.slide_number,
                 "revelTag": topic.revel_tag if topic is not None else None,
@@ -472,17 +486,36 @@ async def semantic_search(
     q = (query or "").strip()
     if not q:
         raise APIException(400, "query is required")
+    result_limit = max(1, min(int(limit or settings.knowledge_result_limit or 5), 50))
+    candidate_limit = max(result_limit, int(settings.knowledge_candidate_limit or 15))
+    candidate_limit = min(max(candidate_limit, 1), 50)
+    min_score = float(settings.knowledge_min_score)
     data = await ks_request(
         "POST",
         "/v1/search",
         {
             "query": q,
             "knowledgeBaseIds": ids,
-            "limit": max(1, min(int(limit or 5), 50)),
+            "limit": candidate_limit,
             "enabledOnly": bool(enabled_only),
         },
     )
-    return await hydrate_search_results(db, query=q, hits=list(data.get("results") or []))
+    hydrated = await hydrate_search_results(db, query=q, hits=list(data.get("results") or []))
+    ranked = rank_results(
+        q,
+        list(hydrated.get("results") or []),
+        min_score=min_score,
+        limit=result_limit,
+    )
+    return {
+        "query": q,
+        "results": ranked,
+        "grounded": prepare_grounded_context(q, ranked, knowledge_base_ids=ids),
+        "candidatesSearched": len(hydrated.get("results") or []),
+        "resultsReturned": len(ranked),
+        "minScore": min_score,
+        "candidateLimit": candidate_limit,
+    }
 
 
 async def device_knowledge_search(
@@ -511,6 +544,10 @@ async def device_knowledge_search(
         enabled_only=True,
     )
     payload["results"] = searched["results"]
+    payload["grounded"] = searched.get("grounded")
+    payload["candidatesSearched"] = searched.get("candidatesSearched")
+    payload["resultsReturned"] = searched.get("resultsReturned")
+    payload["minScore"] = searched.get("minScore")
     return payload
 
 

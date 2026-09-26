@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     ollama_embed_model: str = "nomic-embed-text"
     # Embed+upsert batch size so the Sources UI can poll real indexed counts.
     knowledge_index_batch_size: int = 8
+    # Retrieval quality (Phase 3.1). Live useful cosine hits were ~0.55–0.62;
+    # the floor stays below that so modest scores are not dropped.
+    knowledge_min_score: float = 0.35
+    knowledge_candidate_limit: int = 15
+    knowledge_result_limit: int = 5
 
     # Bootstrap admin credentials — read from env or secret files.
     # Usernames are fixed as admin1 / admin2 (generic, not personal).

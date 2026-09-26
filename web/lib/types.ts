@@ -329,19 +329,50 @@ export interface KnowledgeSearchHit {
   knowledgeBaseId: number;
   sourceId: number;
   sourceName: string;
+  originalFilename?: string | null;
   topicId: number | null;
   topic?: string | null;
   text: string;
+  excerpt?: string | null;
   score: number | null;
+  vectorScore?: number | null;
+  rerankAdjustment?: number | null;
+  rerankReasons?: string[];
+  rank?: number;
+  contentKind?: string | null;
+  sectionTitle?: string | null;
+  chunkId?: number;
   pageNumber: number | null;
   slideNumber: number | null;
   revelTag: string | null;
   revelAutoTrigger: boolean;
 }
 
+export interface KnowledgeGroundedContext {
+  query: string;
+  knowledgeBases: number[];
+  context: Array<{
+    citation: string;
+    topic: string | null;
+    text: string;
+    revelTag: string | null;
+    chunkId?: number | null;
+    sourceId?: number | null;
+    knowledgeBaseId?: number | null;
+    originalFilename?: string | null;
+    slideNumber?: number | null;
+    pageNumber?: number | null;
+  }>;
+}
+
 export interface KnowledgeSearchResponse {
   query: string;
   results: KnowledgeSearchHit[];
+  grounded?: KnowledgeGroundedContext;
+  candidatesSearched?: number;
+  resultsReturned?: number;
+  minScore?: number | null;
+  candidateLimit?: number;
 }
 
 export interface KnowledgeBaseList {

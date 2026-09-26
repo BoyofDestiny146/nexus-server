@@ -127,10 +127,12 @@ def test_pptx_slide_text_and_notes(source_dir: Path):
     pres.save(path)
     out = extract_chunks("pptx", rel)
     assert out["chunkCount"] >= 1
-    chunk = out["chunks"][0]
-    assert chunk["slideNumber"] == 1
-    assert "adult brief sensor" in chunk["text"].lower()
-    assert "silent humidity" in chunk["text"].lower()
+    texts = " ".join(c["text"] for c in out["chunks"])
+    assert all(c["slideNumber"] == 1 for c in out["chunks"])
+    assert "adult brief sensor" in texts.lower()
+    assert "silent humidity" in texts.lower()
+    assert "Notes:" not in texts
+    assert not any(c["sectionTitle"] == "Slide: 1" for c in out["chunks"])
 
 
 def test_image_is_metadata_only(source_dir: Path):
@@ -157,3 +159,51 @@ def test_chunk_units_keep_slide_boundary():
     ]
     chunks = chunk_units(units)
     assert {c["slideNumber"] for c in chunks} == {1, 2}
+    assert [c["slideNumber"] for c in chunks] == [1, 2]
+
+
+def test_pptx_title_not_flattened_and_duplicates_dropped(source_dir: Path):
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    pres = Presentation()
+    layout = pres.slide_layouts[0]
+    slide = pres.slides.add_slide(layout)
+    slide.shapes.title.text = "Briefs Sensor"
+    # Duplicate the title in a body-like textbox.
+    box = slide.shapes.add_textbox(Inches(0.5), Inches(2.0), Inches(8), Inches(1))
+    box.text_frame.text = "Briefs Sensor"
+    body = slide.shapes.add_textbox(Inches(0.5), Inches(3.0), Inches(8), Inches(2))
+    body.text_frame.text = "Measures humidity and posts a silent alert."
+    rel = "1/7/source.pptx"
+    path = source_dir / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pres.save(path)
+    extracted = extract_file("pptx", rel)
+    units = extracted["units"]
+    assert units
+    assert units[0]["sectionTitle"] == "Briefs Sensor"
+    body_text = "\n".join(u["text"] for u in units)
+    assert body_text.lower().count("briefs sensor") == 0
+    assert "Slide: 2" not in body_text
+    assert "Measures humidity" in body_text
+
+
+def test_chunk_units_do_not_merge_unrelated_slides():
+    long_a = "Adult brief sensor design. " * 40
+    long_b = "Care provider benefits include quieter nights. " * 40
+    chunks = chunk_units(
+        [
+            {"text": long_a, "slideNumber": 2, "sectionTitle": "Briefs Sensor"},
+            {"text": long_b, "slideNumber": 8, "sectionTitle": "Care Provider Benefits"},
+        ]
+    )
+    assert {c["slideNumber"] for c in chunks} == {2, 8}
+    assert all(c["sectionTitle"] in {"Briefs Sensor", "Care Provider Benefits"} for c in chunks)
+    # Long slides may split, but never mix the two topics in one chunk.
+    for chunk in chunks:
+        if chunk["slideNumber"] == 2:
+            assert "care provider benefits" not in chunk["text"].lower()
+        else:
+            assert "adult brief sensor design" not in chunk["text"].lower()
+

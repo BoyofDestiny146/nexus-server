@@ -9,7 +9,6 @@ import {
 import { apiDelete, apiDownload, apiForm, apiGet, apiPost, apiPut, ApiError } from "@/lib/api";
 import type {
   KnowledgeBase,
-  KnowledgeSearchHit,
   KnowledgeSearchResponse,
   KnowledgeSource,
   KnowledgeSourceList,
@@ -17,6 +16,7 @@ import type {
   KnowledgeTopic,
 } from "@/lib/types";
 import {
+  contentKindLabel,
   formatExtractedChars,
   formatSourceBytes,
   isKnowledgeWorkspaceTab,
@@ -919,9 +919,11 @@ function RevelTab({ topics }: { topics: KnowledgeTopic[] }) {
 
 function TestingTab({ kbId }: { kbId: number }) {
   const [question, setQuestion] = useState("");
-  const [results, setResults] = useState<KnowledgeSearchHit[] | null>(null);
+  const [payload, setPayload] = useState<KnowledgeSearchResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [debug, setDebug] = useState(false);
+  const [openFull, setOpenFull] = useState<Record<string, boolean>>({});
 
   async function search() {
     if (busy) return;
@@ -938,14 +940,17 @@ function TestingTab({ kbId }: { kbId: number }) {
         query,
         limit: 5,
       });
-      setResults(data.results || []);
+      setPayload(data);
+      setOpenFull({});
     } catch (e) {
-      setResults(null);
+      setPayload(null);
       setErr(e instanceof ApiError ? e.message : "Search failed.");
     } finally {
       setBusy(false);
     }
   }
+
+  const results = payload?.results || [];
 
   return (
     <div className="space-y-5 max-w-3xl">
@@ -964,10 +969,16 @@ function TestingTab({ kbId }: { kbId: number }) {
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="How does the adult brief sensor work?"
         />
-        <button type="button" className="btn-primary mt-3" disabled={busy} onClick={() => void search()}>
-          {busy ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
-          Search Knowledge
-        </button>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button type="button" className="btn-primary" disabled={busy} onClick={() => void search()}>
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+            Search Knowledge
+          </button>
+          <label className="inline-flex items-center gap-2 text-[13px] text-slate-deep">
+            <input type="checkbox" className="accent-teal" checked={debug} onChange={(e) => setDebug(e.target.checked)} />
+            Show retrieval debug details
+          </label>
+        </div>
       </div>
       {err && (
         <div className="flex items-start gap-2 text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">
@@ -975,29 +986,59 @@ function TestingTab({ kbId }: { kbId: number }) {
           {err}
         </div>
       )}
-      {results && (
+      {payload && (
         <div className="space-y-3">
-          <div className="text-[13px] text-slate-muted">
-            Results: {results.length}
+          <div className="text-[13px] text-slate-muted flex flex-wrap gap-x-4 gap-y-1">
+            <span>Candidates searched: {payload.candidatesSearched ?? results.length}</span>
+            <span>Results returned: {payload.resultsReturned ?? results.length}</span>
+            <span>Minimum score: {payload.minScore != null ? payload.minScore : "—"}</span>
           </div>
           {results.length === 0 ? (
             <p className="text-[14px] text-slate-muted">No indexed matches in this Knowledge Base.</p>
           ) : (
             <ul className="space-y-3">
-              {results.map((row, index) => (
-                <li key={`${row.sourceId}-${row.topicId ?? "none"}-${index}`} className="card px-4 py-3.5 space-y-2">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <div className="text-[14px] text-slate-deep">{row.sourceName}</div>
-                    <div className="text-[12px] num text-slate-muted">Score {row.score ?? "—"}</div>
-                  </div>
-                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-slate-muted">
-                    <span>{sourceLocationLabel(row)}</span>
-                    <span>Topic: {row.topic || "—"}</span>
-                    <span>Revel tag: <span className="font-mono text-slate-deep">{row.revelTag || "—"}</span></span>
-                  </div>
-                  <p className="text-[13px] text-slate-deep leading-relaxed">{row.text}</p>
-                </li>
-              ))}
+              {results.map((row, index) => {
+                const key = `${row.chunkId ?? row.sourceId}-${index}`;
+                const expanded = !!openFull[key];
+                return (
+                  <li key={key} className="card px-4 py-3.5 space-y-2">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <div className="text-[14px] text-slate-deep">
+                        <span className="num text-slate-muted mr-2">{row.rank ?? index + 1}.</span>
+                        {row.sourceName}
+                      </div>
+                      <div className="text-[12px] num text-slate-muted">Score {row.score ?? "—"}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-slate-muted">
+                      <span>{sourceLocationLabel(row)}</span>
+                      <span>Topic: {row.topic || "—"}</span>
+                      <span>Revel tag: <span className="font-mono text-slate-deep">{row.revelTag || "—"}</span></span>
+                      <span>Content kind: {contentKindLabel(row.contentKind)}</span>
+                    </div>
+                    <p className="text-[13px] text-slate-deep leading-relaxed">
+                      {expanded ? row.text : (row.excerpt || row.text)}
+                    </p>
+                    {row.text && row.text !== (row.excerpt || "") ? (
+                      <button
+                        type="button"
+                        className="text-[12px] text-teal-deep"
+                        onClick={() => setOpenFull((prev) => ({ ...prev, [key]: !expanded }))}
+                      >
+                        {expanded ? "Hide full chunk" : "Show full chunk"}
+                      </button>
+                    ) : null}
+                    {debug ? (
+                      <div className="rounded-card border border-slate-line/70 bg-bone-soft px-3 py-2 text-[12px] text-slate-muted space-y-0.5">
+                        <div>Raw vector score: {row.vectorScore ?? "—"}</div>
+                        <div>Rerank adjustment: {row.rerankAdjustment ?? "—"}</div>
+                        <div>Reasons: {(row.rerankReasons || []).join(", ") || "none"}</div>
+                        <div>Final rank: {row.rank ?? index + 1}</div>
+                        <div>Chunk ID: {row.chunkId ?? "—"}</div>
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

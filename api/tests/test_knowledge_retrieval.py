@@ -285,11 +285,23 @@ async def test_reprocess_indexes_chunks_and_scoped_search(
     assert hit["sourceName"] == "Bio-EV Product Overview"
     assert hit["topicId"] == topic_id
     assert hit["slideNumber"] == 4
-    assert hit["score"] == 0.83
+    assert hit["vectorScore"] == 0.83
+    assert hit["score"] >= hit["vectorScore"]
+    assert hit["contentKind"]
+    assert hit["chunkId"] == chunks[0].id
     assert hit["revelTag"] == "care_overview"
     assert hit["revelAutoTrigger"] is False
     assert "adult brief sensor" in hit["text"].lower()
+    assert data["candidatesSearched"] == 1
+    assert data["resultsReturned"] == 1
+    assert data["minScore"] == 0.35
+    grounded = data["grounded"]
+    assert grounded["query"] == data["query"]
+    assert grounded["knowledgeBases"] == [kb["id"]]
+    assert grounded["context"][0]["chunkId"] == chunks[0].id
+    assert "Slide 4" in grounded["context"][0]["citation"]
     assert fake_ks.search_calls[-1]["knowledgeBaseIds"] == [kb["id"]]
+    assert fake_ks.search_calls[-1]["limit"] == 15
     assert other["id"] not in fake_ks.search_calls[-1]["knowledgeBaseIds"]
 
 

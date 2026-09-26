@@ -34,6 +34,8 @@ class IndexChunkIn(BaseModel):
     enabled: bool = True
     pageNumber: int | None = None
     slideNumber: int | None = None
+    sectionTitle: str | None = None
+    contentKind: str | None = None
     revelTag: str | None = None
     revelAutoTrigger: bool | None = None
     clientId: str | None = None
@@ -85,6 +87,8 @@ def chunk_payload(row: IndexChunkIn) -> dict[str, Any]:
         "enabled": bool(row.enabled),
         "pageNumber": row.pageNumber,
         "slideNumber": row.slideNumber,
+        "sectionTitle": row.sectionTitle,
+        "contentKind": row.contentKind,
         "revelTag": row.revelTag,
         "revelAutoTrigger": row.revelAutoTrigger,
         "clientId": row.clientId,

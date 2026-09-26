@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   assignedKnowledgeIds,
+  contentKindLabel,
   formatExtractedChars,
   formatSourceBytes,
   isKnowledgeWorkspaceTab,
@@ -114,6 +115,8 @@ test("live source processing progress is derived from API state", () => {
   );
   assert.equal(sourceChunkProgressLabel({ chunkCount: 0, indexedChunkCount: 0 }), null);
   assert.equal(formatExtractedChars(12403), "12,403");
+  assert.equal(contentKindLabel("telemetry"), "Telemetry");
+  assert.equal(contentKindLabel("narrative"), "Narrative");
   assert.equal(
     shouldPollSourceProgress([
       { status: "ready" },
