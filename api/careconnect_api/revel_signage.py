@@ -101,7 +101,7 @@ class RevelSignageSettings(BaseSettings):
             "default_device_id",
         ),
     )
-    execute_enabled: bool = Field(
+    revel_execute_enabled: bool = Field(
         default=False,
         validation_alias=AliasChoices(
             "REVEL_EXECUTE_ENABLED",

@@ -146,14 +146,14 @@ def test_execute_enabled_only_from_revel_env(monkeypatch):
     monkeypatch.delenv("REVEL_EXECUTE_ENABLED", raising=False)
     monkeypatch.delenv("CC_REVEL_EXECUTE_ENABLED", raising=False)
     monkeypatch.setenv("EXECUTE_ENABLED", "true")
-    assert RevelSignageSettings().execute_enabled is False
+    assert RevelSignageSettings().revel_execute_enabled is False
     monkeypatch.setenv("REVEL_EXECUTE_ENABLED", "false")
-    assert RevelSignageSettings().execute_enabled is False
+    assert RevelSignageSettings().revel_execute_enabled is False
     monkeypatch.setenv("REVEL_EXECUTE_ENABLED", "true")
-    assert RevelSignageSettings().execute_enabled is True
+    assert RevelSignageSettings().revel_execute_enabled is True
     monkeypatch.delenv("REVEL_EXECUTE_ENABLED", raising=False)
     monkeypatch.setenv("CC_REVEL_EXECUTE_ENABLED", "true")
-    assert RevelSignageSettings().execute_enabled is True
+    assert RevelSignageSettings().revel_execute_enabled is True
 
 
 def test_cc_prefixed_aliases(monkeypatch, tmp_path):

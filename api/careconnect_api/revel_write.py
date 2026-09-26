@@ -72,7 +72,7 @@ revel_puts_attempted = 0
 
 def revel_execute_enabled() -> bool:
     """Server env only. Callers cannot flip this."""
-    return bool(load_revel_signage_settings().execute_enabled)
+    return bool(load_revel_signage_settings().revel_execute_enabled)
 
 
 def normalize_row_id(raw: Any) -> str:

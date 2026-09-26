@@ -96,7 +96,7 @@ def _state(**over) -> dict:
 
 def test_revel_execute_enabled_defaults_false():
     assert revel_execute_enabled() is False
-    assert RevelSignageSettings().execute_enabled is False
+    assert RevelSignageSettings().revel_execute_enabled is False
 
 
 def test_bind_uses_live_keys_only():
