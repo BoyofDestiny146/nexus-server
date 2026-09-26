@@ -100,6 +100,7 @@ function PatientDetailView({ id }: { id: string }) {
 
   const [editOpen, setEditOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [knowledgeTick, setKnowledgeTick] = useState(0);
 
   const live = useLiveChat(id);
 
@@ -381,7 +382,12 @@ function PatientDetailView({ id }: { id: string }) {
             </div>
             <div>
               <SectionLabel>Connections</SectionLabel>
-              <ClientIntegrations agentId={id} botName={agent.botName} />
+              <ClientIntegrations
+                agentId={id}
+                botName={agent.botName}
+                agentName={agent.agentName}
+                knowledgeTick={knowledgeTick}
+              />
             </div>
             <div>
               <SectionLabel>Devices</SectionLabel>
@@ -722,6 +728,7 @@ function PatientDetailView({ id }: { id: string }) {
           setEditOpen(false);
           toast.push("Client updated.", "success");
           await refreshAgentAndDevices();
+          setKnowledgeTick((n) => n + 1);
         }}
       />
 

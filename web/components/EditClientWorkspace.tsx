@@ -11,7 +11,12 @@ import {
   draftsEqual,
   type ClientFormDraft,
 } from "@/lib/clientForm";
-import { knowledgeIdsEqual } from "@/lib/knowledge";
+import {
+  assignedKnowledgeIds,
+  knowledgeAssignmentPutBody,
+  knowledgeIdsEqual,
+  toggleKnowledgeSelection,
+} from "@/lib/knowledge";
 import { classNames, relativeTime } from "@/lib/format";
 import { Modal } from "@/components/Modal";
 import { WizardStepper } from "@/components/Wizard";
@@ -76,9 +81,7 @@ export function EditClientWorkspace({
     ])
       .then(([all, assigned]) => {
         setCatalog(all.list || []);
-        const ids = (assigned.list || [])
-          .filter((kb) => kb.assignmentEnabled !== false)
-          .map((kb) => kb.id);
+        const ids = assignedKnowledgeIds(assigned.list);
         setSelectedKbIds(ids);
         setBaselineKbIds(ids);
         setKbReady(true);
@@ -108,9 +111,7 @@ export function EditClientWorkspace({
         await apiPatch(`/agent/${agent.id}`, clientPatchBody(draft));
       }
       if (knowledgeDirty) {
-        await apiPut(`/agent/${agent.id}/knowledge-bases`, {
-          assignments: selectedKbIds.map((id) => ({ knowledgeBaseId: id, enabled: true })),
-        });
+        await apiPut(`/agent/${agent.id}/knowledge-bases`, knowledgeAssignmentPutBody(selectedKbIds));
       }
       onSaved();
     } catch (e) {
@@ -186,9 +187,7 @@ export function EditClientWorkspace({
                 loading={kbLoading}
                 error={kbError}
                 onToggle={(id, checked) => {
-                  setSelectedKbIds((prev) => (
-                    checked ? Array.from(new Set([...prev, id])) : prev.filter((x) => x !== id)
-                  ));
+                  setSelectedKbIds((prev) => toggleKnowledgeSelection(prev, id, checked));
                 }}
               />
             )}

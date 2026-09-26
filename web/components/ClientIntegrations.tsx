@@ -1,16 +1,33 @@
 "use client";
 
 /**
- * Client Detail — CareConnect / Revel / Google Calendar / Directed Logic hub.
+ * Client Detail — CareConnect / Revel / Google Calendar / Knowledge hub.
  * Identity belongs to the person (ai_agent), not a Watcher.
  * Google Calendar is read-only (private iCal URL). Nexus never writes events.
+ * Knowledge assignments use the same GET/PUT /agent/{id}/knowledge-bases path
+ * as Edit Client (cc_client_knowledge_base).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Calendar, Check, CircuitBoard, Copy, KeyRound, Link2, Loader2, Plus, Unlink2, X, type LucideIcon } from "lucide-react";
+import { AlertTriangle, BookOpen, Calendar, Check, Copy, KeyRound, Link2, Loader2, Plus, Unlink2, X, type LucideIcon } from "lucide-react";
 import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api";
 import { Modal } from "@/components/Modal";
-import type { CalendarEventPreview, ClientIntegration, RevelDiscoveredDevice, RevelVoiceAction } from "@/lib/types";
+import { KnowledgeAccessFields } from "@/components/clientForm/KnowledgeAccessFields";
+import type {
+  CalendarEventPreview,
+  ClientIntegration,
+  KnowledgeBase,
+  KnowledgeBaseList,
+  RevelDiscoveredDevice,
+  RevelVoiceAction,
+} from "@/lib/types";
+import {
+  assignedKnowledgeIds,
+  knowledgeAssignmentPutBody,
+  knowledgeAssignmentStatus,
+  knowledgeIdsEqual,
+  toggleKnowledgeSelection,
+} from "@/lib/knowledge";
 import { fargoDateTime } from "@/lib/time";
 import { relativeTime, classNames } from "@/lib/format";
 import {
@@ -34,9 +51,12 @@ import {
 interface Props {
   agentId: string;
   botName?: string | null;
+  agentName?: string | null;
+  /** Bump after Edit Client saves so the Connections row refetches assignments. */
+  knowledgeTick?: number;
 }
 
-type Panel = "careconnect" | "revel" | "google_calendar" | null;
+type Panel = "careconnect" | "revel" | "google_calendar" | "knowledge" | null;
 type Copied = "credentials" | "endpoint" | null;
 
 const DEFAULT_PORTAL = "https://care.nexus.warehouse-13.biz";
@@ -169,7 +189,7 @@ function ConnectionRow({
   );
 }
 
-export function ClientIntegrations({ agentId, botName }: Props) {
+export function ClientIntegrations({ agentId, botName, agentName, knowledgeTick = 0 }: Props) {
   const [items, setItems] = useState<ClientIntegration[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
@@ -190,6 +210,14 @@ export function ClientIntegrations({ agentId, botName }: Props) {
   const [copied, setCopied] = useState<Copied>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const discoverClickGuard = useRef(0);
+  const knowledgeRev = useRef(0);
+  const knowledgeLoadGen = useRef(0);
+  const [knowledgeCount, setKnowledgeCount] = useState<number | null>(null);
+  const [catalog, setCatalog] = useState<KnowledgeBase[]>([]);
+  const [selectedKbIds, setSelectedKbIds] = useState<number[]>([]);
+  const [baselineKbIds, setBaselineKbIds] = useState<number[]>([]);
+  const [kbLoading, setKbLoading] = useState(false);
+  const [kbError, setKbError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const data = await apiGet<{ list: ClientIntegration[] }>(
@@ -207,6 +235,20 @@ export function ClientIntegrations({ agentId, botName }: Props) {
       });
     return () => { cancelled = true; };
   }, [refresh]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const rev = knowledgeRev.current;
+    apiGet<KnowledgeBaseList>(`/agent/${agentId}/knowledge-bases`)
+      .then((data) => {
+        if (cancelled || rev !== knowledgeRev.current) return;
+        setKnowledgeCount(assignedKnowledgeIds(data.list).length);
+      })
+      .catch(() => {
+        if (!cancelled && rev === knowledgeRev.current) setKnowledgeCount(0);
+      });
+    return () => { cancelled = true; };
+  }, [agentId, knowledgeTick]);
 
   const cc = items?.find((i) => i.provider === "careconnect");
   const revel = items?.find((i) => i.provider === "revel");
@@ -233,7 +275,55 @@ export function ClientIntegrations({ agentId, botName }: Props) {
     setShowReplaceCalendar(false);
     setTestNote(null);
     setOnceSecret(null);
+    setKbError(null);
     setPanel(next);
+  }
+
+  async function openKnowledge() {
+    const gen = ++knowledgeLoadGen.current;
+    openPanel("knowledge");
+    setKbLoading(true);
+    setKbError(null);
+    try {
+      const [all, assigned] = await Promise.all([
+        apiGet<KnowledgeBaseList>("/knowledge-base"),
+        apiGet<KnowledgeBaseList>(`/agent/${agentId}/knowledge-bases`),
+      ]);
+      if (gen !== knowledgeLoadGen.current) return;
+      setCatalog(all.list || []);
+      const ids = assignedKnowledgeIds(assigned.list);
+      knowledgeRev.current += 1;
+      setSelectedKbIds(ids);
+      setBaselineKbIds(ids);
+      setKnowledgeCount(ids.length);
+    } catch (e) {
+      if (gen !== knowledgeLoadGen.current) return;
+      setKbError(e instanceof ApiError ? e.message : "Failed to load knowledge access.");
+    } finally {
+      if (gen === knowledgeLoadGen.current) setKbLoading(false);
+    }
+  }
+
+  async function saveKnowledge() {
+    if (busy || kbLoading) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const result = await apiPut<KnowledgeBaseList>(
+        `/agent/${agentId}/knowledge-bases`,
+        knowledgeAssignmentPutBody(selectedKbIds),
+      );
+      const ids = assignedKnowledgeIds(result.list);
+      knowledgeRev.current += 1;
+      setKnowledgeCount(ids.length);
+      setBaselineKbIds(ids);
+      setSelectedKbIds(ids);
+      setPanel(null);
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Could not save knowledge access.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function connectCareConnect() {
@@ -507,10 +597,11 @@ export function ClientIntegrations({ agentId, botName }: Props) {
           onClick={() => openPanel("revel")}
         />
         <ConnectionRow
-          name="Directed Logic"
-          icon={CircuitBoard}
-          status="Coming soon"
-          disabled
+          name="Knowledge"
+          icon={BookOpen}
+          status={knowledgeCount == null ? "" : knowledgeAssignmentStatus(knowledgeCount)}
+          busy={knowledgeCount == null}
+          onClick={() => void openKnowledge()}
         />
       </div>
 
@@ -1053,6 +1144,52 @@ export function ClientIntegrations({ agentId, botName }: Props) {
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={panel === "knowledge"}
+        onClose={() => { if (!busy) setPanel(null); }}
+        title={`Knowledge Access — ${agentName?.trim() || "this client"}`}
+        size="md"
+        footer={
+          <>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={busy}
+              onClick={() => { if (!busy) setPanel(null); }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={busy || kbLoading || !!kbError || knowledgeIdsEqual(selectedKbIds, baselineKbIds)}
+              onClick={() => void saveKnowledge()}
+            >
+              {busy && <Loader2 size={14} className="animate-spin" />}
+              Save
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4 text-[14px] text-slate-deep">
+          <KnowledgeAccessFields
+            catalog={catalog}
+            selectedIds={selectedKbIds}
+            loading={kbLoading}
+            error={kbError}
+            onToggle={(id, checked) => {
+              setSelectedKbIds((prev) => toggleKnowledgeSelection(prev, id, checked));
+            }}
+          />
+          {err && panel === "knowledge" ? (
+            <div className="flex items-start gap-2 text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              {err}
+            </div>
+          ) : null}
+        </div>
       </Modal>
     </>
   );
