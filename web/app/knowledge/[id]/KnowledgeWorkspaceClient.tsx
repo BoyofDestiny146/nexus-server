@@ -210,7 +210,9 @@ function KnowledgeWorkspace({ id }: { id: string }) {
         {tab === "topics" && (
           <TopicsTab kb={kb} topics={topics} onChanged={reload} />
         )}
-        {tab === "revel" && <RevelTab topics={topics} />}
+        {tab === "revel" && (
+          <RevelTab kb={kb} topics={topics} onChanged={reload} />
+        )}
         {tab === "testing" && <TestingTab kbId={kb.id} />}
       </section>
     </>
@@ -824,7 +826,8 @@ function TopicsTab({
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-[14px] text-slate-muted leading-relaxed max-w-2xl">
-          Topics stay as they were in Phase 1. Revel fields are metadata only.
+          Topics stay as they were in Phase 1. Revel auto-trigger is an administrator
+          permission; it does not execute by itself.
         </p>
         <button type="button" className="btn-primary shrink-0" onClick={() => setTopicOpen("new")}>
           <Plus size={14} /> Add Topic
@@ -892,12 +895,37 @@ function TopicsTab({
   );
 }
 
-function RevelTab({ topics }: { topics: KnowledgeTopic[] }) {
+function RevelTab({
+  kb, topics, onChanged,
+}: {
+  kb: KnowledgeBase;
+  topics: KnowledgeTopic[];
+  onChanged: () => Promise<void>;
+}) {
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function toggleAuto(topic: KnowledgeTopic, next: boolean) {
+    if (busyId != null) return;
+    setBusyId(topic.id);
+    setErr(null);
+    try {
+      await apiPut(`/knowledge-topic/${topic.id}`, { revelAutoTrigger: next });
+      await onChanged();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Could not update automatic trigger.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <div className="space-y-5">
       <p className="text-[14px] text-slate-muted leading-relaxed max-w-2xl">
-        Revel tags associate approved Knowledge Topics with future presentation actions. Automatic execution is not enabled.
+        Automatic Revel actions execute only when this topic is retrieved for an authorized
+        client and the matching Revel action is enabled in that client&apos;s Revel integration.
       </p>
+      {err && <div className="text-[13px] text-risk-urgent">{err}</div>}
       {topics.length === 0 ? (
         <p className="text-[14px] text-slate-muted">No topics yet. Add them on the Topics tab.</p>
       ) : (
@@ -906,9 +934,26 @@ function RevelTab({ topics }: { topics: KnowledgeTopic[] }) {
             <li key={t.id} className="card px-4 py-3.5">
               <div className="text-[14px] text-slate-deep">{t.title}</div>
               <div className="mt-1.5 space-y-0.5 text-[13px] text-slate-muted">
+                <div>Topic: <span className="text-slate-deep">{t.title}</span></div>
                 <div>Revel Tag: <span className="font-mono text-slate-deep">{t.revelTag || "—"}</span></div>
-                <div>Auto Trigger: {t.revelAutoTrigger ? "ON" : "OFF"}</div>
+                <div>Automatic Trigger: {t.revelAutoTrigger ? "ON" : "OFF"}</div>
+                <div>
+                  Matching Client Revel Action:{" "}
+                  <span className="text-slate-deep">
+                    {t.matchingRevelAction === "available" ? "available" : "not configured"}
+                  </span>
+                </div>
               </div>
+              <label className="mt-3 flex items-center gap-2 text-[13px] text-slate-deep">
+                <input
+                  type="checkbox"
+                  className="accent-teal"
+                  checked={Boolean(t.revelAutoTrigger)}
+                  disabled={busyId === t.id}
+                  onChange={(e) => void toggleAuto(t, e.target.checked)}
+                />
+                Allow automatic trigger for {kb.name}
+              </label>
             </li>
           ))}
         </ul>

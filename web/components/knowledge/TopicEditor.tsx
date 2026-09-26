@@ -131,7 +131,10 @@ export function TopicEditor({
             onChange={(e) => setRevelTag(e.target.value)}
             placeholder="bioev_humidity_demo"
           />
-          <p className="helper">Stored for a future structured Revel action. Automatic execution is not enabled.</p>
+          <p className="helper">
+            Administrator permission only. Automatic Revel actions still require an authorized
+            client, a matching enabled Revel action, and CC_KNOWLEDGE_REVEL_ENABLED.
+          </p>
         </div>
         <label className="flex items-center gap-2 text-[14px] text-slate-deep">
           <input type="checkbox" className="accent-teal" checked={revelAutoTrigger} onChange={(e) => setRevelAutoTrigger(e.target.checked)} />

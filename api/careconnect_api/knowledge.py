@@ -16,9 +16,10 @@ Phase 1 pipeline (later stages are no-ops until override tables exist):
         ↓
     enabled Knowledge Topics + Revel metadata
         ↓
-    (future) structured Revel tool decision
+    structured Revel tool decision (Phase 5, CC_KNOWLEDGE_REVEL_ENABLED)
         — not LLM-output keyword scanning
-        — not executed in Phase 1
+        — not document-text command execution
+        — default deny; flag off unless explicitly enabled
 """
 from __future__ import annotations
 

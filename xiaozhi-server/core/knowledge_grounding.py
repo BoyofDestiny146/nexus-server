@@ -61,6 +61,14 @@ def knowledge_enabled(environ: dict[str, str] | None = None) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def knowledge_revel_enabled(environ: dict[str, str] | None = None) -> bool:
+    import os
+
+    env = environ if environ is not None else os.environ
+    raw = (env.get("CC_KNOWLEDGE_REVEL_ENABLED") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def env_float(name: str, default: float, *, environ: dict[str, str] | None = None) -> float:
     import os
 
@@ -251,6 +259,8 @@ def build_knowledge_section(
         {
             "chunkId": row.get("chunkId"),
             "knowledgeBaseId": row.get("knowledgeBaseId"),
+            "sourceId": row.get("sourceId"),
+            "topicId": row.get("topicId"),
             "sourceName": row.get("sourceName"),
             "citation": row.get("citation"),
             "topic": row.get("topic"),
@@ -308,3 +318,50 @@ def ground_turn_messages(
             "skipped": "error",
             "revel_execute": False,
         }
+
+
+_SKIP_REVEL = frozenset(
+    {"disabled", "trivial", "search_error", "empty_or_error", "error", "disabled_or_trivial"}
+)
+
+
+def should_request_knowledge_revel(
+    meta: dict[str, Any] | None,
+    *,
+    revel_enabled: bool,
+) -> bool:
+    if not revel_enabled:
+        return False
+    info = meta or {}
+    if info.get("skipped") in _SKIP_REVEL:
+        return False
+    if not info.get("results") and not info.get("context"):
+        return False
+    return True
+
+
+def request_knowledge_revel(
+    *,
+    mac: str,
+    query: str,
+    already_executed_tag: str | None,
+    decide,
+    logger=None,
+) -> dict[str, Any]:
+    """Fail-open Knowledge Revel decision. Never scans assistant output."""
+    empty = {
+        "execute": False,
+        "executed": False,
+        "reason": "revel_failed",
+        "source": "knowledge",
+        "revelTag": None,
+    }
+    try:
+        payload = decide(mac, query, already_executed_tag=already_executed_tag)
+    except Exception as exc:
+        if logger is not None:
+            logger.warning(f"knowledge revel decision failed (non-fatal): {exc}")
+        return empty
+    if not payload:
+        return empty
+    return payload

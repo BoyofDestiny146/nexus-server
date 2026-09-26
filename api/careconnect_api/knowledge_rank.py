@@ -297,6 +297,7 @@ def prepare_grounded_context(
                 "revelTag": row.get("revelTag"),
                 "revelAutoTrigger": bool(row.get("revelAutoTrigger")),
                 "knowledgeBaseId": row.get("knowledgeBaseId"),
+                "topicId": row.get("topicId"),
                 "slideNumber": row.get("slideNumber"),
                 "pageNumber": row.get("pageNumber"),
             }

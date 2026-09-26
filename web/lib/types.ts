@@ -236,6 +236,7 @@ export interface KnowledgeTopic {
   enabled: boolean;
   revelTag: string | null;
   revelAutoTrigger: boolean;
+  matchingRevelAction?: "available" | "not_configured";
   sortOrder: number;
   createdAt?: string | null;
   updatedAt?: string | null;

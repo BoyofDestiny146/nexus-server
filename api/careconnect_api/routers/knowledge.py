@@ -57,6 +57,7 @@ from ..knowledge import (
     validate_slug,
     validate_topic_key,
 )
+from ..knowledge_revel import assigned_enabled_revel_tags, matching_revel_action_label
 from ..knowledge_retrieval import (
     delete_indexed_source,
     maybe_process_source,
@@ -170,8 +171,27 @@ async def _source_with_topic(
     return await serialize_source_detail(db, source)
 
 
+async def _topics_with_revel_match(
+    db: AsyncSession, knowledge_base_id: int, topics: list[Any]
+) -> list[dict[str, Any]]:
+    tags = await assigned_enabled_revel_tags(db, knowledge_base_id)
+    out: list[dict[str, Any]] = []
+    for topic in topics:
+        row = serialize_topic(topic) if not isinstance(topic, dict) else dict(topic)
+        row["matchingRevelAction"] = matching_revel_action_label(row.get("revelTag"), tags)
+        out.append(row)
+    return out
+
+
+async def _topic_payload(db: AsyncSession, row: KnowledgeTopic) -> dict[str, Any]:
+    tags = await assigned_enabled_revel_tags(db, row.knowledge_base_id)
+    data = serialize_topic(row)
+    data["matchingRevelAction"] = matching_revel_action_label(data.get("revelTag"), tags)
+    return data
+
+
 async def _base_detail(db: AsyncSession, row: KnowledgeBase) -> dict[str, Any]:
-    topics = [serialize_topic(t) for t in await load_topics(db, row.id)]
+    topics = await _topics_with_revel_match(db, row.id, await load_topics(db, row.id))
     sources = await load_sources(db, row.id)
     clients = await list_assigned_clients(db, row.id)
     return serialize_base(
@@ -319,7 +339,9 @@ async def list_topics(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     await _get_base(db, knowledge_base_id)
-    topics = [serialize_topic(t) for t in await load_topics(db, knowledge_base_id)]
+    topics = await _topics_with_revel_match(
+        db, knowledge_base_id, await load_topics(db, knowledge_base_id)
+    )
     return {"list": topics, "total": len(topics)}
 
 
@@ -359,7 +381,7 @@ async def create_topic(
         await db.rollback()
         raise APIException(409, f"topicKey {topic_key!r} already exists on this knowledge base") from exc
     await db.refresh(row)
-    return serialize_topic(row)
+    return await _topic_payload(db, row)
 
 
 @router.put("/knowledge-topic/{topic_id}", response_model=None)
@@ -394,7 +416,7 @@ async def update_topic(
         await db.rollback()
         raise APIException(409, "topicKey already exists on this knowledge base") from exc
     await db.refresh(row)
-    return serialize_topic(row)
+    return await _topic_payload(db, row)
 
 
 @router.delete("/knowledge-topic/{topic_id}", response_model=None)

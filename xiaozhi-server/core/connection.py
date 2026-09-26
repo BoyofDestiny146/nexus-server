@@ -157,6 +157,7 @@ class ConnectionHandler:
         self.cc_bot_name = None
         # Last authorized knowledge lookup for this turn (internal metadata only)
         self.cc_last_knowledge = None
+        self.cc_last_revel_action = None
 
         self.timeout_seconds = (
             int(self.config.get("close_connection_no_voice_time", 120)) + 60
@@ -930,6 +931,48 @@ class ConnectionHandler:
                 pass
             return original
 
+    def _cc_maybe_knowledge_revel(self, query: str) -> None:
+        """Structured Knowledge Revel decision. Fail-open. Does not scan LLM text."""
+        try:
+            from core.knowledge_grounding import (
+                knowledge_revel_enabled,
+                request_knowledge_revel,
+                should_request_knowledge_revel,
+            )
+            from config.careconnect_db import post_knowledge_revel
+
+            meta = getattr(self, "cc_last_knowledge", None) or {}
+            if not should_request_knowledge_revel(
+                meta, revel_enabled=knowledge_revel_enabled()
+            ):
+                return
+            already = None
+            last = getattr(self, "cc_last_revel_action", None) or {}
+            if last.get("source") == "keyword" and last.get("tag"):
+                already = last.get("tag")
+            decision = request_knowledge_revel(
+                mac=self.device_id or "",
+                query=query,
+                already_executed_tag=already,
+                decide=post_knowledge_revel,
+                logger=self.logger.bind(tag=TAG),
+            )
+            self.cc_last_revel_action = {
+                "tag": (decision or {}).get("revelTag"),
+                "source": "knowledge",
+                "executed": bool((decision or {}).get("executed")),
+                "reason": (decision or {}).get("reason"),
+                "topicId": (decision or {}).get("topicId"),
+                "score": (decision or {}).get("score"),
+            }
+        except Exception as exc:
+            try:
+                self.logger.bind(tag=TAG).warning(
+                    f"knowledge revel failed (non-fatal): {exc}"
+                )
+            except Exception:
+                pass
+
     # careconnect: phrases that mean "end the conversation / go back to sleep".
     # The device runs in auto-listen mode, so without this it keeps the mic open
     # after every reply ("always listening"). With Intent: nointent the
@@ -1310,6 +1353,7 @@ class ConnectionHandler:
             )
             if not tool_call and depth == 0 and not _cc_camera:
                 llm_messages = self._cc_ground_llm_messages(query, llm_messages)
+                self._cc_maybe_knowledge_revel(query)
             if self.intent_type == "function_call" and functions is not None:
                 # 使用支持functions的streaming接口
                 llm_responses = self.llm.response_with_functions(

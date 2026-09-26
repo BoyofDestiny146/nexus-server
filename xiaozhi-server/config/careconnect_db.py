@@ -521,6 +521,64 @@ def search_device_knowledge(
     return None
 
 
+def post_knowledge_revel(
+    mac_address: str,
+    query: str,
+    already_executed_tag: str | None = None,
+    limit: int = 3,
+) -> dict | None:
+    """POST device Knowledge Revel decision. Fail-open: errors return None."""
+    token = _token()
+    q = (query or "").strip()
+    mac = (mac_address or "").strip()
+    if not token or not mac or not q:
+        return None
+    template = os.environ.get("CC_KNOWLEDGE_REVEL_URL") or (
+        (os.environ.get("CC_KNOWLEDGE_SEARCH_URL") or KNOWLEDGE_SEARCH_URL).replace(
+            "knowledge-search", "knowledge-revel"
+        )
+    )
+    encoded = quote(mac, safe=":")
+    if "{mac}" in template:
+        url = template.replace("{mac}", encoded)
+    else:
+        url = f"{template.rstrip('/')}/{encoded}/knowledge-revel"
+    body: dict = {"query": q[:2000], "limit": max(1, min(int(limit or 3), 50))}
+    if already_executed_tag:
+        body["alreadyExecutedTag"] = str(already_executed_tag)[:64]
+    try:
+        resp = httpx.post(
+            url,
+            json=body,
+            headers={"X-Internal-Token": token},
+            timeout=_knowledge_search_timeout(),
+        )
+        if resp.status_code >= 400:
+            log.warning(
+                "knowledge revel http=%s mac=%s",
+                resp.status_code,
+                _display_mac(mac),
+            )
+            return None
+        data = resp.json()
+        if isinstance(data, dict) and data.get("code") not in (None, 0):
+            log.warning(
+                "knowledge revel code=%s mac=%s",
+                data.get("code"),
+                _display_mac(mac),
+            )
+            return None
+        if isinstance(data, dict) and isinstance(data.get("data"), dict):
+            data = data["data"]
+        if isinstance(data, dict):
+            return data
+    except Exception as e:
+        log.warning(
+            "careconnect_db.post_knowledge_revel failed (non-fatal): %s", e
+        )
+    return None
+
+
 def report(
     mac_address: str,
     session_id: str,

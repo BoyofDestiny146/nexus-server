@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     knowledge_min_score: float = 0.35
     knowledge_candidate_limit: int = 15
     knowledge_result_limit: int = 5
+    # Knowledge-driven Revel actions. Independent of CC_XIAOZHI_KNOWLEDGE_ENABLED.
+    # Default off. Keyword Revel does not read this flag.
+    knowledge_revel_enabled: bool = False
 
     # Bootstrap admin credentials — read from env or secret files.
     # Usernames are fixed as admin1 / admin2 (generic, not personal).

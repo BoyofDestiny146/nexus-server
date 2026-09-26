@@ -20,6 +20,7 @@ def test_repo_compose_declares_cc_llm_model():
     assert "PIPER_URL:" in text
     assert "piper-tts:5500/v1/audio/speech" in text
     assert 'CC_XIAOZHI_KNOWLEDGE_ENABLED: "${CC_XIAOZHI_KNOWLEDGE_ENABLED:-false}"' in text
+    assert 'CC_KNOWLEDGE_REVEL_ENABLED: "${CC_KNOWLEDGE_REVEL_ENABLED:-false}"' in text
     assert "CC_KNOWLEDGE_SEARCH_URL:" in text
 
 

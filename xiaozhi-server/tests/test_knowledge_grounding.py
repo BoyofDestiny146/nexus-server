@@ -20,6 +20,9 @@ from core.knowledge_grounding import (  # noqa: E402
     format_grounding_section,
     ground_turn_messages,
     knowledge_enabled,
+    knowledge_revel_enabled,
+    request_knowledge_revel,
+    should_request_knowledge_revel,
     should_retrieve,
 )
 
@@ -85,6 +88,8 @@ def test_knowledge_disabled_by_default():
     assert knowledge_enabled(environ={"CC_XIAOZHI_KNOWLEDGE_ENABLED": "false"}) is False
     assert knowledge_enabled(environ={"CC_XIAOZHI_KNOWLEDGE_ENABLED": "0"}) is False
     assert knowledge_enabled(environ={"CC_XIAOZHI_KNOWLEDGE_ENABLED": "true"}) is True
+    assert knowledge_revel_enabled(environ={}) is False
+    assert knowledge_revel_enabled(environ={"CC_KNOWLEDGE_REVEL_ENABLED": "true"}) is True
 
 
 def test_disabled_skips_retrieval_call():
@@ -330,6 +335,8 @@ def test_chat_path_preserves_persona_and_existing_llm_flow(monkeypatch):
     assert "_cc_ground_llm_messages" in chat_fn
     assert "ground_turn_messages" in conn_src
     assert chat_fn.index("SentenceType.FIRST") < chat_fn.index("_cc_ground_llm_messages")
+    assert "_cc_maybe_knowledge_revel" in chat_fn
+    assert chat_fn.index("_cc_maybe_knowledge_revel") < chat_fn.index("llm.response")
     assert "get_llm_dialogue_with_memory" in chat_fn
     assert "change_system_prompt" not in chat_fn
     assert "llm.response" in chat_fn
@@ -337,8 +344,13 @@ def test_chat_path_preserves_persona_and_existing_llm_flow(monkeypatch):
     revel_src = (ROOT / "core" / "handle" / "receiveAudioHandle.py").read_text()
     start = revel_src.split("async def startToChat(conn, text):", 1)[1]
     start = start.split("\nasync def ", 1)[0]
+    assert "CC_KNOWLEDGE_REVEL" not in start
     assert "post_revel_command" in start
     assert start.index("post_revel_command") < start.index("conn.chat")
+    assert "cc_last_revel_action" in start
+    after_llm = chat_fn.split("llm.response", 1)[1]
+    assert "post_knowledge_revel" not in after_llm
+    assert "post_revel_command" not in after_llm
 
     logger = FakeLog()
     messages = [
@@ -387,7 +399,44 @@ def test_compose_declares_knowledge_flag_default_false():
     xz = text.split(marker, 1)[1]
     env = xz.split("    volumes:", 1)[0]
     assert 'CC_XIAOZHI_KNOWLEDGE_ENABLED: "${CC_XIAOZHI_KNOWLEDGE_ENABLED:-false}"' in env
+    assert 'CC_KNOWLEDGE_REVEL_ENABLED: "${CC_KNOWLEDGE_REVEL_ENABLED:-false}"' in env
     assert "CC_KNOWLEDGE_SEARCH_URL:" in env
     assert "CC_KNOWLEDGE_CONTEXT_MAX_RESULTS:" in env
     assert "CC_KNOWLEDGE_CONTEXT_MAX_CHARS:" in env
     assert "CC_KNOWLEDGE_SEARCH_TIMEOUT:" in env
+
+
+def test_knowledge_revel_flag_off_skips_and_fail_open():
+    meta = {"results": 1, "context": [_hit()], "grounding_applied": True}
+    assert should_request_knowledge_revel(meta, revel_enabled=False) is False
+    assert should_request_knowledge_revel({"skipped": "search_error"}, revel_enabled=True) is False
+    assert should_request_knowledge_revel(meta, revel_enabled=True) is True
+
+    calls = []
+
+    def decide(mac, query, already_executed_tag=None):
+        calls.append((mac, query, already_executed_tag))
+        raise TimeoutError("timed out")
+
+    out = request_knowledge_revel(
+        mac=MAC_A,
+        query=QUERY,
+        already_executed_tag=None,
+        decide=decide,
+        logger=FakeLog(),
+    )
+    assert out["execute"] is False
+    assert out["executed"] is False
+    assert calls
+
+    messages = [{"role": "system", "content": PERSONA}, {"role": "user", "content": QUERY}]
+    grounded, gmeta = ground_turn_messages(
+        mac=MAC_A,
+        query=QUERY,
+        messages=messages,
+        search=lambda *a, **k: _payload(),
+        enabled=True,
+    )
+    assert gmeta["grounding_applied"] is True
+    assert PERSONA in grounded[0]["content"]
+    assert should_request_knowledge_revel(gmeta, revel_enabled=False) is False

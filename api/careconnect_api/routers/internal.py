@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import get_db
 from ..envelope import APIException
 from ..knowledge_retrieval import device_knowledge_search
+from ..knowledge_revel import evaluate_knowledge_revel
 from ..pubsub import publish_chat_turn
 from ..revel_command import evaluate_voice_command
 from ..settings import settings
@@ -170,5 +171,36 @@ async def internal_device_knowledge_search(
         result.get("clientId"),
         len(result.get("knowledgeBaseIds") or []),
         len(result.get("results") or []),
+    )
+    return result
+
+
+class DeviceKnowledgeRevelIn(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+    alreadyExecutedTag: str | None = Field(default=None, max_length=64)
+    limit: int = Field(default=5, ge=1, le=50)
+
+
+@router.post(
+    "/device/{mac}/knowledge-revel",
+    response_model=None,
+    dependencies=[Depends(require_internal_token)],
+)
+async def internal_device_knowledge_revel(
+    mac: str,
+    payload: DeviceKnowledgeRevelIn,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Structured Knowledge → Revel decision. Default deny. Does not scan text.
+
+    Independent of keyword POST /internal/revel/command. Does not mutate Revel
+    while EXECUTE_ENABLED is false.
+    """
+    result = await evaluate_knowledge_revel(
+        db,
+        mac,
+        payload.query,
+        already_executed_tag=payload.alreadyExecutedTag,
+        limit=payload.limit,
     )
     return result

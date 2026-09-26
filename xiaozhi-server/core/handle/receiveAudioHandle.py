@@ -68,6 +68,8 @@ async def startToChat(conn, text):
         await check_bind_device(conn)
         return
 
+    conn.cc_last_revel_action = None
+
     # 如果当日的输出字数大于限定的字数
     if conn.max_output_size > 0:
         if check_device_output_limit(
@@ -99,6 +101,13 @@ async def startToChat(conn, text):
             conn.logger.bind(tag=TAG).debug(f"revel command lookup failed: {exc}")
             command = None
         if command and command.get("matched"):
+            conn.cc_last_revel_action = {
+                "tag": command.get("revelTag"),
+                "source": "keyword",
+                "executed": bool(command.get("executed")),
+                "reason": command.get("reason"),
+                "intent": command.get("intent"),
+            }
             conn.logger.bind(tag=TAG).info(
                 "revel command matched intent=%s execute=%s",
                 command.get("intent"),
