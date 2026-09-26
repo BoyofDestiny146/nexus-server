@@ -17,6 +17,9 @@ Endpoints
   payload, publishes onto the agent's Redis chat channel. Fire-and-forget
   from the bridge's POV (it uses a 500ms timeout), so we keep the work here
   trivial — no DB writes, no LLM calls.
+* ``GET /api/internal/revel/devices`` — Nexus-system Revel discovery
+  (read-only GraphQL device list). Requires ``X-Internal-Token``. Does not
+  accept GraphQL from the caller and does not write to Revel.
 """
 from __future__ import annotations
 
@@ -34,6 +37,7 @@ from ..knowledge_retrieval import device_knowledge_search
 from ..knowledge_revel import evaluate_knowledge_revel
 from ..pubsub import publish_chat_turn
 from ..revel_command import evaluate_voice_command
+from ..revel_signage import list_signage_devices
 from ..settings import settings
 
 
@@ -119,6 +123,18 @@ class RevelCommandIn(BaseModel):
     agentId: str = Field(min_length=1, max_length=64)
     utterance: str = Field(default="", max_length=1024)
     remainder: str = Field(min_length=1, max_length=1024)
+
+
+@router.get("/revel/devices", response_model=None, dependencies=[Depends(require_internal_token)])
+async def revel_devices() -> dict[str, Any]:
+    """Phase 1 read-only Revel player discovery.
+
+    Uses the allowlisted GraphQL ``device`` query and the Nexus-system API key
+    from ``REVEL_API_KEY_FILE``. Callers cannot supply GraphQL, command names,
+    or device mutations.
+    """
+    devices = await list_signage_devices()
+    return {"ok": True, "devices": devices}
 
 
 @router.post("/revel/command", response_model=None, dependencies=[Depends(require_internal_token)])

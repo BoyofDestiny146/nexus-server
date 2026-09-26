@@ -93,7 +93,9 @@ mkdir -p ~/careconnect-deploy && cp deploy/docker-compose.yml deploy/.env.exampl
 cp -r deploy/scripts ~/careconnect-deploy/
 cd ~/careconnect-deploy
 cp .env.example .env            # set CC_ADMIN1_PASSWORD, CC_ADMIN2_PASSWORD, CC_TUNNEL_TOKEN, CC_OTA_TRANSPORT=websocket
-./scripts/gen-secrets.sh        # creates the cc-secrets volume (6 random secret files)
+./scripts/gen-secrets.sh        # creates the cc-secrets volume (random secret files)
+# Optional: install Revel Developer API key as revel-api-key in cc-secrets
+# (never auto-generated), then re-run gen-secrets.sh to align appuser perms.
 docker compose pull
 docker compose up -d
 docker compose ps               # 8 services up / healthy within ~60 s

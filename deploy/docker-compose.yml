@@ -141,6 +141,14 @@ services:
       CC_OLLAMA_EMBED_MODEL: "${CC_OLLAMA_EMBED_MODEL:-nomic-embed-text}"
       # Knowledge-driven Revel. Independent of grounding. Keyword Revel ignores this.
       CC_KNOWLEDGE_REVEL_ENABLED: "${CC_KNOWLEDGE_REVEL_ENABLED:-false}"
+      # Nexus-system Revel signage (Phase 1: read-only device list). File secret
+      # only — never put the Developer API key in compose/.env. Do not auto-create
+      # /run/secrets/revel-api-key; install it into cc-secrets by hand.
+      REVEL_API_BASE: "${REVEL_API_BASE:-https://api.reveldigital.com}"
+      REVEL_GRAPHQL_URL: "${REVEL_GRAPHQL_URL:-https://api.reveldigital.com/graphql}"
+      REVEL_API_KEY_FILE: "${REVEL_API_KEY_FILE:-/run/secrets/revel-api-key}"
+      REVEL_CONTROL_TABLE_ID: "${REVEL_CONTROL_TABLE_ID:-}"
+      REVEL_DEFAULT_DEVICE_ID: "${REVEL_DEFAULT_DEVICE_ID:-}"
     volumes:
       - cc-secrets:/run/secrets:ro
       - cc-voice:/data

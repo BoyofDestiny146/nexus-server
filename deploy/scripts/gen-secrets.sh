@@ -12,6 +12,12 @@
 #   mqtt-signature-key   HMAC key for MQTT credential generation
 #   integration-secret-key  Fernet key for per-client Revel (and future) credentials
 #
+# Optional, NEVER auto-generated:
+#   revel-api-key        Revel Developer API key (Account → Developer API).
+#                        Install by hand into cc-secrets, then re-run this
+#                        script so align_secret_perms.sh can clone appuser
+#                        ownership. A random value here would be a fake key.
+#
 # integration-secret-key uid/gid/mode are cloned from api-client-key (then
 # api-internal-token, then api-jwt-secret) so the API's non-root appuser can
 # read it after gosu. The volume is mounted :ro; do not create this file as
@@ -36,3 +42,4 @@ docker run --rm \
   alpine:3.19 sh /align_secret_perms.sh
 echo "cc-secrets volume ready: $VOL"
 echo "Read a value later with:  docker run --rm -v $VOL:/s:ro alpine cat /s/api-client-key"
+echo "Optional revel-api-key is never auto-generated. Install the Revel Developer API key into this volume, then re-run this script to align perms."

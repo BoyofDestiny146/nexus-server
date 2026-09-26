@@ -110,6 +110,9 @@ class Settings(BaseSettings):
     # Knowledge-driven Revel actions. Independent of CC_XIAOZHI_KNOWLEDGE_ENABLED.
     # Default off. Keyword Revel does not read this flag.
     knowledge_revel_enabled: bool = False
+    # Nexus-system Revel signage (Phase 1 discovery) is configured via unprefixed
+    # REVEL_* env vars — see revel_signage.RevelSignageSettings. Do not add a
+    # CC_-prefixed key-file field here: that would encourage _read_or_create_secret.
 
     # Bootstrap admin credentials — read from env or secret files.
     # Usernames are fixed as admin1 / admin2 (generic, not personal).

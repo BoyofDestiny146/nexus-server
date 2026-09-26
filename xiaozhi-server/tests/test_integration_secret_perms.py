@@ -156,3 +156,24 @@ def test_align_does_not_overwrite_empty_named_other_secrets(tmp_path: Path):
     _run_align(tmp_path)
     assert mqtt.read_text() == "mqtt-keep"
     assert (tmp_path / "integration-secret-key").is_file()
+    assert not (tmp_path / "revel-api-key").exists()
+
+
+def test_align_does_not_create_revel_api_key_but_aligns_if_present(tmp_path: Path):
+    ref = tmp_path / "api-client-key"
+    ref.write_text("client-key-placeholder")
+    ref.chmod(0o640)
+    result = _run_align(tmp_path)
+    assert not (tmp_path / "revel-api-key").exists()
+    assert "absent  revel-api-key" in result.stdout
+    assert "not generated" in result.stdout
+
+    dest = tmp_path / "revel-api-key"
+    dest.write_text("developer-key-keep-me")
+    dest.chmod(0o600)
+    again = _run_align(tmp_path)
+    assert dest.read_text() == "developer-key-keep-me"
+    assert "developer-key-keep-me" not in again.stdout
+    assert "aligned revel-api-key" in again.stdout
+    assert _mode(dest) == 0o640
+    assert dest.stat().st_uid == ref.stat().st_uid

@@ -59,3 +59,29 @@ See `deploy/README.md` for the full build + first-boot procedure. Short version:
 - Device "online" state is derived from the last conversation timestamp (the
   firmware does not send heartbeats), window `CC_WATCHER_ONLINE_WINDOW_SECONDS`.
 - Wake word on the Watcher is `Jarvis` (firmware WakeNet); the assistant's name is Haizel.
+
+## Nexus Revel discovery (Phase 1)
+
+Nexus can list Revel Digital players with a **read-only**, allowlisted GraphQL
+query. Callers cannot supply GraphQL or trigger writes. Later phases will map
+strict display intents onto a Data Table row; that code is not in this slice.
+
+Required on the API container:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `REVEL_API_BASE` | `https://api.reveldigital.com` | HTTPS only |
+| `REVEL_GRAPHQL_URL` | `https://api.reveldigital.com/graphql` | HTTPS only |
+| `REVEL_API_KEY_FILE` | `/run/secrets/revel-api-key` | Developer API key **file**. Never auto-created. Header: `X-RevelDigital-ApiKey` |
+| `REVEL_CONTROL_TABLE_ID` | empty | Loaded for later phases; unused in Phase 1 |
+| `REVEL_DEFAULT_DEVICE_ID` | empty | Loaded for later phases; unused in Phase 1 |
+
+Install the key into `cc-secrets` (do not put it in `.env`), then re-run
+`deploy/scripts/gen-secrets.sh` so the API `appuser` can read it.
+
+```sh
+TOKEN=$(docker run --rm -v careconnect_cc-secrets:/s:ro alpine cat /s/api-internal-token)
+docker compose -f deploy/docker-compose.yml exec -T api wget -qO- \
+  --header="X-Internal-Token: ${TOKEN}" \
+  http://127.0.0.1:8080/api/internal/revel/devices
+```

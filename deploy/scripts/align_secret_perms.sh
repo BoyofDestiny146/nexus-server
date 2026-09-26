@@ -67,3 +67,23 @@ fi
 uid="$(stat -c '%u' "$DEST")"
 gid="$(stat -c '%g' "$DEST")"
 echo "${action} ${NAME} uid=${uid} gid=${gid} mode=${mode}"
+
+# Optional Nexus-system Revel Developer API key. Never auto-create. If the
+# operator installed revel-api-key, clone uid/gid/mode so appuser can read it
+# after gosu on the :ro secrets mount. Never print the key.
+REVEL_KEY="${DIR}/revel-api-key"
+if [ -s "$REVEL_KEY" ]; then
+  if [ -n "$REF" ]; then
+    chown "$(stat -c '%u:%g' "$REF")" "$REVEL_KEY"
+    chmod "$(stat -c '%a' "$REF")" "$REVEL_KEY"
+  else
+    chmod 600 "$REVEL_KEY"
+  fi
+  chmod o-w "$REVEL_KEY"
+  rmode="$(stat -c '%a' "$REVEL_KEY")"
+  ruid="$(stat -c '%u' "$REVEL_KEY")"
+  rgid="$(stat -c '%g' "$REVEL_KEY")"
+  echo "aligned revel-api-key uid=${ruid} gid=${rgid} mode=${rmode}"
+else
+  echo "absent  revel-api-key (not generated)"
+fi
