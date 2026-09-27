@@ -43,3 +43,11 @@ test("Clients nav groups organizations and Administration has Users + Organizati
   assert.match(profile, /Organization/);
   assert.equal(UNASSIGNED_ORGANIZATION_ID, "unassigned");
 });
+
+test("sidebar header uses the Nexus logo and drops the careconnect wordmark", () => {
+  const shell = readFileSync(join(here, "../components/AppShell.tsx"), "utf8");
+  assert.match(shell, /nexus-logo\.png/);
+  assert.match(shell, /alt="Nexus"/);
+  assert.doesNotMatch(shell, /Local install/i);
+  assert.doesNotMatch(shell, />\s*careconnect\s*</);
+});

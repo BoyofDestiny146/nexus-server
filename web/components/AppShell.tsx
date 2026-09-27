@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import {
-  Users, Cpu, Shield, Settings, LogOut, Activity, HeartPulse, BookOpen, Sparkles,
+  Users, Cpu, Shield, Settings, LogOut, HeartPulse, BookOpen, Sparkles,
   Building2, Plus,
 } from "lucide-react";
 import { apiGet, clearSession } from "@/lib/api";
@@ -85,13 +86,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen flex bg-bone">
       <aside className="w-60 shrink-0 border-r border-slate-line/80 bg-bone flex flex-col sticky top-0 h-screen">
         <div className="px-6 pt-7 pb-6 border-b border-slate-line/70">
-          <Link href="/patients" className="block">
-            <div className="font-display text-[28px] tracking-display leading-none text-slate-deep">
-              careconnect
-            </div>
-            <div className="mt-1.5 text-[10px] uppercase tracking-[0.18em] text-slate-muted flex items-center gap-1.5">
-              <Activity size={10} /> Local install
-            </div>
+          <Link href="/patients" className="block" aria-label="Nexus home">
+            <Image
+              src="/nexus-logo.png"
+              alt="Nexus"
+              width={2046}
+              height={769}
+              className="w-full h-auto"
+              priority
+            />
           </Link>
         </div>
 
