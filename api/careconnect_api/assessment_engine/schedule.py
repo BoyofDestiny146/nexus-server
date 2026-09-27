@@ -61,12 +61,14 @@ def default_schedule(profile_id: str) -> dict[str, Any]:
             "mode": MODE_INTERVAL,
             "intervalMinutes": DEFAULT_CARE_INTERVAL_MINUTES,
             "onlyIfNewData": True,
+            "assessOnEscalationPhrases": True,
         }
     return {
         "enabled": False,
         "mode": MODE_MANUAL,
         "intervalMinutes": None,
         "onlyIfNewData": True,
+        "assessOnEscalationPhrases": False,
     }
 
 
@@ -98,6 +100,10 @@ def parse_schedule(raw: Any, *, profile_id: str) -> dict[str, Any]:
     mode = str(data.get("mode") or "").strip().lower()
     enabled = _as_bool(data.get("enabled"), fallback["enabled"])
     only_if_new = _as_bool(data.get("onlyIfNewData"), True)
+    escalate = _as_bool(
+        data.get("assessOnEscalationPhrases"),
+        bool(fallback["assessOnEscalationPhrases"]),
+    )
     interval = data.get("intervalMinutes")
     try:
         interval_int = int(interval) if interval is not None and str(interval).strip() != "" else None
@@ -109,6 +115,7 @@ def parse_schedule(raw: Any, *, profile_id: str) -> dict[str, Any]:
             "mode": MODE_MANUAL,
             "intervalMinutes": None,
             "onlyIfNewData": only_if_new,
+            "assessOnEscalationPhrases": escalate,
         }
     if interval_int not in INTERVAL_MINUTES:
         interval_int = DEFAULT_CARE_INTERVAL_MINUTES
@@ -117,6 +124,7 @@ def parse_schedule(raw: Any, *, profile_id: str) -> dict[str, Any]:
         "mode": MODE_INTERVAL,
         "intervalMinutes": interval_int,
         "onlyIfNewData": only_if_new,
+        "assessOnEscalationPhrases": escalate,
     }
 
 
@@ -131,12 +139,14 @@ def parse_schedule_put(raw: Any, *, profile_id: str) -> dict[str, Any]:
     mode = str(raw.get("mode") or "").strip().lower()
     enabled = _as_bool(raw.get("enabled"), True)
     only_if_new = _as_bool(raw.get("onlyIfNewData"), True)
+    escalate = _as_bool(raw.get("assessOnEscalationPhrases"), True)
     if mode == MODE_MANUAL or enabled is False:
         return {
             "enabled": False,
             "mode": MODE_MANUAL,
             "intervalMinutes": None,
             "onlyIfNewData": only_if_new,
+            "assessOnEscalationPhrases": escalate,
         }
     interval = raw.get("intervalMinutes")
     try:
@@ -150,6 +160,7 @@ def parse_schedule_put(raw: Any, *, profile_id: str) -> dict[str, Any]:
         "mode": MODE_INTERVAL,
         "intervalMinutes": interval_int,
         "onlyIfNewData": only_if_new,
+        "assessOnEscalationPhrases": escalate,
     }
 
 
@@ -167,8 +178,16 @@ def resolved_schedule(profile_json: Any) -> dict[str, Any]:
 
 def apply_assessment_schedule(agent: AiAgent, schedule: Mapping[str, Any]) -> None:
     existing = load_profile(agent.profile_json)
-    merged = merge_profile(existing, {SCHEDULE_JSON_KEY: dict(schedule)})
+    prev = existing.get(SCHEDULE_JSON_KEY)
+    combined = dict(prev) if isinstance(prev, dict) else {}
+    combined.update(dict(schedule))
+    merged = merge_profile(existing, {SCHEDULE_JSON_KEY: combined})
     agent.profile_json = dump_profile(merged)
+
+
+def assess_on_escalation_phrases(profile_json: Any) -> bool:
+    """True when a CLIENT escalation match may queue a Care assessment."""
+    return bool(resolved_schedule(profile_json).get("assessOnEscalationPhrases"))
 
 
 def next_due_at(last: datetime | None, interval_minutes: int, now: datetime) -> datetime:

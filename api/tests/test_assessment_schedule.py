@@ -42,8 +42,10 @@ def test_care_default_is_every_24_hours():
     assert care["mode"] == "interval"
     assert care["intervalMinutes"] == DEFAULT_CARE_INTERVAL_MINUTES
     assert care["onlyIfNewData"] is True
+    assert care["assessOnEscalationPhrases"] is True
     missing = resolved_schedule(None)
     assert missing["intervalMinutes"] == 1440
+    assert missing["assessOnEscalationPhrases"] is True
 
 
 def test_sales_default_is_manual():
@@ -51,9 +53,13 @@ def test_sales_default_is_manual():
     assert sales["enabled"] is False
     assert sales["mode"] == "manual"
     assert sales["intervalMinutes"] is None
+    assert sales["assessOnEscalationPhrases"] is False
     assert parse_schedule({"enabled": True, "intervalMinutes": 60}, profile_id=SALES_PRODUCT_ID)[
         "mode"
     ] == "manual"
+    assert parse_schedule({"assessOnEscalationPhrases": True}, profile_id=SALES_PRODUCT_ID)[
+        "assessOnEscalationPhrases"
+    ] is False
 
 
 def test_supported_intervals_persist():
@@ -443,6 +449,8 @@ async def test_schedule_get_put_round_trip(client, db_session: AsyncSession):
     assert data["assessmentSchedule"]["enabled"] is True
     assert data["assessmentSchedule"]["intervalMinutes"] == 1440
     assert data["assessmentSchedule"]["onlyIfNewData"] is True
+    assert data["assessmentSchedule"]["assessOnEscalationPhrases"] is True
+    assert data["assessmentDelivery"]["destination"] == "careconnect"
     assert data["nextAssessmentAt"] is not None
 
     agent = await db_session.get(AiAgent, agent_id)
@@ -464,6 +472,51 @@ async def test_schedule_get_put_round_trip(client, db_session: AsyncSession):
     assert stored["assessmentSchedule"]["intervalMinutes"] == 120
     assert stored["condition"] == "Lives alone"
 
+    put_flag = await client.put(
+        f"/api/agent/{agent_id}/assessment/profile",
+        json={"assessmentSchedule": {"assessOnEscalationPhrases": False}},
+        headers=headers,
+    )
+    assert put_flag.json()["code"] == 0, put_flag.json()
+    assert put_flag.json()["data"]["assessmentSchedule"]["assessOnEscalationPhrases"] is False
+    assert put_flag.json()["data"]["assessmentSchedule"]["intervalMinutes"] == 120
+    assert put_flag.json()["data"]["assessmentDelivery"]["destination"] == "careconnect"
+
+    put_delivery = await client.put(
+        f"/api/agent/{agent_id}/assessment/profile",
+        json={"assessmentDelivery": {"destination": "careconnect"}},
+        headers=headers,
+    )
+    assert put_delivery.json()["code"] == 0, put_delivery.json()
+    assert put_delivery.json()["data"]["assessmentDelivery"]["destination"] == "careconnect"
+
+    db_session.expire_all()
+    agent = await db_session.get(AiAgent, agent_id)
+    stored = load_profile(agent.profile_json)
+    stored["extraPartnerNote"] = "keep-me"
+    agent.profile_json = dump_profile(stored)
+    await db_session.commit()
+
+    await client.put(
+        f"/api/agent/{agent_id}/assessment/profile",
+        json={"assessmentSchedule": {"onlyIfNewData": True}},
+        headers=headers,
+    )
+    db_session.expire_all()
+    agent = await db_session.get(AiAgent, agent_id)
+    stored = load_profile(agent.profile_json)
+    assert stored["extraPartnerNote"] == "keep-me"
+    assert stored["condition"] == "Lives alone"
+    assert stored["assessmentSchedule"]["assessOnEscalationPhrases"] is False
+    assert stored["assessmentDelivery"]["destination"] == "careconnect"
+
+    fake_dest = await client.put(
+        f"/api/agent/{agent_id}/assessment/profile",
+        json={"assessmentDelivery": {"destination": "webhook"}},
+        headers=headers,
+    )
+    assert fake_dest.json()["code"] == 400
+
     await client.put(
         f"/api/agent/{agent_id}/assessment/profile",
         json={"assessmentProfile": SALES_PRODUCT_ID},
@@ -472,6 +525,8 @@ async def test_schedule_get_put_round_trip(client, db_session: AsyncSession):
     sales = await client.get(f"/api/agent/{agent_id}/assessment/profile", headers=headers)
     assert sales.json()["data"]["scheduleSupported"] is False
     assert sales.json()["data"]["assessmentSchedule"]["mode"] == "manual"
+    assert sales.json()["data"]["assessmentSchedule"]["assessOnEscalationPhrases"] is False
+    assert sales.json()["data"]["assessmentDelivery"]["destination"] == "careconnect"
     assert sales.json()["data"]["nextAssessmentAt"] is None
     bad = await client.put(
         f"/api/agent/{agent_id}/assessment/profile",
@@ -479,3 +534,38 @@ async def test_schedule_get_put_round_trip(client, db_session: AsyncSession):
         headers=headers,
     )
     assert bad.json()["code"] == 400
+
+
+def test_delivery_defaults_to_careconnect_and_does_not_gate_portal_persist():
+    from careconnect_api.assessment_engine.delivery import (
+        default_delivery,
+        outbound_partner_push_follows_existing_config,
+        parse_delivery,
+        parse_delivery_put,
+        portal_persist_enabled,
+    )
+    from pathlib import Path
+
+    assert default_delivery() == {"destination": "careconnect"}
+    assert parse_delivery(None)["destination"] == "careconnect"
+    assert parse_delivery({"destination": "webhook"})["destination"] == "careconnect"
+    assert parse_delivery_put({"destination": "careconnect"})["destination"] == "careconnect"
+    with pytest.raises(APIException):
+        parse_delivery_put({"destination": "emr"})
+    with pytest.raises(APIException):
+        parse_delivery_put({"destination": "none"})
+    assert portal_persist_enabled({"destination": "none"}) is True
+    assert outbound_partner_push_follows_existing_config(None) is True
+
+    runner = (
+        Path(__file__).resolve().parents[1] / "careconnect_api" / "triage" / "runner.py"
+    ).read_text()
+    sales_runner = (
+        Path(__file__).resolve().parents[1] / "careconnect_api" / "assessment_engine" / "sales_runner.py"
+    ).read_text()
+    assert "push_assessment_best_effort" in runner
+    assert "assessOnEscalationPhrases" not in runner
+    assert "assessmentDelivery" not in runner
+    assert "assessOnEscalationPhrases" not in sales_runner
+    assert "assessmentDelivery" not in sales_runner
+

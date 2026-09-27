@@ -16,6 +16,7 @@ test("Care default is every 24 hours", () => {
   assert.equal(care.mode, "interval");
   assert.equal(care.intervalMinutes, DEFAULT_CARE_INTERVAL_MINUTES);
   assert.equal(care.onlyIfNewData, true);
+  assert.equal(care.assessOnEscalationPhrases, true);
   assert.equal(intervalLabel(1440), "Every 24 hours");
   assert.equal(intervalLabel(null), "Manual only");
 });
@@ -25,6 +26,7 @@ test("Sales default is manual", () => {
   assert.equal(sales.enabled, false);
   assert.equal(sales.mode, "manual");
   assert.equal(sales.intervalMinutes, null);
+  assert.equal(sales.assessOnEscalationPhrases, false);
   assert.equal(scheduleSelectValue(sales), "manual");
 });
 
@@ -39,7 +41,8 @@ test("hourly / 2h / 4h / 8h / 12h / daily / 3d / weekly persist as minutes", () 
     assert.equal(parsed.enabled, true);
     assert.equal(parsed.intervalMinutes, value);
   }
-  const manual = scheduleFromSelectValue("manual", true);
+  const manual = scheduleFromSelectValue("manual", true, false);
   assert.equal(manual.mode, "manual");
   assert.equal(manual.enabled, false);
+  assert.equal(manual.assessOnEscalationPhrases, false);
 });

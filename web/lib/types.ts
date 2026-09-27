@@ -99,12 +99,20 @@ export interface AssessmentSchedule {
   mode: AssessmentScheduleMode;
   intervalMinutes: number | null;
   onlyIfNewData: boolean;
+  assessOnEscalationPhrases: boolean;
+}
+
+export type AssessmentDeliveryDestination = "careconnect";
+
+export interface AssessmentDelivery {
+  destination: AssessmentDeliveryDestination;
 }
 
 export interface AssessmentProfileState {
   assessmentProfile: AssessmentProfileDefinition;
   profiles: AssessmentProfileDefinition[];
   assessmentSchedule?: AssessmentSchedule;
+  assessmentDelivery?: AssessmentDelivery;
   scheduleSupported?: boolean;
   lastAssessmentAt?: string | null;
   nextAssessmentAt?: string | null;

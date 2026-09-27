@@ -24,6 +24,7 @@ export interface AssessmentSchedule {
   mode: AssessmentScheduleMode;
   intervalMinutes: number | null;
   onlyIfNewData: boolean;
+  assessOnEscalationPhrases: boolean;
 }
 
 export function defaultCareSchedule(): AssessmentSchedule {
@@ -32,6 +33,7 @@ export function defaultCareSchedule(): AssessmentSchedule {
     mode: "interval",
     intervalMinutes: DEFAULT_CARE_INTERVAL_MINUTES,
     onlyIfNewData: true,
+    assessOnEscalationPhrases: true,
   };
 }
 
@@ -41,6 +43,7 @@ export function defaultManualSchedule(): AssessmentSchedule {
     mode: "manual",
     intervalMinutes: null,
     onlyIfNewData: true,
+    assessOnEscalationPhrases: false,
   };
 }
 
@@ -50,7 +53,20 @@ export function intervalLabel(minutes: number | null | undefined): string {
   return found?.label ?? MANUAL_SCHEDULE_LABEL;
 }
 
-export function scheduleSelectValue(schedule: AssessmentSchedule | null | undefined): string {
+export function coerceSchedule(
+  raw: AssessmentSchedule | null | undefined,
+  scheduleSupported: boolean,
+): AssessmentSchedule {
+  const fallback = scheduleSupported ? defaultCareSchedule() : defaultManualSchedule();
+  if (!raw) return fallback;
+  return {
+    enabled: Boolean(raw.enabled),
+    mode: raw.mode === "interval" ? "interval" : "manual",
+    intervalMinutes: raw.intervalMinutes ?? fallback.intervalMinutes,
+    onlyIfNewData: raw.onlyIfNewData ?? true,
+    assessOnEscalationPhrases: raw.assessOnEscalationPhrases ?? fallback.assessOnEscalationPhrases,
+  };
+}
   if (!schedule || !schedule.enabled || schedule.mode === "manual" || schedule.intervalMinutes == null) {
     return "manual";
   }
@@ -60,19 +76,27 @@ export function scheduleSelectValue(schedule: AssessmentSchedule | null | undefi
 export function scheduleFromSelectValue(
   value: string,
   onlyIfNewData: boolean,
+  assessOnEscalationPhrases = true,
 ): AssessmentSchedule {
   if (value === "manual") {
-    return { enabled: false, mode: "manual", intervalMinutes: null, onlyIfNewData };
+    return {
+      enabled: false,
+      mode: "manual",
+      intervalMinutes: null,
+      onlyIfNewData,
+      assessOnEscalationPhrases,
+    };
   }
   const minutes = Number(value);
   const allowed = ASSESSMENT_INTERVAL_CHOICES.some((c) => c.intervalMinutes === minutes);
   if (!allowed) {
-    return defaultCareSchedule();
+    return { ...defaultCareSchedule(), onlyIfNewData, assessOnEscalationPhrases };
   }
   return {
     enabled: true,
     mode: "interval",
     intervalMinutes: minutes,
     onlyIfNewData,
+    assessOnEscalationPhrases,
   };
 }

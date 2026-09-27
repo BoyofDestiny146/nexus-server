@@ -68,7 +68,7 @@ test("dropdown renders all four Assessment Profiles", () => {
   assert.equal(dropdownLabel(ASSESSMENT_PROFILES[1]), "Sales & Product Guide");
 });
 
-test("right rail shows Latest Assessment above Assessment Settings", () => {
+test("right rail shows Latest Assessment above lower controls", () => {
   assert.match(detail, /AssessmentEngineRail/);
   assert.match(rail, /Nexus Assessment Engine/);
   assert.match(rail, /data-testid="nexus-assessment-engine-heading"/);
@@ -89,11 +89,13 @@ test("right rail shows Latest Assessment above Assessment Settings", () => {
   const settingsIdx = render.indexOf('data-testid="assessment-settings"');
   const profileIdx = render.indexOf("<AssessmentProfileSelector");
   const scheduleIdx = render.indexOf("<AssessmentScheduleControls");
+  const regenIdx = render.indexOf('data-testid="regenerate-assessment"');
   assert.ok(latestIdx >= 0 && settingsIdx >= 0 && latestIdx < settingsIdx);
   assert.ok(profileIdx > settingsIdx);
   assert.ok(scheduleIdx > settingsIdx);
   assert.ok(profileIdx > latestIdx);
   assert.ok(scheduleIdx > latestIdx);
+  assert.ok(regenIdx > scheduleIdx);
 });
 
 test("right panel still renders existing Care & Wellness data", () => {
@@ -184,19 +186,20 @@ test("unimplemented profile panels do not invent assessment values", () => {
   assert.match(rail, /ComingSoonPanel/);
 });
 
-test("assessment settings hold profile, schedule, next run, and regenerate", () => {
+test("lower controls hold profile, schedule, delivery, next run, and regenerate", () => {
   const controls = readFileSync(
     join(here, "../components/assessment/AssessmentScheduleControls.tsx"),
     "utf8",
   );
   const scheduleLib = readFileSync(join(here, "./assessmentSchedule.ts"), "utf8");
+  const layout = readFileSync(join(here, "./patientDetailLayout.ts"), "utf8");
   const settings = rail.slice(rail.indexOf('data-testid="assessment-settings"'));
   const latest = rail.slice(
     rail.indexOf('data-testid="latest-assessment-section"'),
     rail.indexOf('data-testid="assessment-settings"'),
   );
 
-  assert.match(rail, /Assessment Settings/);
+  assert.doesNotMatch(rail, /Assessment Settings/);
   assert.match(settings, /AssessmentProfileSelector/);
   assert.match(settings, /AssessmentScheduleControls/);
   assert.match(settings, /nextAssessmentAt/);
@@ -207,21 +210,42 @@ test("assessment settings hold profile, schedule, next run, and regenerate", () 
   assert.doesNotMatch(latest, /AssessmentProfileSelector/);
   assert.doesNotMatch(latest, /AssessmentScheduleControls/);
   assert.doesNotMatch(latest, /Regenerate Assessment/);
+  assert.match(latest, /overflow-y-auto/);
+  assert.match(latest, /lastAssessmentAt/);
+  assert.match(care, /Last Assessment/);
+  assert.match(sales, /Last Assessment/);
 
   assert.match(controls, /Assessment Schedule/);
   assert.match(controls, /Only assess when new data exists/);
+  assert.match(controls, /Assess on Escalation Phrases/);
+  assert.match(controls, /data-testid="assessment-schedule-escalation-phrases"/);
+  assert.match(controls, /Assessment Delivery/);
+  assert.match(controls, /data-testid="assessment-delivery"/);
+  assert.match(controls, /CareConnect/);
   assert.match(controls, /Next Assessment/);
   assert.doesNotMatch(controls, /Last Assessment/);
+  assert.doesNotMatch(controls, /Send Assessment to CareConnect/);
   assert.match(controls, /MANUAL_SCHEDULE_LABEL/);
   assert.match(controls, /\? "Manual"/);
   assert.match(controls, /ASSESSMENT_INTERVAL_CHOICES/);
   assert.match(scheduleLib, /Every 24 hours/);
   assert.match(scheduleLib, /Manual only/);
+  assert.match(scheduleLib, /assessOnEscalationPhrases: true/);
 
-  assert.match(care, /Last Assessment/);
-  assert.match(sales, /Last Assessment/);
+  const scheduleOrder = controls;
+  assert.ok(scheduleOrder.indexOf("Assessment Schedule") < scheduleOrder.indexOf("Only assess when new data exists"));
+  assert.ok(scheduleOrder.indexOf("Only assess when new data exists") < scheduleOrder.indexOf("Assess on Escalation Phrases"));
+  assert.ok(scheduleOrder.indexOf("Assess on Escalation Phrases") < scheduleOrder.indexOf("Assessment Delivery"));
+  assert.ok(scheduleOrder.indexOf("Assessment Delivery") < scheduleOrder.indexOf("Next Assessment"));
+
   assert.doesNotMatch(care, /Next Assessment/);
   assert.doesNotMatch(sales, /Next Assessment/);
+
+  assert.match(layout, /xl:w-\[26%\]/);
+  assert.match(layout, /overflow-hidden flex flex-col/);
+  assert.doesNotMatch(layout, /xl:overflow-y-auto/);
+  assert.match(rail, /max-h-\[min\(52vh,32rem\)\]/);
+  assert.match(settings, /shrink-0/);
 
   assert.match(detail, /assessment\/latest/);
   assert.match(detail, /live\.assessmentTick/);

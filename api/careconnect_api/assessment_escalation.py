@@ -25,7 +25,7 @@ from .assessment_engine.run_lock import (
     release_agent_lock,
     try_acquire_agent_lock,
 )
-from .assessment_engine.schedule import TRIGGER_ESCALATION
+from .assessment_engine.schedule import TRIGGER_ESCALATION, assess_on_escalation_phrases
 from .triage.runner import run_for_agent
 
 log = logging.getLogger("assessment_escalation")
@@ -68,10 +68,6 @@ async def _escalation_task(agent_id: str, content: str, message_id: int) -> None
         if not locked:
             log.warning("escalation skip agent=%s message=%s reason=locked", agent_id, message_id)
             return
-        claimed = await claim_escalation_message(agent_id, message_id)
-        if not claimed:
-            log.info("escalation skip agent=%s message=%s reason=duplicate", agent_id, message_id)
-            return
         async with async_session_factory() as session:
             agent = await session.get(AiAgent, agent_id)
             if agent is None:
@@ -84,9 +80,20 @@ async def _escalation_task(agent_id: str, content: str, message_id: int) -> None
                     profile_id,
                 )
                 return
+            if not assess_on_escalation_phrases(agent.profile_json):
+                log.info(
+                    "escalation skip agent=%s message=%s reason=assess_on_escalation_disabled",
+                    agent_id,
+                    message_id,
+                )
+                return
             phrases = configured_phrases(load_profile(agent.profile_json).get("escalationPhrases"))
             hits = matching_escalation_phrases(content, phrases)
             if not hits:
+                return
+            claimed = await claim_escalation_message(agent_id, message_id)
+            if not claimed:
+                log.info("escalation skip agent=%s message=%s reason=duplicate", agent_id, message_id)
                 return
             log.info(
                 "escalation assessment agent=%s message=%s phrases=%d",
@@ -113,8 +120,14 @@ def escalation_decision(
     content: str,
     phrases: list[str],
     profile_id: str,
+    assess_on_escalation: bool = True,
 ) -> dict[str, Any]:
-    """Pure helper for tests: should this CLIENT turn run a Care assessment?"""
+    """Pure helper for tests: should this CLIENT turn run a Care assessment?
+
+    Phrase matching is independent of ``assess_on_escalation``. When the
+    flag is false, Watcher/guardrail behavior may still use the phrases,
+    but this path does not queue an assessment.
+    """
     if not is_client_originated_text(chat_type, content):
         return {"run": False, "reason": "not_client"}
     if profile_id != CARE_WELLNESS_ID:
@@ -122,4 +135,6 @@ def escalation_decision(
     hits = matching_escalation_phrases(content, phrases)
     if not hits:
         return {"run": False, "reason": "no_match"}
+    if not assess_on_escalation:
+        return {"run": False, "reason": "assess_on_escalation_disabled", "phrases": hits}
     return {"run": True, "reason": TRIGGER_ESCALATION, "phrases": hits}

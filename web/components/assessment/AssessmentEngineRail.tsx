@@ -5,6 +5,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { apiGet, apiPost, apiPut, ApiError } from "@/lib/api";
 import { classNames } from "@/lib/format";
 import type {
+  AssessmentDelivery,
   AssessmentProfileDefinition,
   AssessmentProfileId,
   AssessmentProfileState,
@@ -18,6 +19,7 @@ import {
   resolveAssessmentProfileId,
 } from "@/lib/assessmentProfiles";
 import { defaultCareSchedule, defaultManualSchedule } from "@/lib/assessmentSchedule";
+import { defaultAssessmentDelivery, parseAssessmentDelivery } from "@/lib/assessmentDelivery";
 import { isCareWellnessPanel, isSalesProductPanel } from "@/lib/assessmentPanels";
 import { PATIENT_DETAIL_RIGHT } from "@/lib/patientDetailLayout";
 import { AssessmentProfileSelector } from "@/components/assessment/AssessmentProfileSelector";
@@ -55,6 +57,7 @@ export function AssessmentEngineRail({
   );
   const [saving, setSaving] = useState(false);
   const [schedule, setSchedule] = useState<AssessmentSchedule>(defaultCareSchedule);
+  const [delivery, setDelivery] = useState<AssessmentDelivery>(defaultAssessmentDelivery);
   const [scheduleSupported, setScheduleSupported] = useState(true);
   const [lastAssessmentAt, setLastAssessmentAt] = useState<string | null>(latest?.generatedAt ?? null);
   const [nextAssessmentAt, setNextAssessmentAt] = useState<string | null>(null);
@@ -79,6 +82,7 @@ export function AssessmentEngineRail({
         }
         setActiveId(resolveAssessmentProfileId(data.assessmentProfile?.id));
         if (data.assessmentSchedule) setSchedule(data.assessmentSchedule);
+        if (data.assessmentDelivery) setDelivery(parseAssessmentDelivery(data.assessmentDelivery));
         if (typeof data.scheduleSupported === "boolean") {
           setScheduleSupported(data.scheduleSupported);
         }
@@ -108,6 +112,7 @@ export function AssessmentEngineRail({
       }
       setActiveId(resolveAssessmentProfileId(next.assessmentProfile?.id));
       if (next.assessmentSchedule) setSchedule(next.assessmentSchedule);
+      if (next.assessmentDelivery) setDelivery(parseAssessmentDelivery(next.assessmentDelivery));
       if (typeof next.scheduleSupported === "boolean") {
         setScheduleSupported(next.scheduleSupported);
       }
@@ -136,6 +141,7 @@ export function AssessmentEngineRail({
         { assessmentSchedule: nextSchedule },
       );
       if (next.assessmentSchedule) setSchedule(next.assessmentSchedule);
+      if (next.assessmentDelivery) setDelivery(parseAssessmentDelivery(next.assessmentDelivery));
       if (next.nextAssessmentAt !== undefined) {
         setNextAssessmentAt(next.nextAssessmentAt ?? null);
       }
@@ -145,6 +151,26 @@ export function AssessmentEngineRail({
     } catch (e) {
       if (e instanceof ApiError) {
         console.error("assessment schedule save failed:", e.message);
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveDelivery(nextDelivery: AssessmentDelivery) {
+    setDelivery(nextDelivery);
+    if (saving) return;
+    setSaving(true);
+    try {
+      const next = await apiPut<AssessmentProfileState>(
+        `/agent/${agentId}/assessment/profile`,
+        { assessmentDelivery: nextDelivery },
+      );
+      if (next.assessmentDelivery) setDelivery(parseAssessmentDelivery(next.assessmentDelivery));
+      if (next.assessmentSchedule) setSchedule(next.assessmentSchedule);
+    } catch (e) {
+      if (e instanceof ApiError) {
+        console.error("assessment delivery save failed:", e.message);
       }
     } finally {
       setSaving(false);
@@ -179,13 +205,16 @@ export function AssessmentEngineRail({
         liveHighlight && "ring-1 ring-teal/30",
       )}
     >
-      <div data-testid="nexus-assessment-engine-header">
+      <div data-testid="nexus-assessment-engine-header" className="shrink-0">
         <div className="kicker mb-4" data-testid="nexus-assessment-engine-heading">
           Nexus Assessment Engine
         </div>
       </div>
 
-      <div data-testid="latest-assessment-section" className="min-w-0">
+      <div
+        data-testid="latest-assessment-section"
+        className="min-w-0 min-h-0 flex-1 overflow-y-auto overflow-x-hidden max-h-[min(52vh,32rem)] xl:max-h-none"
+      >
         {showCareWellness ? (
           <CareWellnessPanel
             latest={latest}
@@ -205,9 +234,8 @@ export function AssessmentEngineRail({
 
       <div
         data-testid="assessment-settings"
-        className="mt-8 pt-6 border-t border-slate-line/70 min-w-0"
+        className="mt-5 pt-5 border-t border-slate-line/70 min-w-0 shrink-0"
       >
-        <div className="kicker mb-4">Assessment Settings</div>
         <AssessmentProfileSelector
           profiles={profiles}
           value={activeId}
@@ -217,9 +245,11 @@ export function AssessmentEngineRail({
         <AssessmentScheduleControls
           schedule={scheduleSupported ? schedule : defaultManualSchedule()}
           scheduleSupported={scheduleSupported}
+          delivery={delivery}
           nextAssessmentAt={nextAssessmentAt}
           disabled={saving}
           onChange={(next) => { void saveSchedule(next); }}
+          onDeliveryChange={(next) => { void saveDelivery(next); }}
         />
         {canRegenerate && (
           <button

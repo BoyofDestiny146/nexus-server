@@ -41,8 +41,9 @@ from ..assessment_engine.profiles import (
     parse_selectable_profile_id,
 )
 from ..assessment_engine.sales_schema import sanitize_sales_payload
+from ..assessment_engine.delivery import apply_assessment_delivery, delivery_view, parse_delivery_put
 from ..assessment_engine.storage import apply_assessment_profile, apply_assessment_schedule, profile_payload, resolved_definition
-from ..assessment_engine.schedule import parse_schedule_put, schedule_view
+from ..assessment_engine.schedule import parse_schedule_put, resolved_schedule, schedule_view
 from ..auth import CurrentUser, get_current_user, require_root
 from ..db import get_db
 from ..envelope import APIException
@@ -58,11 +59,17 @@ class AssessmentSchedulePut(BaseModel):
     mode: str | None = None
     intervalMinutes: int | None = None
     onlyIfNewData: bool | None = None
+    assessOnEscalationPhrases: bool | None = None
+
+
+class AssessmentDeliveryPut(BaseModel):
+    destination: str | None = None
 
 
 class AssessmentProfilePut(BaseModel):
     assessmentProfile: str | None = None
     assessmentSchedule: AssessmentSchedulePut | None = None
+    assessmentDelivery: AssessmentDeliveryPut | None = None
 
 
 def _serialize(row: AiMedicalAssessment) -> dict[str, Any]:
@@ -229,6 +236,7 @@ async def get_assessment_profile(
         raise APIException(404, f"agent {agent_id} not found")
     payload = profile_payload(agent.profile_json)
     payload.update(await schedule_view(db, agent))
+    payload.update(delivery_view(agent.profile_json))
     return payload
 
 
@@ -242,8 +250,12 @@ async def put_assessment_profile(
     """Persist an Assessment Profile selection. Only implemented registry ids
     are accepted — the frontend cannot store arbitrary or Coming-soon ids."""
     await assert_can_access_agent(db, user, agent_id)
-    if payload.assessmentProfile is None and payload.assessmentSchedule is None:
-        raise APIException(400, "assessmentProfile or assessmentSchedule is required")
+    if (
+        payload.assessmentProfile is None
+        and payload.assessmentSchedule is None
+        and payload.assessmentDelivery is None
+    ):
+        raise APIException(400, "assessmentProfile, assessmentSchedule, or assessmentDelivery is required")
     agent = await db.get(AiAgent, agent_id)
     if agent is None:
         raise APIException(404, f"agent {agent_id} not found")
@@ -252,15 +264,18 @@ async def put_assessment_profile(
         apply_assessment_profile(agent, profile_id)
     if payload.assessmentSchedule is not None:
         profile_id = resolved_definition(agent.profile_json).id
-        schedule = parse_schedule_put(
-            payload.assessmentSchedule.model_dump(exclude_none=True),
-            profile_id=profile_id,
-        )
+        incoming = payload.assessmentSchedule.model_dump(exclude_none=True)
+        existing = resolved_schedule(agent.profile_json)
+        schedule = parse_schedule_put({**existing, **incoming}, profile_id=profile_id)
         apply_assessment_schedule(agent, schedule)
+    if payload.assessmentDelivery is not None:
+        delivery = parse_delivery_put(payload.assessmentDelivery.model_dump(exclude_none=True))
+        apply_assessment_delivery(agent, delivery)
     await db.commit()
     await db.refresh(agent)
     out = profile_payload(agent.profile_json)
     out.update(await schedule_view(db, agent))
+    out.update(delivery_view(agent.profile_json))
     return out
 
 
