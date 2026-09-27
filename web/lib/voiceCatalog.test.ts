@@ -45,19 +45,31 @@ test("Female and Male groups render; unknown selected voice lands in Other", () 
   assert.equal(voiceCategory({ id: "x", label: "x" }), "other");
 });
 
+test("Guy and Andrew are selectable Male voices; Adam stays omitted", () => {
+  const voices: VoiceOption[] = [
+    { id: "kokoro:af_heart", label: "Hazel", engine: "kokoro", local: true, recommended: true, category: "female" },
+    { id: "kokoro:am_adam", label: "Adam", engine: "kokoro", local: true, recommended: false, category: "male", enabled: false },
+    { id: "edge:en-US-GuyNeural", label: "Guy", engine: "edge", local: false, recommended: true, category: "male", enabled: true },
+    { id: "edge:en-US-AndrewNeural", label: "Andrew", engine: "edge", local: false, recommended: false, category: "male", enabled: true },
+  ];
+  const groups = groupedVoiceOptions(voices);
+  assert.deepEqual(groups.map((g) => g.key), ["female", "male"]);
+  const maleIds = groups.find((g) => g.key === "male")?.voices.map((v) => v.id);
+  assert.deepEqual(maleIds, ["edge:en-US-GuyNeural", "edge:en-US-AndrewNeural"]);
+});
+
 test("Female and Male groups remain when a category is empty or disabled", () => {
   const voices: VoiceOption[] = [
     { id: "kokoro:af_heart", label: "Hazel", engine: "kokoro", local: true, recommended: true, category: "female" },
     { id: "kokoro:am_adam", label: "Adam", engine: "kokoro", local: true, recommended: false, category: "male", enabled: false },
-    { id: "edge:en-US-GuyNeural", label: "Guy", engine: "edge", local: false, recommended: true, category: "male", enabled: false },
   ];
   const groups = groupedVoiceOptions(voices);
   assert.deepEqual(groups.map((g) => g.key), ["female", "male"]);
   assert.equal(groups.find((g) => g.key === "female")?.voices.length, 1);
   assert.equal(groups.find((g) => g.key === "male")?.voices.length, 0);
 
-  const selectedDisabled = groupedVoiceOptions(voices, "edge:en-US-GuyNeural");
-  assert.equal(selectedDisabled.find((g) => g.key === "male")?.voices[0].id, "edge:en-US-GuyNeural");
+  const selectedDisabled = groupedVoiceOptions(voices, "kokoro:am_adam");
+  assert.equal(selectedDisabled.find((g) => g.key === "male")?.voices[0].id, "kokoro:am_adam");
   assert.equal(selectedDisabled.find((g) => g.key === "male")?.voices.length, 1);
 });
 

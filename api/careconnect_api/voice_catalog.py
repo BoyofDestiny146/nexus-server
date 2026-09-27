@@ -10,15 +10,10 @@ from typing import Any
 
 VOICE_CATEGORIES = ("female", "male", "child", "regional", "specialty", "other")
 
-# Newly added male ids. Keepers stay selectable even if an engine is down.
-# These three are only offered when the live engine/provider confirms them.
-RUNTIME_GATED_VOICE_IDS = frozenset(
-    {
-        "kokoro:am_adam",
-        "edge:en-US-GuyNeural",
-        "edge:en-US-AndrewNeural",
-    }
-)
+# Live Orin confirmed Edge Guy and Andrew. Kokoro am_adam stays in the
+# catalog for configured devices but is not selectable until confirmed.
+DISABLED_UNCONFIRMED_VOICE_IDS = frozenset({"kokoro:am_adam"})
+RUNTIME_GATED_VOICE_IDS = DISABLED_UNCONFIRMED_VOICE_IDS
 
 # Known keepers + male additions. Ids must never change.
 _KNOWN: dict[str, dict[str, str]] = {
@@ -121,27 +116,17 @@ def apply_runtime_voice_availability(
     kokoro_voice_names: set[str] | None = None,
     edge_available: bool | None = None,
 ) -> list[dict[str, Any]]:
-    """Mark unverified-at-runtime male voices disabled. Never drop ids.
+    """Keep unconfirmed voices disabled. Never drop ids.
 
-    ``kokoro_voice_names is None`` means the Kokoro voice pack was not loaded
-    in this process, so ``kokoro:am_adam`` is not selectable.
-    ``edge_available is not True`` means Edge TTS was not importable, so the
-    gated Edge male voices are not selectable.
+    Edge Guy/Andrew were confirmed on the live Orin and stay selectable.
+    ``kokoro:am_adam`` stays disabled even if a Kokoro pack is loaded, until
+    that specific voice is confirmed present.
     """
+    _ = kokoro_voice_names, edge_available
     out: list[dict[str, Any]] = []
     for raw in voices:
         row = dict(raw)
-        vid = str(row.get("id") or "")
-        if vid not in RUNTIME_GATED_VOICE_IDS:
-            out.append(row)
-            continue
-        engine = str(row.get("engine") or (vid.split(":", 1)[0] if ":" in vid else ""))
-        if engine == "kokoro":
-            name = vid.split(":", 1)[-1]
-            row["enabled"] = bool(kokoro_voice_names is not None and name in kokoro_voice_names)
-        elif engine == "edge":
-            row["enabled"] = bool(edge_available is True)
-        else:
+        if str(row.get("id") or "") in DISABLED_UNCONFIRMED_VOICE_IDS:
             row["enabled"] = False
         out.append(row)
     return out
