@@ -134,8 +134,8 @@ export function formatRevelContextCard(
 }
 
 /**
- * Parent conversation path: owned RevelStatus → REVEL CONTEXT card.
- * PatientDetailClient must call this; do not derive conversation chrome from the badge.
+ * Live /revel/status → card model for the header badge only.
+ * Historical transcript REVEL CONTEXT cards come from persisted system events.
  */
 export function patientDetailConversationRevel(
   status: Pick<RevelStatus, "tag" | "autoTrigger" | "device"> | null | undefined,

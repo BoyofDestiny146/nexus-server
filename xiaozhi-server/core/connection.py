@@ -908,7 +908,9 @@ class ConnectionHandler:
                 mac=self.device_id or "",
                 query=query,
                 messages=messages,
-                search=search_device_knowledge,
+                search=lambda mac, q, limit=3: search_device_knowledge(
+                    mac, q, limit=limit, session_id=getattr(self, "session_id", "") or "",
+                ),
                 enabled=knowledge_enabled(),
                 max_results=env_int("CC_KNOWLEDGE_CONTEXT_MAX_RESULTS", 3),
                 max_chars=env_int("CC_KNOWLEDGE_CONTEXT_MAX_CHARS", 6000),
@@ -954,7 +956,12 @@ class ConnectionHandler:
                 mac=self.device_id or "",
                 query=query,
                 already_executed_tag=already,
-                decide=post_knowledge_revel,
+                decide=lambda mac, q, already_executed_tag=None: post_knowledge_revel(
+                    mac,
+                    q,
+                    already_executed_tag=already_executed_tag,
+                    session_id=getattr(self, "session_id", "") or "",
+                ),
                 logger=self.logger.bind(tag=TAG),
             )
             self.cc_last_revel_action = {

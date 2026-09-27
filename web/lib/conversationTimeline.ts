@@ -1,11 +1,10 @@
-/** Chronological Client Detail transcript. REVEL CONTEXT is a synthetic timeline item, not a chat row. */
+/** Chronological Client Detail transcript from persisted chat rows. */
 
 import type { ChatMessage } from "./types";
 import type { RevelDiscussionContext } from "./revelStatus";
 
 const REVEL_PREFIX = "[[revel]]";
 const GCAL_PREFIX = "[[gcal]]";
-export const REVEL_CONTEXT_ITEM_KEY = "revel-context";
 
 export type ConversationTimelineItem =
   | {
@@ -31,9 +30,10 @@ export type ConversationTimelineItem =
     }
   | {
       type: "revel_context";
-      key: typeof REVEL_CONTEXT_ITEM_KEY;
+      key: string;
       at: number;
       createdAt: string;
+      message: ChatMessage;
       context: RevelDiscussionContext;
     };
 
@@ -55,14 +55,52 @@ function contentStartsWith(content: string | null | undefined, prefix: string): 
   return (content || "").trimStart().startsWith(prefix);
 }
 
-export function classifyConversationMessage(message: ChatMessage): Exclude<
-  ConversationTimelineItem,
-  { type: "revel_context" }
-> {
+function parseRevelSystemHeader(content: string | null | undefined): Record<string, unknown> | null {
+  if (!content) return null;
+  const trimmed = content.trimStart();
+  if (!trimmed.startsWith(REVEL_PREFIX)) return null;
+  const rest = trimmed.slice(REVEL_PREFIX.length);
+  const nl = rest.indexOf("\n");
+  const headerRaw = nl >= 0 ? rest.slice(0, nl) : rest;
+  try {
+    const header = JSON.parse(headerRaw) as Record<string, unknown>;
+    if (!header || typeof header !== "object") return null;
+    if (String(header.provider || "revel") !== "revel") return null;
+    return header;
+  } catch {
+    return null;
+  }
+}
+
+export function persistedRevelContext(message: ChatMessage): RevelDiscussionContext | null {
+  if (message.chatType !== 3) return null;
+  const header = parseRevelSystemHeader(message.content);
+  if (!header) return null;
+  const eventType = String(header.event_type || header.eventType || "").trim().toLowerCase();
+  const typed = String(header.type || "").trim().toUpperCase();
+  if (eventType !== "revel_context" && typed !== "REVEL_CONTEXT") return null;
+  const tag = String(header.tag || "").trim();
+  if (!tag) return null;
+  const autoRaw = header.auto_trigger ?? header.autoTrigger;
+  const autoTrigger = autoRaw === true || autoRaw === 1 || String(autoRaw || "").toLowerCase() === "true";
+  const display = String(header.revel_device_name || header.deviceName || "").trim();
+  return {
+    tag,
+    autoTrigger,
+    autoTriggerLabel: autoTrigger ? "Enabled" : "Manual",
+    display,
+  };
+}
+
+export function classifyConversationMessage(message: ChatMessage): ConversationTimelineItem {
   const at = messageTime(message);
   const createdAt = message.createdAt;
   const key = persistedKey(message);
   if (message.chatType === 3 && contentStartsWith(message.content, REVEL_PREFIX)) {
+    const context = persistedRevelContext(message);
+    if (context) {
+      return { type: "revel_context", key, at, createdAt, message, context };
+    }
     return { type: "revel_display", key, at, createdAt, message };
   }
   if (message.chatType === 3 || contentStartsWith(message.content, GCAL_PREFIX)) {
@@ -73,62 +111,12 @@ export function classifyConversationMessage(message: ChatMessage): Exclude<
 
 function compareTimelineItems(a: ConversationTimelineItem, b: ConversationTimelineItem): number {
   if (a.at !== b.at) return a.at - b.at;
-  if (a.type === "revel_context" && b.type !== "revel_context") return -1;
-  if (b.type === "revel_context" && a.type !== "revel_context") return 1;
-  const aid = a.type === "revel_context" ? -1 : a.message.id;
-  const bid = b.type === "revel_context" ? -1 : b.message.id;
-  return aid - bid;
+  return a.message.id - b.message.id;
 }
 
-function firstPersistedItem(
-  items: Exclude<ConversationTimelineItem, { type: "revel_context" }>[],
-): Exclude<ConversationTimelineItem, { type: "revel_context" }> | null {
-  if (items.length === 0) return null;
-  return items.reduce((min, item) => {
-    if (item.at < min.at) return item;
-    if (item.at === min.at && item.message.id < min.message.id) return item;
-    return min;
-  });
-}
-
-/**
- * Build the scrolling transcript.
- * REVEL CONTEXT is inserted once, immediately before the first session message
- * when the topic assignment has no persisted timestamp. It is never a DB chat row.
- */
-export function buildConversationTimeline(
-  messages: ChatMessage[],
-  context: RevelDiscussionContext | null | undefined,
-  topicAssignedAt?: string | null,
-): ConversationTimelineItem[] {
-  const persisted = messages.map(classifyConversationMessage);
-  if (!context) return persisted.slice().sort(compareTimelineItems);
-
-  const assignedMs = topicAssignedAt ? Date.parse(topicAssignedAt) : Number.NaN;
-  let at: number;
-  let createdAt: string;
-  if (!Number.isNaN(assignedMs) && topicAssignedAt) {
-    at = assignedMs;
-    createdAt = topicAssignedAt;
-  } else {
-    const first = firstPersistedItem(persisted);
-    if (first) {
-      at = first.at;
-      createdAt = first.createdAt;
-    } else {
-      at = 0;
-      createdAt = "";
-    }
-  }
-
-  const contextItem: ConversationTimelineItem = {
-    type: "revel_context",
-    key: REVEL_CONTEXT_ITEM_KEY,
-    at,
-    createdAt,
-    context,
-  };
-  return [...persisted, contextItem].sort(compareTimelineItems);
+/** Build the scrolling transcript from persisted rows only. No synthetic current-status card. */
+export function buildConversationTimeline(messages: ChatMessage[]): ConversationTimelineItem[] {
+  return messages.map(classifyConversationMessage).sort(compareTimelineItems);
 }
 
 export function groupTimelineByDay(
@@ -149,6 +137,8 @@ export function timelineItemTypes(items: ConversationTimelineItem[]): Conversati
   return items.map((item) => item.type);
 }
 
-export function revelContextCount(items: ConversationTimelineItem[]): number {
-  return items.filter((item) => item.type === "revel_context").length;
+export function revelContextTags(items: ConversationTimelineItem[]): string[] {
+  return items
+    .filter((item): item is Extract<ConversationTimelineItem, { type: "revel_context" }> => item.type === "revel_context")
+    .map((item) => item.context.tag);
 }

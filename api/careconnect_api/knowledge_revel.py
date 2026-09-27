@@ -321,6 +321,7 @@ async def evaluate_knowledge_revel(
     limit: int = 5,
     hits: list[dict[str, Any]] | None = None,
     enabled: bool | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     """Server-side Knowledge Revel decision. Fail-open. Does not scan text."""
     flag_on = knowledge_revel_enabled() if enabled is None else bool(enabled)
@@ -337,7 +338,9 @@ async def evaluate_knowledge_revel(
         _log_decision(mac, client_id, empty)
         return empty
     if hits is None:
-        searched = await device_knowledge_search(db, mac, query, limit)
+        searched = await device_knowledge_search(
+            db, mac, query, limit, session_id=session_id
+        )
         hits = list(searched.get("results") or [])
         kb_ids = [int(x) for x in (searched.get("knowledgeBaseIds") or kb_ids)]
         client_id = searched.get("clientId") or client_id

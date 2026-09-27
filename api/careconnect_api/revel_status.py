@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .chat_events import (
     CHAT_TYPE_SYSTEM,
     SOURCE_REVEL,
+    is_revel_context_event,
     parse_revel_timeline,
     persist_revel_timeline,
     notify_timeline_best_effort,
@@ -199,6 +200,8 @@ async def latest_revel_event(
     for row in rows:
         parsed = parse_revel_timeline(row.content)
         if parsed is None:
+            continue
+        if is_revel_context_event(parsed):
             continue
         public = _public_event(parsed)
         if public and not public.get("createdAt") and row.created_at is not None:

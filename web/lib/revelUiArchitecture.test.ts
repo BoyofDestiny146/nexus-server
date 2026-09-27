@@ -81,8 +81,8 @@ test("header badge is presentational; parent owns GET /agent/{id}/revel/status",
   assert.doesNotMatch(badge, /onStatus/);
   assert.doesNotMatch(badge, /useEffect/);
   assert.match(detail, /loadRevelStatus\(id, apiGet\)/);
-  assert.match(detail, /patientDetailConversationRevel\(revelStatus\)/);
   assert.match(detail, /status=\{revelStatus\}/);
+  assert.doesNotMatch(detail, /patientDetailConversationRevel\(revelStatus\)/);
   assert.doesNotMatch(detail, /onStatus=\{setRevelStatus\}/);
 });
 
@@ -96,12 +96,14 @@ test("desktop layout remains approximately 26 \/ 48 \/ 26", () => {
 });
 
 test("REVEL CONTEXT is a chronological timeline item, not a pinned group header", () => {
-  assert.match(detail, /patientDetailConversationRevel\(revelStatus\)/);
-  assert.match(detail, /buildConversationTimeline\(messages, revelContext\)/);
+  assert.match(detail, /loadRevelStatus\(id, apiGet\)/);
+  assert.match(detail, /buildConversationTimeline\(messages\)/);
+  assert.doesNotMatch(detail, /buildConversationTimeline\(messages, revelContext\)/);
   assert.match(detail, /RevelContextCard/);
   assert.match(detail, /data-testid="revel-context-item"/);
   assert.match(detail, /data-testid="conversation-timeline"/);
   assert.doesNotMatch(detail, /gi === 0 && revelContext/);
+  assert.doesNotMatch(detail, /patientDetailConversationRevel\(revelStatus\)/);
   assert.match(contextCard, /data-testid="revel-context-card"/);
   assert.match(contextCard, /revelContextCardModel/);
   assert.match(contextCard, /card\.title/);

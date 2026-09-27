@@ -13,6 +13,7 @@ export type RevelTimeline = {
   revelDeviceId: string;
   deviceKey: string;
   tag: string;
+  autoTrigger: boolean;
   controlTableId: string;
   controlRowId: string;
   result: "sent" | "failed" | "skipped" | "disabled";
@@ -45,6 +46,7 @@ export function parseRevelTimeline(content: string | null | undefined): RevelTim
     if (provider !== "revel") return null;
     const deviceName = String(header.revel_device_name || header.deviceName || "");
     const created = String(header.created_at || header.delivered_at || "");
+    const autoRaw = header.auto_trigger ?? header.autoTrigger;
     return {
       provider,
       eventType: String(header.event_type || "revel_display"),
@@ -54,6 +56,7 @@ export function parseRevelTimeline(content: string | null | undefined): RevelTim
       revelDeviceId: String(header.revel_device_id || ""),
       deviceKey: String(header.device_key || ""),
       tag: String(header.tag || ""),
+      autoTrigger: autoRaw === true || autoRaw === 1 || String(autoRaw || "").toLowerCase() === "true",
       controlTableId: String(header.control_table_id || ""),
       controlRowId: String(header.control_row_id || ""),
       result: normalizeResult(String(header.result || "")),
@@ -75,7 +78,10 @@ export function revelTimelineFromMessage(message: {
   content?: string | null;
 }): RevelTimeline | null {
   if (message.chatType !== 3) return null;
-  return parseRevelTimeline(message.content);
+  const parsed = parseRevelTimeline(message.content);
+  if (!parsed) return null;
+  if (parsed.eventType === "revel_context") return null;
+  return parsed;
 }
 
 /** Mapped player name if present, otherwise the normalized screen. Never invents Media1. */

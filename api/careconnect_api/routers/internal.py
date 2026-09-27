@@ -328,6 +328,7 @@ async def revel_command(
 class DeviceKnowledgeSearchIn(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
     limit: int = Field(default=5, ge=1, le=50)
+    sessionId: str | None = Field(default=None, max_length=50)
 
 
 @router.post(
@@ -346,7 +347,13 @@ async def internal_device_knowledge_search(
     Device MAC → bound client Knowledge Bases → enabled sources only.
     Never searches all Knowledge Bases. Does not execute Revel.
     """
-    result = await device_knowledge_search(db, mac, payload.query, payload.limit)
+    result = await device_knowledge_search(
+        db,
+        mac,
+        payload.query,
+        payload.limit,
+        session_id=payload.sessionId,
+    )
     log.info(
         "device knowledge-search mac=%s client=%s bases=%s hits=%s revel_execute=false",
         result.get("deviceMac"),
@@ -361,6 +368,7 @@ class DeviceKnowledgeRevelIn(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
     alreadyExecutedTag: str | None = Field(default=None, max_length=64)
     limit: int = Field(default=5, ge=1, le=50)
+    sessionId: str | None = Field(default=None, max_length=50)
 
 
 @router.post(
@@ -384,5 +392,6 @@ async def internal_device_knowledge_revel(
         payload.query,
         already_executed_tag=payload.alreadyExecutedTag,
         limit=payload.limit,
+        session_id=payload.sessionId,
     )
     return result

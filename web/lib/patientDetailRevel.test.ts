@@ -4,9 +4,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-  conversationRendersRevelContext,
   loadRevelStatus,
-  patientDetailConversationRevel,
   revelContextCardModel,
   revelDiscussionContext,
   revelStatusPath,
@@ -50,15 +48,15 @@ function livePayload(partial: Partial<RevelStatus> = {}): RevelStatus {
   };
 }
 
-test("PatientDetailClient owns GET /agent/{id}/revel/status and does not take status from the badge", () => {
+test("PatientDetailClient owns GET /agent/{id}/revel/status for the header badge, not transcript cards", () => {
   assert.match(detail, /loadRevelStatus\(id, apiGet\)/);
   assert.match(detail, /\[id, knowledgeTick\]/);
-  assert.match(detail, /patientDetailConversationRevel\(revelStatus\)/);
   assert.match(detail, /status=\{revelStatus\}/);
   assert.match(detail, /loading=\{revelStatusLoading\}/);
   assert.match(detail, /error=\{revelStatusError\}/);
   assert.doesNotMatch(detail, /onStatus=/);
   assert.doesNotMatch(detail, /setRevelStatus\)\s*\/>/);
+  assert.doesNotMatch(detail, /patientDetailConversationRevel\(revelStatus\)/);
   assert.doesNotMatch(badge, /apiGet/);
   assert.doesNotMatch(badge, /onStatus/);
   assert.doesNotMatch(badge, /useEffect/);
@@ -66,7 +64,7 @@ test("PatientDetailClient owns GET /agent/{id}/revel/status and does not take st
   assert.match(badge, /Parent owns Revel status fetching/);
 });
 
-test("parent-owned live status {tag:care_overview, autoTrigger:true, device:null} renders REVEL CONTEXT in the conversation", async () => {
+test("parent-owned live status drives the header badge, not a synthetic conversation card", async () => {
   const agentId = "agt_live";
   const calls: string[] = [];
   const get = async <T>(path: string): Promise<T> => {
@@ -83,34 +81,10 @@ test("parent-owned live status {tag:care_overview, autoTrigger:true, device:null
   assert.equal(result.status.tag, "care_overview");
   assert.equal(result.status.autoTrigger, true);
   assert.equal(result.status.device, null);
+  assert.match(result.status.header, /Tag: care_overview/);
 
-  // Same function PatientDetailClient uses for conversation chrome.
-  const conversation = patientDetailConversationRevel(result.status);
-  assert.ok(conversation.revelContext);
-  assert.ok(conversation.card);
-  assert.match(conversation.card, /^REVEL CONTEXT$/m);
-  assert.match(conversation.card, /care_overview/);
-  assert.match(conversation.card, /Enabled/);
-  assert.doesNotMatch(conversation.card, /^Display\b/m);
-  assert.doesNotMatch(conversation.card, /DISPLAY EVENT/);
-
-  const rendered = conversationRendersRevelContext(result.status);
-  assert.equal(rendered, conversation.card);
-  assert.match(rendered ?? "", /REVEL CONTEXT/);
-  assert.match(rendered ?? "", /Tag\s+care_overview/);
-  assert.match(rendered ?? "", /Auto Trigger\s+Enabled/);
-
-  const card = revelContextCardModel(conversation.revelContext);
-  assert.equal(card.title, "REVEL CONTEXT");
-  assert.deepEqual(
-    card.rows.map((row) => [row.label, row.value]),
-    [
-      ["Tag", "care_overview"],
-      ["Auto Trigger", "Enabled"],
-    ],
-  );
-  assert.equal(card.rows.some((row) => row.label === "Display"), false);
-
+  assert.match(detail, /buildConversationTimeline\(messages\)/);
+  assert.doesNotMatch(detail, /buildConversationTimeline\(messages, revelContext\)/);
   assert.match(detail, /RevelContextCard context=\{item\.context\}/);
   assert.match(detail, /data-testid="revel-context-item"/);
   assert.match(detail, /data-testid="conversation-timeline"/);
@@ -120,43 +94,41 @@ test("parent-owned live status {tag:care_overview, autoTrigger:true, device:null
   assert.match(contextCard, /card\.rows\.map/);
 });
 
-test("REVEL CONTEXT does not require configured, enabled, device mapping, auth, execute, or a display event", () => {
-  const status = {
+test("persisted REVEL CONTEXT card model does not require configured, enabled, device mapping, auth, execute, or a display event", () => {
+  const context = revelDiscussionContext({
     tag: "care_overview",
     autoTrigger: true,
     device: null,
-  };
-  const conversation = patientDetailConversationRevel(status);
-  assert.ok(conversation.card);
-  assert.match(conversation.card, /REVEL CONTEXT/);
-  assert.match(conversation.card, /care_overview/);
-  assert.match(conversation.card, /Enabled/);
-  assert.doesNotMatch(conversation.card, /Display/);
-  assert.equal("configured" in status, false);
-  assert.equal("enabled" in status, false);
-  assert.equal("revelExecuteEnabled" in status, false);
+  });
+  assert.ok(context);
+  const card = revelContextCardModel(context);
+  assert.equal(card.title, "REVEL CONTEXT");
+  assert.deepEqual(
+    card.rows.map((row) => [row.label, row.value]),
+    [
+      ["Tag", "care_overview"],
+      ["Auto Trigger", "Enabled"],
+    ],
+  );
+  assert.equal(card.rows.some((row) => row.label === "Display"), false);
 });
 
-test("authenticated status failure leaves the conversation without fabricated REVEL CONTEXT", async () => {
+test("authenticated status failure leaves the header without inventing transcript REVEL CONTEXT", async () => {
   const get = async <T>(_path: string): Promise<T> => {
     throw new Error("Revel status unavailable");
   };
   const result = await loadRevelStatus("agt_live", get);
   assert.equal(result.status, null);
   assert.equal(result.error, "Revel status unavailable");
-
-  const conversation = patientDetailConversationRevel(result.status);
-  assert.equal(conversation.revelContext, null);
-  assert.equal(conversation.card, null);
-  assert.equal(conversationRendersRevelContext(result.status), null);
-  assert.equal(revelDiscussionContext(result.status), null);
+  assert.doesNotMatch(detail, /patientDetailConversationRevel\(revelStatus\)/);
+  assert.match(detail, /buildConversationTimeline\(messages\)/);
 });
 
-test("DISPLAY EVENT stays a separate conversation card from parent-owned REVEL CONTEXT", () => {
+test("DISPLAY EVENT stays a separate conversation card from persisted REVEL CONTEXT", () => {
   assert.match(detail, /RevelDisplayEvent/);
   assert.match(detail, /data-testid="revel-timeline-item"/);
+  assert.match(detail, /item\.type === "revel_display"/);
+  assert.match(detail, /item\.type === "revel_context"/);
   assert.doesNotMatch(contextCard, /Display event/);
   assert.doesNotMatch(contextCard, /DRY RUN/);
-  const conversation = patientDetailConversationRevel(LIVE_PARENT_STATUS);
-  assert.doesNotMatch(conversation.card ?? "", /DISPLAY EVENT/);
 });

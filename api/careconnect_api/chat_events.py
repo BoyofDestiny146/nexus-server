@@ -136,6 +136,8 @@ def parse_gcal_timeline(content: str | None) -> dict[str, Any] | None:
 
 REVEL_RESULTS = ("sent", "failed", "skipped", "disabled")
 REVEL_EVENT_TYPE = "revel_display"
+REVEL_CONTEXT_EVENT_TYPE = "revel_context"
+REVEL_CONTEXT_TYPE = "REVEL_CONTEXT"
 
 
 def normalize_revel_result(raw: str | None) -> str:
@@ -229,9 +231,14 @@ def parse_revel_timeline(content: str | None) -> dict[str, Any] | None:
         header.get("revel_device_name") or header.get("deviceName") or ""
     )
     created = str(header.get("created_at") or header.get("delivered_at") or "")
+    auto_raw = header.get("auto_trigger")
+    if auto_raw is None:
+        auto_raw = header.get("autoTrigger")
     return {
         "provider": provider,
         "event_type": str(header.get("event_type") or REVEL_EVENT_TYPE),
+        "type": str(header.get("type") or ""),
+        "session_id": str(header.get("session_id") or header.get("sessionId") or ""),
         "intent": str(header.get("intent") or ""),
         "screen": str(header.get("screen") or ""),
         "deviceName": device_name,
@@ -239,6 +246,7 @@ def parse_revel_timeline(content: str | None) -> dict[str, Any] | None:
         "revel_device_id": str(header.get("revel_device_id") or ""),
         "device_key": str(header.get("device_key") or ""),
         "tag": str(header.get("tag") or ""),
+        "auto_trigger": _as_bool(auto_raw),
         "control_table_id": str(header.get("control_table_id") or ""),
         "control_row_id": str(header.get("control_row_id") or ""),
         "result": normalize_revel_result(str(header.get("result") or "")),
@@ -250,6 +258,78 @@ def parse_revel_timeline(content: str | None) -> dict[str, Any] | None:
         "delivered_at": created,
         "created_at": created,
     }
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value) and value != 0
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_revel_context_event(parsed: dict[str, Any] | None) -> bool:
+    if not parsed:
+        return False
+    event_type = str(parsed.get("event_type") or "").strip().casefold()
+    if event_type == REVEL_CONTEXT_EVENT_TYPE:
+        return True
+    return str(parsed.get("type") or "").strip().upper() == REVEL_CONTEXT_TYPE
+
+
+def encode_revel_context_timeline(
+    *,
+    tag: str,
+    auto_trigger: bool,
+    delivered_at: str,
+    session_id: str | None = None,
+    device_name: str | None = None,
+    provider: str = SOURCE_REVEL,
+) -> str:
+    """Pack a historical topic-transition system row. Not a display event."""
+    header = {
+        "provider": provider or SOURCE_REVEL,
+        "event_type": REVEL_CONTEXT_EVENT_TYPE,
+        "type": REVEL_CONTEXT_TYPE,
+        "session_id": (session_id or "")[:50],
+        "tag": (tag or "")[:128],
+        "auto_trigger": bool(auto_trigger),
+        "deviceName": (device_name or "")[:80],
+        "revel_device_name": (device_name or "")[:80],
+        "created_at": delivered_at or "",
+        "delivered_at": delivered_at or "",
+    }
+    for key in _FORBIDDEN_HEADER_KEYS:
+        header.pop(key, None)
+    raw = json.dumps(header, separators=(",", ":"), ensure_ascii=False)
+    prefix = f"{REVEL_MARKER}{raw}\n"
+    body = "REVEL CONTEXT"
+    budget = CONTENT_MAX - len(prefix)
+    if budget < 0:
+        return (prefix[: CONTENT_MAX - 1] + "\n")[:CONTENT_MAX]
+    return prefix + body[:budget]
+
+
+def should_record_revel_context(previous_tag: str | None, new_tag: str | None) -> bool:
+    """True when this session's active revel_tag changed to a non-empty value."""
+    nxt = (new_tag or "").strip()
+    if not nxt:
+        return False
+    return (previous_tag or "").strip() != nxt
+
+
+def resolved_revel_topic(hits: list[Any] | None) -> tuple[str, bool]:
+    """First tagged knowledge hit. Does not scan document text."""
+    for row in hits or []:
+        if not isinstance(row, dict):
+            continue
+        tag = str(row.get("revelTag") or row.get("revel_tag") or "").strip()
+        if tag:
+            auto = row.get("revelAutoTrigger")
+            if auto is None:
+                auto = row.get("revel_auto_trigger")
+            return tag[:128], _as_bool(auto)
+    return "", False
 
 
 def calendar_dialogue_line(content: str | None) -> str:
@@ -339,10 +419,17 @@ def revel_assessment_context(
     *,
     created_at: datetime | None = None,
 ) -> str | None:
-    """Normalized REVEL_DISPLAY block for Nexus analysis. Historical, not instructions."""
+    """Normalized Revel block for Nexus analysis. Historical, not instructions."""
     parsed = parse_revel_timeline(content)
     if parsed is None:
         return None
+    if is_revel_context_event(parsed):
+        display = revel_display_name(parsed)
+        return revel_topic_assessment_context(
+            tag=parsed.get("tag"),
+            auto_trigger=bool(parsed.get("auto_trigger")),
+            display=display or None,
+        )
     for key in _ASSESSMENT_ID_KEYS:
         parsed.pop(key, None)
     ts = str(parsed.get("created_at") or parsed.get("delivered_at") or "")
@@ -535,6 +622,162 @@ async def persist_revel_timeline(
         "macAddress": "",
         "createdAt": created_ms,
     }
+
+
+async def last_session_revel_context_tag(
+    db: AsyncSession,
+    *,
+    agent_id: str,
+    session_id: str,
+) -> str | None:
+    """Most recent persisted REVEL CONTEXT tag for this session only."""
+    if not agent_id or not session_id:
+        return None
+    rows = (
+        await db.execute(
+            select(AiAgentChatHistory)
+            .where(
+                AiAgentChatHistory.agent_id == agent_id,
+                AiAgentChatHistory.session_id == session_id,
+                AiAgentChatHistory.chat_type == CHAT_TYPE_SYSTEM,
+            )
+            .order_by(AiAgentChatHistory.id.desc())
+            .limit(80)
+        )
+    ).scalars().all()
+    for row in rows:
+        parsed = parse_revel_timeline(row.content)
+        if not is_revel_context_event(parsed):
+            continue
+        tag = str((parsed or {}).get("tag") or "").strip()
+        if tag:
+            return tag
+    return None
+
+
+async def persist_revel_context_event(
+    db: AsyncSession,
+    *,
+    agent_id: str,
+    session_id: str,
+    tag: str,
+    auto_trigger: bool,
+    delivered_at: datetime,
+    device_name: str | None = None,
+) -> dict[str, Any] | None:
+    """Insert one topic-transition system_event. Caller commits. No Revel write."""
+    if not agent_id or not tag.strip():
+        return None
+    sid = (session_id or "").strip()[:50] or await latest_session_id(db, agent_id)
+    delivered_iso = _iso(delivered_at)
+    content = encode_revel_context_timeline(
+        tag=tag.strip(),
+        auto_trigger=bool(auto_trigger),
+        delivered_at=delivered_iso,
+        session_id=sid,
+        device_name=device_name,
+    )
+    stamp = _naive_local(delivered_at)
+    fields: dict[str, Any] = {
+        "mac_address": None,
+        "agent_id": agent_id,
+        "session_id": sid,
+        "chat_type": CHAT_TYPE_SYSTEM,
+        "content": content,
+        "created_at": stamp,
+        "updated_at": stamp,
+    }
+    next_id = await _sqlite_next_chat_id(db)
+    if next_id is not None:
+        fields["id"] = next_id
+    row = AiAgentChatHistory(**fields)
+    db.add(row)
+    await db.flush()
+    if delivered_at.tzinfo is not None:
+        created_ms = int(delivered_at.timestamp() * 1000)
+    else:
+        created_ms = int(stamp.replace(tzinfo=timezone.utc).timestamp() * 1000)
+    log.info(
+        "revel context recorded agent=%s session=%s tag=%s chat_type=%s",
+        agent_id,
+        sid,
+        tag.strip(),
+        CHAT_TYPE_SYSTEM,
+    )
+    return {
+        "id": row.id,
+        "agentId": agent_id,
+        "sessionId": sid,
+        "chatType": CHAT_TYPE_SYSTEM,
+        "content": content,
+        "macAddress": "",
+        "createdAt": created_ms,
+    }
+
+
+async def persist_revel_context_if_changed(
+    db: AsyncSession,
+    *,
+    agent_id: str,
+    session_id: str | None,
+    tag: str | None,
+    auto_trigger: bool = False,
+    device_name: str | None = None,
+    at: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Record a session-scoped topic transition when the revel_tag changes."""
+    nxt = (tag or "").strip()
+    if not agent_id or not nxt:
+        return None
+    sid = (session_id or "").strip()[:50] or await latest_session_id(db, agent_id)
+    previous = await last_session_revel_context_tag(
+        db, agent_id=agent_id, session_id=sid
+    )
+    if not should_record_revel_context(previous, nxt):
+        return None
+    when = at or datetime.now(timezone.utc)
+    return await persist_revel_context_event(
+        db,
+        agent_id=agent_id,
+        session_id=sid,
+        tag=nxt,
+        auto_trigger=bool(auto_trigger),
+        delivered_at=when,
+        device_name=device_name,
+    )
+
+
+async def record_revel_context_transition(
+    db: AsyncSession,
+    *,
+    agent_id: str,
+    session_id: str | None,
+    tag: str | None,
+    auto_trigger: bool = False,
+    device_name: str | None = None,
+) -> dict[str, Any] | None:
+    """Commit a context transition if the session tag changed. Fail-open."""
+    try:
+        payload = await persist_revel_context_if_changed(
+            db,
+            agent_id=agent_id,
+            session_id=session_id,
+            tag=tag,
+            auto_trigger=auto_trigger,
+            device_name=device_name,
+        )
+        if payload is None:
+            return None
+        await db.commit()
+        await notify_timeline_best_effort(payload)
+        return payload
+    except Exception:
+        log.warning("revel context persist failed agent=%s", agent_id, exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        return None
 
 
 async def notify_timeline_best_effort(payload: dict[str, Any] | None) -> None:

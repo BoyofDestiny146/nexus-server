@@ -324,7 +324,11 @@ def test_search_device_knowledge_fail_open(monkeypatch):
     assert MAC_A in captured["url"]
     assert captured["headers"]["X-Internal-Token"] == "secret"
     assert captured["json"]["query"] == QUERY
+    assert "sessionId" not in captured["json"]
     assert captured["timeout"] == pytest.approx(2.0)
+
+    data = db.search_device_knowledge(MAC_A, QUERY, limit=3, session_id="sess-abc")
+    assert captured["json"]["sessionId"] == "sess-abc"
 
 
 def test_chat_path_preserves_persona_and_existing_llm_flow(monkeypatch):
@@ -333,6 +337,7 @@ def test_chat_path_preserves_persona_and_existing_llm_flow(monkeypatch):
     chat_fn = chat_fn.split("\n    def ", 1)[0]
     assert "SentenceType.FIRST" in chat_fn
     assert "_cc_ground_llm_messages" in chat_fn
+    assert "session_id=getattr(self, \"session_id\"" in conn_src
     assert "ground_turn_messages" in conn_src
     assert chat_fn.index("SentenceType.FIRST") < chat_fn.index("_cc_ground_llm_messages")
     assert "_cc_maybe_knowledge_revel" in chat_fn

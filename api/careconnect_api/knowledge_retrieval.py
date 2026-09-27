@@ -23,7 +23,7 @@ from .knowledge_rank import (
     prepare_grounded_context,
     rank_results,
 )
-from .models import KnowledgeChunk, KnowledgeSource, KnowledgeTopic
+from .models import ClientIntegration, KnowledgeChunk, KnowledgeSource, KnowledgeTopic
 from .settings import settings
 
 log = logging.getLogger("knowledge")
@@ -533,6 +533,7 @@ async def device_knowledge_search(
     mac: str,
     query: str,
     limit: int = 5,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     """Device MAC → client Knowledge Bases → enabled sources only. Never global."""
     context = await resolve_device_knowledge_context(db, mac)
@@ -571,7 +572,68 @@ async def device_knowledge_search(
     payload["candidatesSearched"] = searched.get("candidatesSearched")
     payload["resultsReturned"] = searched.get("resultsReturned")
     payload["minScore"] = searched.get("minScore")
+    await _record_search_revel_context(db, payload, session_id=session_id)
     return payload
+
+
+async def _mapped_player_name(db: AsyncSession, agent_id: str) -> str | None:
+    from .revel_config import load_meta
+    from .revel_player_map import get_player_map, list_player_maps
+
+    row = (
+        await db.execute(
+            select(ClientIntegration).where(
+                ClientIntegration.agent_id == agent_id,
+                ClientIntegration.provider == "revel",
+            )
+        )
+    ).scalar_one_or_none()
+    meta = load_meta(row) if row is not None else {}
+    name = str(meta.get("deviceName") or "").strip() or None
+    device_id = str(meta.get("deviceId") or "").strip() or None
+    mapped = None
+    if device_id:
+        mapped = await get_player_map(db, agent_id, revel_device_id=device_id)
+    if mapped is None:
+        maps = await list_player_maps(db, agent_id)
+        if len(maps) == 1:
+            mapped = maps[0]
+    if mapped is not None:
+        mapped_name = str(mapped.revel_device_name or "").strip()
+        if mapped_name:
+            return mapped_name[:80]
+    return name[:80] if name else None
+
+
+async def _record_search_revel_context(
+    db: AsyncSession,
+    payload: dict[str, Any],
+    *,
+    session_id: str | None,
+) -> None:
+    """Persist a topic transition when retrieval resolves a new revel_tag. Fail-open."""
+    try:
+        from .chat_events import record_revel_context_transition, resolved_revel_topic
+
+        client_id = str(payload.get("clientId") or "").strip()
+        if not client_id:
+            return
+        grounded = payload.get("grounded") if isinstance(payload.get("grounded"), dict) else {}
+        hits = list(grounded.get("context") or payload.get("results") or [])
+        tag, auto = resolved_revel_topic(hits)
+        if not tag:
+            return
+        display = await _mapped_player_name(db, client_id)
+        await record_revel_context_transition(
+            db,
+            agent_id=client_id,
+            session_id=session_id,
+            tag=tag,
+            auto_trigger=auto,
+            device_name=display,
+        )
+    except Exception:
+        log.debug("revel context from knowledge search skipped", exc_info=True)
 
 
 async def serialize_source_detail(

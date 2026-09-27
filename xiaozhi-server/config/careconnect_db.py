@@ -481,6 +481,7 @@ def search_device_knowledge(
     mac_address: str,
     query: str,
     limit: int = 3,
+    session_id: str | None = None,
 ) -> dict | None:
     """POST device-authorized knowledge search. Fail-open: errors return None."""
     token = _token()
@@ -489,9 +490,13 @@ def search_device_knowledge(
     if not token or not mac or not q:
         return None
     try:
+        body: dict = {"query": q[:2000], "limit": max(1, min(int(limit or 3), 50))}
+        sid = (session_id or "").strip()
+        if sid:
+            body["sessionId"] = sid[:50]
         resp = httpx.post(
             _knowledge_search_url(mac),
-            json={"query": q[:2000], "limit": max(1, min(int(limit or 3), 50))},
+            json=body,
             headers={"X-Internal-Token": token},
             timeout=_knowledge_search_timeout(),
         )
@@ -526,6 +531,7 @@ def post_knowledge_revel(
     query: str,
     already_executed_tag: str | None = None,
     limit: int = 3,
+    session_id: str | None = None,
 ) -> dict | None:
     """POST device Knowledge Revel decision. Fail-open: errors return None."""
     token = _token()
@@ -546,6 +552,9 @@ def post_knowledge_revel(
     body: dict = {"query": q[:2000], "limit": max(1, min(int(limit or 3), 50))}
     if already_executed_tag:
         body["alreadyExecutedTag"] = str(already_executed_tag)[:64]
+    sid = (session_id or "").strip()
+    if sid:
+        body["sessionId"] = sid[:50]
     try:
         resp = httpx.post(
             url,

@@ -26,10 +26,7 @@ import {
   PATIENT_DETAIL_RIGHT,
   PATIENT_DETAIL_SECTION,
 } from "@/lib/patientDetailLayout";
-import {
-  loadRevelStatus,
-  patientDetailConversationRevel,
-} from "@/lib/patientDetailRevel";
+import { loadRevelStatus } from "@/lib/patientDetailRevel";
 import type { RevelStatus } from "@/lib/revelStatus";
 import { useLiveChat } from "@/lib/useLiveChat";
 import { AppShell } from "@/components/AppShell";
@@ -422,17 +419,9 @@ function PatientDetailView({ id }: { id: string }) {
     }
   }
 
-  const { revelContext } = useMemo(
-    () => patientDetailConversationRevel(revelStatus),
-    [revelStatus],
-  );
-
   const grouped = useMemo(
-    () => groupTimelineByDay(
-      buildConversationTimeline(messages, revelContext),
-      dayLabel,
-    ),
-    [messages, revelContext],
+    () => groupTimelineByDay(buildConversationTimeline(messages), dayLabel),
+    [messages],
   );
 
   if (agentError) {

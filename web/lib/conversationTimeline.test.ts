@@ -6,12 +6,10 @@ import { fileURLToPath } from "node:url";
 import {
   buildConversationTimeline,
   classifyConversationMessage,
-  groupTimelineByDay,
-  revelContextCount,
+  revelContextTags,
   timelineItemTypes,
-  REVEL_CONTEXT_ITEM_KEY,
 } from "./conversationTimeline.ts";
-import { patientDetailConversationRevel, revelContextCardModel } from "./revelStatus.ts";
+import { revelContextCardModel } from "./revelStatus.ts";
 import type { ChatMessage } from "./types.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -29,17 +27,21 @@ const eventCard = readFileSync(
 );
 const envExample = readFileSync(join(here, "../../deploy/.env.example"), "utf8");
 
-const CONTEXT = {
-  tag: "care_overview",
-  autoTrigger: true,
-  autoTriggerLabel: "Enabled" as const,
-  display: "",
-};
-
 function msg(
   partial: Partial<ChatMessage> & Pick<ChatMessage, "id" | "chatType" | "content" | "createdAt">,
 ): ChatMessage {
   return partial;
+}
+
+function contextRow(tag: string, autoTrigger: boolean, display = ""): string {
+  return `[[revel]]${JSON.stringify({
+    provider: "revel",
+    event_type: "revel_context",
+    type: "REVEL_CONTEXT",
+    tag,
+    auto_trigger: autoTrigger,
+    revel_device_name: display,
+  })}\nREVEL CONTEXT`;
 }
 
 const DISPLAY = `[[revel]]${JSON.stringify({
@@ -49,126 +51,113 @@ const DISPLAY = `[[revel]]${JSON.stringify({
   result: "sent",
 })}\nDISPLAY EVENT`;
 
-test("REVEL CONTEXT is a timeline item immediately before the first session message", () => {
+test("historical topic transitions persist as REVEL CONTEXT at change points only", () => {
   const messages = [
-    msg({
-      id: 2,
-      chatType: 1,
-      content: "I feel dizzy",
-      createdAt: "2026-09-26T15:01:00Z",
-    }),
-    msg({
-      id: 1,
-      chatType: 2,
-      content: "How are you feeling?",
-      createdAt: "2026-09-26T15:00:00Z",
-    }),
-    msg({
-      id: 3,
-      chatType: 3,
-      content: DISPLAY,
-      createdAt: "2026-09-26T15:02:00Z",
-    }),
+    msg({ id: 1, chatType: 1, content: "What do you know about CareConnect?", createdAt: "2026-09-26T15:00:00Z" }),
+    msg({ id: 2, chatType: 3, content: contextRow("care_overview", true), createdAt: "2026-09-26T15:00:01Z" }),
+    msg({ id: 3, chatType: 2, content: "CareConnect is the companion overview.", createdAt: "2026-09-26T15:00:02Z" }),
+    msg({ id: 4, chatType: 1, content: "Tell me more about CareConnect.", createdAt: "2026-09-26T15:01:00Z" }),
+    msg({ id: 5, chatType: 2, content: "It covers daily care topics.", createdAt: "2026-09-26T15:01:02Z" }),
+    msg({ id: 6, chatType: 1, content: "How does the briefs sensor detect humidity?", createdAt: "2026-09-26T15:02:00Z" }),
+    msg({ id: 7, chatType: 3, content: contextRow("bioev_humidity", false), createdAt: "2026-09-26T15:02:01Z" }),
+    msg({ id: 8, chatType: 2, content: "It measures humidity in the brief.", createdAt: "2026-09-26T15:02:02Z" }),
+    msg({ id: 9, chatType: 1, content: "Does that sensor need wifi?", createdAt: "2026-09-26T15:03:00Z" }),
+    msg({ id: 10, chatType: 2, content: "It posts a silent alert.", createdAt: "2026-09-26T15:03:02Z" }),
+    msg({ id: 11, chatType: 1, content: "Back to CareConnect overview.", createdAt: "2026-09-26T15:04:00Z" }),
+    msg({ id: 12, chatType: 3, content: contextRow("care_overview", true), createdAt: "2026-09-26T15:04:01Z" }),
+    msg({ id: 13, chatType: 2, content: "Back to the overview.", createdAt: "2026-09-26T15:04:02Z" }),
   ];
-  const items = buildConversationTimeline(messages, CONTEXT);
+  const items = buildConversationTimeline(messages);
   assert.deepEqual(timelineItemTypes(items), [
+    "chat",
     "revel_context",
     "chat",
     "chat",
-    "revel_display",
+    "chat",
+    "chat",
+    "revel_context",
+    "chat",
+    "chat",
+    "chat",
+    "chat",
+    "revel_context",
+    "chat",
   ]);
-  assert.equal(revelContextCount(items), 1);
-  assert.equal(items[0].type, "revel_context");
-  assert.equal(items[0].key, REVEL_CONTEXT_ITEM_KEY);
-  if (items[0].type !== "revel_context") throw new Error("expected context");
-  assert.equal(items[0].context.tag, "care_overview");
-  assert.equal(items[1].type, "chat");
-  if (items[1].type !== "chat") throw new Error("expected chat");
-  assert.equal(items[1].message.id, 1);
-  assert.equal(items[0].createdAt, items[1].createdAt);
+  assert.deepEqual(revelContextTags(items), [
+    "care_overview",
+    "bioev_humidity",
+    "care_overview",
+  ]);
+  assert.equal(items[0].message.chatType, 1);
+  const first = items[1];
+  assert.equal(first.type, "revel_context");
+  if (first.type !== "revel_context") throw new Error("expected context");
+  assert.equal(first.context.autoTriggerLabel, "Enabled");
+  assert.equal(items[2].message.chatType, 2);
+  const humidity = items[6];
+  assert.equal(humidity.type, "revel_context");
+  if (humidity.type !== "revel_context") throw new Error("expected context");
+  assert.equal(humidity.context.autoTriggerLabel, "Manual");
+  assert.equal(humidity.context.display, "");
+  assert.equal(items[5].message.content, "How does the briefs sensor detect humidity?");
+  assert.equal(items[7].message.chatType, 2);
 });
 
-test("REVEL CONTEXT appears only once and is not duplicated before every message", () => {
+test("current status is not injected as a synthetic first-message card", () => {
   const messages = [
-    msg({ id: 10, chatType: 1, content: "hello", createdAt: "2026-09-26T12:00:00Z" }),
-    msg({ id: 11, chatType: 1, content: "again", createdAt: "2026-09-26T12:01:00Z" }),
-    msg({ id: 12, chatType: 2, content: "ok", createdAt: "2026-09-26T12:02:00Z" }),
+    msg({ id: 1, chatType: 1, content: "hello", createdAt: "2026-09-26T15:00:00Z" }),
+    msg({ id: 2, chatType: 2, content: "hi", createdAt: "2026-09-26T15:00:02Z" }),
   ];
-  const items = buildConversationTimeline(messages, CONTEXT);
-  assert.equal(revelContextCount(items), 1);
-  assert.equal(items.filter((item) => item.key === REVEL_CONTEXT_ITEM_KEY).length, 1);
-  const second = buildConversationTimeline(items.flatMap((item) => (
-    item.type === "revel_context" ? [] : [item.message]
-  )), CONTEXT);
-  assert.equal(revelContextCount(second), 1);
-});
-
-test("REVEL CONTEXT stays in the same day group as the first message, not a pinned header", () => {
-  const messages = [
-    msg({ id: 1, chatType: 1, content: "morning", createdAt: "2026-09-25T14:00:00Z" }),
-    msg({ id: 2, chatType: 1, content: "next day", createdAt: "2026-09-26T14:00:00Z" }),
-  ];
-  const items = buildConversationTimeline(messages, CONTEXT);
-  const groups = groupTimelineByDay(items, (iso) => iso.slice(0, 10));
-  assert.equal(groups.length, 2);
-  assert.deepEqual(timelineItemTypes(groups[0].items), ["revel_context", "chat"]);
-  assert.deepEqual(timelineItemTypes(groups[1].items), ["chat"]);
-  assert.equal(revelContextCount(groups[1].items), 0);
+  const items = buildConversationTimeline(messages);
+  assert.deepEqual(timelineItemTypes(items), ["chat", "chat"]);
+  assert.deepEqual(revelContextTags(items), []);
+  assert.doesNotMatch(detail, /buildConversationTimeline\(messages, revelContext\)/);
+  assert.match(detail, /buildConversationTimeline\(messages\)/);
+  assert.doesNotMatch(detail, /patientDetailConversationRevel\(revelStatus\)/);
 });
 
 test("DISPLAY EVENT remains a separate persisted item from REVEL CONTEXT", () => {
   const messages = [
-    msg({ id: 5, chatType: 3, content: DISPLAY, createdAt: "2026-09-26T15:00:00Z" }),
+    msg({ id: 1, chatType: 1, content: "show it", createdAt: "2026-09-26T15:00:00Z" }),
+    msg({ id: 2, chatType: 3, content: contextRow("care_overview", true, "Lobby"), createdAt: "2026-09-26T15:00:01Z" }),
+    msg({ id: 3, chatType: 3, content: DISPLAY, createdAt: "2026-09-26T15:00:02Z" }),
   ];
-  const items = buildConversationTimeline(messages, CONTEXT);
-  assert.deepEqual(timelineItemTypes(items), ["revel_context", "revel_display"]);
-  assert.notEqual(items[0].type, items[1].type);
-  const classified = classifyConversationMessage(messages[0]);
-  assert.equal(classified.type, "revel_display");
-  assert.notEqual(classified.type, "chat");
+  const items = buildConversationTimeline(messages);
+  assert.deepEqual(timelineItemTypes(items), ["chat", "revel_context", "revel_display"]);
+  assert.equal(classifyConversationMessage(messages[2]).type, "revel_display");
+  assert.notEqual(classifyConversationMessage(messages[1]).type, "chat");
 });
 
 test("REVEL CONTEXT is not a client or caregiver chat bubble", () => {
-  const items = buildConversationTimeline(
-    [msg({ id: 1, chatType: 1, content: "hi", createdAt: "2026-09-26T15:00:00Z" })],
-    CONTEXT,
+  const item = classifyConversationMessage(
+    msg({ id: 9, chatType: 3, content: contextRow("care_overview", true), createdAt: "2026-09-26T15:00:00Z" }),
   );
-  assert.equal(items[0].type, "revel_context");
-  assert.notEqual(items[0].type, "chat");
-  assert.equal("message" in items[0], false);
-  const card = revelContextCardModel(CONTEXT);
+  assert.equal(item.type, "revel_context");
+  const card = revelContextCardModel(item.type === "revel_context" ? item.context : { tag: "", autoTrigger: false, autoTriggerLabel: "Manual", display: "" });
   assert.equal(card.title, "REVEL CONTEXT");
-  assert.deepEqual(
-    card.rows.map((row) => `${row.label}: ${row.value}`),
-    ["Tag: care_overview", "Auto Trigger: Enabled"],
-  );
-  assert.equal(card.rows.some((row) => row.label === "Display"), false);
   assert.doesNotMatch(contextCard, /"caregiver"/);
   assert.doesNotMatch(contextCard, /"client"/);
 });
 
-test("display is omitted when no mapped player; included when a name exists", () => {
-  const without = patientDetailConversationRevel({
-    tag: "care_overview",
-    autoTrigger: true,
-    device: null,
-  });
-  assert.ok(without.revelContext);
-  const omitted = revelContextCardModel(without.revelContext);
+test("display is omitted when no mapped player", () => {
+  const item = classifyConversationMessage(
+    msg({ id: 9, chatType: 3, content: contextRow("care_overview", true), createdAt: "2026-09-26T15:00:00Z" }),
+  );
+  assert.equal(item.type, "revel_context");
+  if (item.type !== "revel_context") throw new Error("expected context");
+  const omitted = revelContextCardModel(item.context);
   assert.equal(omitted.rows.some((row) => row.label === "Display"), false);
-
-  const withPlayer = revelContextCardModel({
-    tag: "care_overview",
-    autoTrigger: true,
-    autoTriggerLabel: "Enabled",
-    display: "Lobby",
-  });
-  assert.deepEqual(withPlayer.rows[2], { label: "Display", value: "Lobby" });
+  const named = classifyConversationMessage(
+    msg({ id: 10, chatType: 3, content: contextRow("care_overview", true, "Lobby"), createdAt: "2026-09-26T15:00:00Z" }),
+  );
+  assert.equal(named.type, "revel_context");
+  if (named.type !== "revel_context") throw new Error("expected context");
+  assert.equal(named.context.display, "Lobby");
 });
 
-test("PatientDetailClient renders REVEL CONTEXT inside the scrolling transcript, not as a group header", () => {
+test("PatientDetailClient renders persisted REVEL CONTEXT inside the scrolling transcript", () => {
   assert.doesNotMatch(detail, /gi === 0 && revelContext/);
-  assert.match(detail, /buildConversationTimeline\(messages, revelContext\)/);
+  assert.match(detail, /buildConversationTimeline\(messages\)/);
   assert.match(detail, /groupTimelineByDay/);
   assert.match(detail, /data-testid="conversation-timeline"/);
   assert.match(detail, /item\.type === "revel_context"/);
@@ -180,10 +169,6 @@ test("PatientDetailClient renders REVEL CONTEXT inside the scrolling transcript,
   );
   assert.doesNotMatch(emptyBlock, /revel-context-item/);
   assert.doesNotMatch(emptyBlock, /RevelContextCard/);
-  const rowRender = detail.slice(detail.indexOf("function TimelineRow"));
-  const contextCase = rowRender.slice(rowRender.indexOf('item.type === "revel_context"'));
-  assert.doesNotMatch(contextCase.slice(0, 800), /fromCaregiver/);
-  assert.doesNotMatch(contextCase.slice(0, 800), /"caregiver"/);
   assert.match(eventCard, /Display event/);
   assert.doesNotMatch(eventCard, /REVEL CONTEXT/);
   assert.doesNotMatch(contextCard, /Display event/);
@@ -191,21 +176,4 @@ test("PatientDetailClient renders REVEL CONTEXT inside the scrolling transcript,
 
 test("REVEL_EXECUTE_ENABLED remains false", () => {
   assert.match(envExample, /^REVEL_EXECUTE_ENABLED=false$/m);
-});
-
-test("no persisted messages still yields a single synthetic REVEL CONTEXT timeline item", () => {
-  const items = buildConversationTimeline([], CONTEXT);
-  assert.deepEqual(timelineItemTypes(items), ["revel_context"]);
-  assert.equal(revelContextCount(items), 1);
-  assert.equal(buildConversationTimeline([], null).length, 0);
-});
-
-test("a persisted topic timestamp places REVEL CONTEXT in chronological order, not pinned first", () => {
-  const messages = [
-    msg({ id: 1, chatType: 1, content: "early", createdAt: "2026-09-26T12:00:00Z" }),
-    msg({ id: 2, chatType: 1, content: "later", createdAt: "2026-09-26T13:00:00Z" }),
-  ];
-  const items = buildConversationTimeline(messages, CONTEXT, "2026-09-26T12:30:00Z");
-  assert.deepEqual(timelineItemTypes(items), ["chat", "revel_context", "chat"]);
-  if (items[1].type !== "revel_context") throw new Error("expected context in the middle");
 });

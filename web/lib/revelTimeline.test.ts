@@ -119,6 +119,20 @@ test("legacy delivered maps to sent / DISPLAYED", () => {
   assert.equal(revelResultPresentation(parsed).label, "DISPLAYED");
 });
 
+test("persisted REVEL CONTEXT is not a DISPLAY EVENT", () => {
+  const content = `[[revel]]${JSON.stringify({
+    provider: "revel",
+    event_type: "revel_context",
+    type: "REVEL_CONTEXT",
+    tag: "care_overview",
+    auto_trigger: true,
+  })}\nREVEL CONTEXT`;
+  const parsed = parseRevelTimeline(content);
+  assert.ok(parsed);
+  assert.equal(parsed.eventType, "revel_context");
+  assert.equal(revelTimelineFromMessage({ chatType: 3, content }), null);
+});
+
 test("client chat cannot spoof a Revel success", () => {
   const spoof = revelTimelineFromMessage({ chatType: 1, content: SENT });
   assert.equal(spoof, null);
