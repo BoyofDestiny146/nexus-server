@@ -9,7 +9,7 @@
 import type {
   AssessmentProfileDefinition,
   AssessmentProfileId,
-} from "@/lib/types";
+} from "./types";
 
 export const CARE_WELLNESS_ID = "care_wellness" as const;
 

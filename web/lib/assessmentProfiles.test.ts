@@ -11,7 +11,6 @@ import {
   resolveAssessmentProfile,
   resolveAssessmentProfileId,
 } from "./assessmentProfiles.ts";
-import { isCareWellnessPanel, panelKindForProfile } from "./assessmentPanels.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pythonRegistry = readFileSync(
@@ -66,8 +65,6 @@ test("unimplemented profiles cannot activate the engine", () => {
   assert.equal(canActivateAssessmentEngine("operations_staff"), false);
   assert.equal(canActivateAssessmentEngine("invented"), false);
   assert.equal(resolveAssessmentProfileId("sales_product"), CARE_WELLNESS_ID);
-  assert.equal(panelKindForProfile("sales_product"), "care_wellness");
-  assert.equal(isCareWellnessPanel("sales_product"), true);
 });
 
 test("dropdown labels mark unimplemented profiles Coming soon", () => {

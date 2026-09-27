@@ -27,6 +27,10 @@ const comingSoon = readFileSync(
   join(here, "../components/assessment/ComingSoonPanel.tsx"),
   "utf8",
 );
+const panels = readFileSync(
+  join(here, "./assessmentPanels.ts"),
+  "utf8",
+);
 const runner = readFileSync(
   join(here, "../../api/careconnect_api/triage/runner.py"),
   "utf8",
@@ -90,6 +94,12 @@ test("unimplemented profile panels do not invent assessment values", () => {
   assert.match(comingSoon, /data-testid="assessment-coming-soon"/);
   assert.doesNotMatch(comingSoon, /riskLevel|confidence|concerns|recommendations/);
   assert.doesNotMatch(comingSoon, /low|moderate|elevated|urgent/);
+  assert.match(panels, /care_wellness: "care_wellness"/);
+  assert.match(panels, /sales_product: "coming_soon"/);
+  assert.match(panels, /information_kiosk: "coming_soon"/);
+  assert.match(panels, /operations_staff: "coming_soon"/);
+  assert.match(rail, /isCareWellnessPanel/);
+  assert.match(rail, /ComingSoonPanel/);
 });
 
 test("Regenerate still posts the Care & Wellness assessment endpoint", () => {

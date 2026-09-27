@@ -101,7 +101,7 @@ test("desktop layout remains approximately 26 \/ 48 \/ 26", () => {
   assert.match(PATIENT_DETAIL_RIGHT, /xl:w-\[26%\]/);
   assert.match(detail, /PATIENT_DETAIL_LEFT/);
   assert.match(detail, /PATIENT_DETAIL_CENTER/);
-  assert.match(detail, /PATIENT_DETAIL_RIGHT/);
+  assert.match(engineRail, /PATIENT_DETAIL_RIGHT/);
 });
 
 test("REVEL CONTEXT is a chronological timeline item, not a pinned group header", () => {

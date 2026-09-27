@@ -6,8 +6,8 @@
  * values. The engine never activates those profiles yet, so the placeholder
  * is a contract for later phases, not a live view.
  */
-import type { AssessmentProfileId } from "@/lib/types";
-import { CARE_WELLNESS_ID, resolveAssessmentProfileId } from "@/lib/assessmentProfiles";
+import type { AssessmentProfileId } from "./types";
+import { CARE_WELLNESS_ID, resolveAssessmentProfileId } from "./assessmentProfiles";
 
 export type AssessmentPanelKind = "care_wellness" | "coming_soon";
 

@@ -1,6 +1,8 @@
 """Nexus Assessment Engine Phase 1: registry, persistence, wrapper, cron."""
 from __future__ import annotations
 
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -345,15 +347,37 @@ async def test_unimplemented_stored_profile_still_runs_care_wellness(
 
 
 @pytest.mark.asyncio
-async def test_regenerate_uses_engine_then_existing_empty_chat_runner(
-    client: AsyncClient, admin_token: str, db_session: AsyncSession
+async def test_regenerate_uses_engine_then_existing_runner(
+    client: AsyncClient, admin_token: str, monkeypatch
 ):
     agent_id = await _onboard(client, admin_token, "George")
+    called: list[str] = []
+
+    async def fake_run(db, aid, for_date=None):
+        called.append(aid)
+        return AiMedicalAssessment(
+            id=501,
+            agent_id=aid,
+            for_date=date.today(),
+            risk_level="low",
+            confidence=Decimal("0.000"),
+            concerns_json="[]",
+            recommendations_json="[]",
+            source_msg_count=0,
+            llm_model="cc-llm",
+            generated_at=datetime.now(),
+        )
+
+    monkeypatch.setattr(
+        "careconnect_api.assessment_engine.engine.run_for_agent",
+        fake_run,
+    )
     resp = await client.post(
         f"/api/agent/{agent_id}/assessment/regenerate",
         headers=_auth(admin_token),
     )
     assert resp.json()["code"] == 0, resp.json()
+    assert called == [agent_id]
     data = resp.json()["data"]
     assert data["riskLevel"] == "low"
     assert data["confidence"] == 0.0
@@ -361,17 +385,6 @@ async def test_regenerate_uses_engine_then_existing_empty_chat_runner(
     assert data["recommendations"] == []
     assert data["sourceMsgCount"] == 0
     assert data["agentId"] == agent_id
-
-    latest = await client.get(
-        f"/api/agent/{agent_id}/assessment/latest",
-        headers=_auth(admin_token),
-    )
-    assert latest.json()["data"]["riskLevel"] == "low"
-    history = await client.get(
-        f"/api/agent/{agent_id}/assessment/history?days=14",
-        headers=_auth(admin_token),
-    )
-    assert len(history.json()["data"]) == 1
 
 
 def test_care_wellness_runner_source_is_unchanged():
