@@ -3,10 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Plus, Search, Users, RefreshCw } from "lucide-react";
+import { Plus, Search, Users, RefreshCw, Building2 } from "lucide-react";
 import { apiGet, ApiError } from "@/lib/api";
 import type { AgentSummary, Organization } from "@/lib/types";
 import { UNASSIGNED_ORGANIZATION_ID } from "@/lib/types";
+import {
+  CLIENTS_NAV,
+  isOrganizationBrowseView,
+  isOrganizationClientsView,
+} from "@/lib/clientsNav";
 import { classNames, relativeTime } from "@/lib/format";
 import { AppShell, PageHeader } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -15,10 +20,52 @@ import { EmptyState } from "@/components/EmptyState";
 
 const REFRESH_MS = 30_000;
 
+function OrganizationSwitcher({
+  organizations,
+  currentId,
+}: {
+  organizations: Organization[];
+  currentId: string | null;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 mb-7" aria-label="Organization selection">
+      <Link
+        href={CLIENTS_NAV.organizationClients}
+        className={classNames(
+          "rounded-card border text-[13px] tracking-tight px-3 py-1.5 transition",
+          !currentId
+            ? "bg-white border-slate-line/80 text-slate-deep"
+            : "text-slate border-transparent hover:text-slate-deep hover:bg-bone-soft",
+        )}
+      >
+        All organizations
+      </Link>
+      {organizations.map((org) => (
+        <Link
+          key={org.id}
+          href={`/patients?organization=${encodeURIComponent(org.id)}`}
+          className={classNames(
+            "rounded-card border text-[13px] tracking-tight px-3 py-1.5 transition",
+            currentId === org.id
+              ? "bg-white border-slate-line/80 text-slate-deep"
+              : "text-slate border-transparent hover:text-slate-deep hover:bg-bone-soft",
+          )}
+        >
+          {org.name}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 function PatientsView() {
   const searchParams = useSearchParams();
   const orgFilter = searchParams.get("organization");
+  const view = searchParams.get("view");
+  const orgBrowse = isOrganizationBrowseView("/patients", orgFilter, view);
+  const orgClientsView = isOrganizationClientsView("/patients", orgFilter, view);
   const [agents, setAgents] = useState<AgentSummary[] | null>(null);
+  const [orgs, setOrgs] = useState<Organization[] | null>(null);
   const [orgName, setOrgName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -27,9 +74,31 @@ function PatientsView() {
 
   useEffect(() => {
     setQuery("");
-  }, [orgFilter]);
+  }, [orgFilter, view]);
 
   useEffect(() => {
+    if (!orgClientsView) {
+      setOrgs(null);
+      return;
+    }
+    let cancelled = false;
+    apiGet<{ organizations: Organization[] }>("/organizations")
+      .then((data) => {
+        if (!cancelled) setOrgs(data.organizations || []);
+      })
+      .catch(() => {
+        if (!cancelled) setOrgs([]);
+      });
+    return () => { cancelled = true; };
+  }, [orgClientsView, refreshTick]);
+
+  useEffect(() => {
+    if (orgBrowse) {
+      setAgents(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     let cancelled = false;
     async function load() {
       try {
@@ -50,7 +119,7 @@ function PatientsView() {
     setLoading(true);
     load();
     return () => { cancelled = true; };
-  }, [refreshTick, orgFilter]);
+  }, [refreshTick, orgFilter, orgBrowse]);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,8 +152,8 @@ function PatientsView() {
     );
   }, [agents, query]);
 
-  const title = orgName || "Clients";
-  const kicker = orgFilter ? "Organization" : "Roster";
+  const title = orgBrowse ? "Organization Clients" : (orgName || "Clients");
+  const kicker = orgBrowse ? "Clients" : (orgFilter ? "Organization" : "Roster");
   const newHref = orgFilter && orgFilter !== UNASSIGNED_ORGANIZATION_ID
     ? `/patients/new?organization=${encodeURIComponent(orgFilter)}`
     : "/patients/new";
@@ -95,11 +164,13 @@ function PatientsView() {
         kicker={kicker}
         title={title}
         subtitle={
-          orgFilter === UNASSIGNED_ORGANIZATION_ID
-            ? "Clients not yet linked to a facility or customer organization."
-            : orgFilter
-              ? "Clients in this organization. Search stays within this group."
-              : "Every resident issued a Watcher. Click a card to review their conversation history and risk indicators."
+          orgBrowse
+            ? "Choose an organization to see the clients assigned to it."
+            : orgFilter === UNASSIGNED_ORGANIZATION_ID
+              ? "Clients not yet linked to a facility or customer organization."
+              : orgFilter
+                ? "Clients in this organization. Search stays within this group."
+                : "Every resident issued a Watcher. Click a card to review their conversation history and risk indicators."
         }
         actions={
           <>
@@ -119,6 +190,62 @@ function PatientsView() {
       />
 
       <section className="px-8 md:px-12 py-8">
+        {orgClientsView && !orgBrowse && orgs && (
+          <OrganizationSwitcher organizations={orgs} currentId={orgFilter} />
+        )}
+
+        {orgBrowse && (
+          <>
+            {orgs === null && (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="card p-6 h-[148px] skeleton" />
+                ))}
+              </div>
+            )}
+            {orgs && orgs.length === 0 && (
+              <EmptyState
+                icon={Building2}
+                title="No organizations yet"
+                body="Create an organization under Administration, then assign clients from Edit Client."
+              />
+            )}
+            {orgs && orgs.length > 0 && (
+              <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {orgs.map((org, i) => (
+                  <li
+                    key={org.id}
+                    className="rise-in"
+                    style={{ animationDelay: `${Math.min(i, 9) * 40}ms` }}
+                  >
+                    <Link
+                      href={`/patients?organization=${encodeURIComponent(org.id)}`}
+                      className="block card card-hover p-6 group"
+                    >
+                      <div className="kicker mb-1.5">Organization</div>
+                      <h3 className="display-3 text-slate-deep truncate group-hover:text-teal-deep transition">
+                        {org.name}
+                      </h3>
+                      <div className="mt-5 flex items-center justify-between">
+                        <span className="text-[12px] uppercase tracking-[0.12em] text-slate-muted">
+                          {typeof org.clientCount === "number"
+                            ? `${org.clientCount} ${org.clientCount === 1 ? "client" : "clients"}`
+                            : "View clients"}
+                        </span>
+                        <span className="text-[12px] text-slate-muted group-hover:text-teal-deep transition">
+                          Open →
+                        </span>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+
+        {!orgBrowse && (
+        <>
         <div className="flex items-center justify-between gap-4 mb-7">
           <div className="relative flex-1 max-w-sm">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-muted" />
@@ -219,6 +346,8 @@ function PatientsView() {
               </li>
             ))}
           </ul>
+        )}
+        </>
         )}
       </section>
     </>

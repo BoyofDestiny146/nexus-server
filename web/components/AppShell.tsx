@@ -6,13 +6,20 @@ import Link from "next/link";
 import Image from "next/image";
 import {
   Users, Cpu, Shield, Settings, LogOut, HeartPulse, BookOpen, Sparkles,
-  Building2, Plus,
+  Building2, Plus, ChevronDown,
 } from "lucide-react";
-import { apiGet, clearSession } from "@/lib/api";
+import { clearSession } from "@/lib/api";
 import { useAuthedUser } from "./RequireAuth";
 import { classNames } from "@/lib/format";
-import type { Organization } from "@/lib/types";
-import { UNASSIGNED_ORGANIZATION_ID } from "@/lib/types";
+import {
+  CLIENTS_NAV,
+  defaultClientsNavOpen,
+  isClientsSectionPath,
+  isCreateClientPath,
+  isOrganizationClientsView,
+  isUnassignedClientsView,
+  toggleClientsNavOpen,
+} from "@/lib/clientsNav";
 
 const MAIN_NAV = [
   { href: "/devices", label: "Devices", icon: Cpu },
@@ -58,19 +65,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "";
   const searchParams = useSearchParams();
   const { user } = useAuthedUser();
-  const [orgs, setOrgs] = useState<Organization[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    apiGet<{ organizations: Organization[] }>("/organizations")
-      .then((data) => {
-        if (!cancelled) setOrgs(data.organizations || []);
-      })
-      .catch(() => {
-        if (!cancelled) setOrgs([]);
-      });
-    return () => { cancelled = true; };
-  }, [pathname]);
+  const [clientsOpen, setClientsOpen] = useState(() => defaultClientsNavOpen(pathname));
 
   function logout() {
     clearSession();
@@ -78,9 +73,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const orgFilter = searchParams.get("organization");
-  const onClients = pathname === "/patients" || pathname.startsWith("/patients/");
+  const orgView = searchParams.get("view");
+  const onClients = isClientsSectionPath(pathname);
+  const onCreateClient = isCreateClientPath(pathname);
+  const onOrganizationClients = isOrganizationClientsView(pathname, orgFilter, orgView);
+  const onUnassigned = isUnassignedClientsView(pathname, orgFilter);
   const onAdminUsers = pathname === "/admins" || pathname.startsWith("/administration/users");
   const onAdminOrgs = pathname === "/organizations" || pathname.startsWith("/administration/organizations");
+
+  useEffect(() => {
+    if (onClients) setClientsOpen(true);
+  }, [onClients]);
 
   return (
     <div className="min-h-screen flex bg-bone">
@@ -99,46 +102,65 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
 
         <nav className="flex-1 py-4 px-3 overflow-y-auto" aria-label="Primary">
-          <div className="px-3 pb-1 text-[10px] uppercase tracking-[0.14em] text-slate-muted">Clients</div>
-          <ul className="space-y-0.5 mb-4">
+          <ul className="space-y-0.5">
             <li>
-              <NavLink
-                href="/patients/new"
-                label="Create New Client"
-                icon={Plus}
-                active={pathname.startsWith("/patients/new")}
-              />
-            </li>
-            <li>
-              <NavLink
-                href="/patients"
-                label="All Clients"
-                icon={Users}
-                nested
-                active={pathname === "/patients" && !orgFilter}
-              />
-            </li>
-            {orgs.map((org) => (
-              <li key={org.id}>
-                <NavLink
-                  href={`/patients?organization=${encodeURIComponent(org.id)}`}
-                  label={org.name}
-                  nested
-                  active={onClients && orgFilter === org.id}
+              <button
+                type="button"
+                aria-expanded={clientsOpen}
+                aria-controls="clients-submenu"
+                onClick={() => setClientsOpen((open) => toggleClientsNavOpen(open))}
+                className={classNames(
+                  "w-full flex items-center gap-3 rounded-card text-[14px] tracking-tight transition border px-3 py-2",
+                  onClients
+                    ? "bg-white border-slate-line/80 text-slate-deep"
+                    : "text-slate hover:text-slate-deep hover:bg-bone-soft border-transparent",
+                )}
+              >
+                <Users size={16} strokeWidth={1.75} className={onClients ? "text-teal" : "text-slate-muted"} />
+                <span className="truncate flex-1 text-left">Clients</span>
+                <ChevronDown
+                  size={14}
+                  strokeWidth={1.75}
+                  className={classNames(
+                    "shrink-0 text-slate-muted transition-transform",
+                    clientsOpen && "rotate-180",
+                  )}
                 />
-              </li>
-            ))}
-            <li>
-              <NavLink
-                href={`/patients?organization=${UNASSIGNED_ORGANIZATION_ID}`}
-                label="Unassigned"
-                nested
-                active={onClients && orgFilter === UNASSIGNED_ORGANIZATION_ID}
-              />
+              </button>
+              {clientsOpen && (
+                <ul id="clients-submenu" className="space-y-0.5 mt-0.5">
+                  <li>
+                    <NavLink
+                      href={CLIENTS_NAV.create}
+                      label="Create New Client"
+                      icon={Plus}
+                      nested
+                      active={onCreateClient}
+                    />
+                  </li>
+                  <li>
+                    <NavLink
+                      href={CLIENTS_NAV.organizationClients}
+                      label="Organization Clients"
+                      icon={Building2}
+                      nested
+                      active={onOrganizationClients}
+                    />
+                  </li>
+                  <li>
+                    <NavLink
+                      href={CLIENTS_NAV.unassigned}
+                      label="Unassigned"
+                      nested
+                      active={onUnassigned}
+                    />
+                  </li>
+                </ul>
+              )}
             </li>
           </ul>
 
-          <ul className="space-y-0.5">
+          <ul className="space-y-0.5 mt-0.5">
             {MAIN_NAV.map((n) => (
               <li key={n.href}>
                 <NavLink
