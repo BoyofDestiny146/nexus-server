@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..assessment_engine.storage import resolved_assessment_profile_dict
 from ..auth import CurrentUser, get_current_user, require_root
 from ..client_profile import effective_profile, public_profile
 from ..db import get_db
@@ -111,6 +112,9 @@ def _agent_info(agent: AiAgent) -> dict[str, Any]:
         "escalationPhrases": profile.get("escalationPhrases") or [],
         "topicsToAvoid": profile.get("topicsToAvoid") or [],
         "personaOverride": profile.get("personaOverride"),
+        # Resolved Nexus Assessment Engine profile. Missing/unknown/unimplemented
+        # stored values become care_wellness; wizard fields are unchanged.
+        "assessmentProfile": resolved_assessment_profile_dict(agent.profile_json),
         # AgentInfoVO carries a `functions` plugin list. We don't have an
         # ai_agent_plugin_mapping ORM model yet; ship empty for now so the
         # dashboard's null-checks still pass.

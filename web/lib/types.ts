@@ -32,6 +32,7 @@ export interface AgentDetail extends AgentSummary {
   escalationPhrases?: string[];
   topicsToAvoid?: string[];
   personaOverride?: string | null;
+  assessmentProfile?: AssessmentProfileDefinition | null;
 }
 
 export interface ChatSession {
@@ -73,6 +74,24 @@ export interface UnboundDevice {
   eui: string;
   lastSeen: string;
   sampleCount: number;
+}
+
+export type AssessmentProfileId =
+  | "care_wellness"
+  | "sales_product"
+  | "information_kiosk"
+  | "operations_staff";
+
+export interface AssessmentProfileDefinition {
+  id: AssessmentProfileId;
+  displayName: string;
+  implemented: boolean;
+  description: string;
+}
+
+export interface AssessmentProfileState {
+  assessmentProfile: AssessmentProfileDefinition;
+  profiles: AssessmentProfileDefinition[];
 }
 
 export interface MedicalAssessment {

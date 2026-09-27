@@ -1,0 +1,121 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { ASSESSMENT_PROFILES, dropdownLabel } from "./assessmentProfiles.ts";
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+const detail = readFileSync(
+  join(here, "../app/patients/[id]/PatientDetailClient.tsx"),
+  "utf8",
+);
+const rail = readFileSync(
+  join(here, "../components/assessment/AssessmentEngineRail.tsx"),
+  "utf8",
+);
+const selector = readFileSync(
+  join(here, "../components/assessment/AssessmentProfileSelector.tsx"),
+  "utf8",
+);
+const care = readFileSync(
+  join(here, "../components/assessment/CareWellnessPanel.tsx"),
+  "utf8",
+);
+const comingSoon = readFileSync(
+  join(here, "../components/assessment/ComingSoonPanel.tsx"),
+  "utf8",
+);
+const runner = readFileSync(
+  join(here, "../../api/careconnect_api/triage/runner.py"),
+  "utf8",
+);
+const engine = readFileSync(
+  join(here, "../../api/careconnect_api/assessment_engine/engine.py"),
+  "utf8",
+);
+const scheduler = readFileSync(
+  join(here, "../../api/careconnect_api/scheduler.py"),
+  "utf8",
+);
+const envExample = readFileSync(join(here, "../../deploy/.env.example"), "utf8");
+
+test("dropdown renders all four Assessment Profiles", () => {
+  assert.match(selector, /data-testid="assessment-profile-select"/);
+  assert.match(selector, /profiles\.map\(\(profile\)/);
+  assert.match(selector, /disabled=\{!profile\.implemented\}/);
+  assert.match(selector, /dropdownLabel\(profile\)/);
+  for (const profile of ASSESSMENT_PROFILES) {
+    assert.ok(dropdownLabel(profile).includes(profile.displayName));
+  }
+  assert.ok(ASSESSMENT_PROFILES.some((p) => dropdownLabel(p).includes("Coming soon")));
+});
+
+test("right rail is Nexus Assessment Engine with selector then Care & Wellness", () => {
+  assert.match(detail, /AssessmentEngineRail/);
+  assert.match(rail, /Nexus Assessment Engine/);
+  assert.match(rail, /data-testid="nexus-assessment-engine-heading"/);
+  assert.match(rail, /AssessmentProfileSelector/);
+  assert.match(rail, /CareWellnessPanel/);
+  assert.match(rail, /isCareWellnessPanel/);
+  assert.match(care, /data-testid="care-wellness-panel"/);
+});
+
+test("right panel still renders existing Care & Wellness data", () => {
+  assert.match(care, /14-day risk/);
+  assert.match(care, /Latest assessment/);
+  assert.match(care, /latest\.riskLevel/);
+  assert.match(care, /latest\.confidence/);
+  assert.match(care, /latest\.concerns/);
+  assert.match(care, /latest\.recommendations/);
+  assert.match(care, /Regenerate/);
+  assert.match(care, /Sparkline/);
+  assert.match(care, /No current observations/);
+});
+
+test("decorative graphic and red mockup divider are absent", () => {
+  const header = rail.slice(
+    rail.indexOf("nexus-assessment-engine-header"),
+    rail.indexOf("</div>", rail.indexOf("AssessmentProfileSelector")) + 6,
+  );
+  assert.doesNotMatch(header, /<svg/);
+  assert.doesNotMatch(rail, /border-red|bg-red|text-red|#e11d48|#ef4444|#dc2626|#ff0000/);
+  assert.doesNotMatch(rail, /decorative|ornament|mockup-divider/i);
+  assert.doesNotMatch(detail, /border-red|bg-red|#e11d48|#ef4444/);
+  assert.doesNotMatch(care, /border-red|#e11d48|#ef4444|#dc2626/);
+});
+
+test("unimplemented profile panels do not invent assessment values", () => {
+  assert.match(comingSoon, /data-testid="assessment-coming-soon"/);
+  assert.doesNotMatch(comingSoon, /riskLevel|confidence|concerns|recommendations/);
+  assert.doesNotMatch(comingSoon, /low|moderate|elevated|urgent/);
+});
+
+test("Regenerate still posts the Care & Wellness assessment endpoint", () => {
+  assert.match(detail, /\/agent\/\$\{id\}\/assessment\/regenerate/);
+  assert.match(care, /onRegenerate/);
+  assert.match(rail, /onRegenerate=\{onRegenerate\}/);
+});
+
+test("Care & Wellness engine wrapper still calls the existing runner", () => {
+  assert.match(engine, /from \.\.triage\.runner import run_for_agent/);
+  assert.match(engine, /return await run_for_agent\(db, agent_id, for_date\)/);
+  assert.match(runner, /"options": \{"num_predict": 300, "temperature": 0\.2\}/);
+  assert.match(runner, /\.order_by\(AiAgentChatHistory\.id\.asc\(\)\)/);
+  assert.match(runner, /\.limit\(settings\.triage_max_messages\)/);
+  assert.match(runner, /TriageResult\("low", 0\.0, \[\], \[\]\)/);
+});
+
+test("nightly cron still calls run_for_all directly", () => {
+  assert.match(scheduler, /from \.triage\.runner import run_for_all/);
+  assert.match(scheduler, /id="daily_triage"/);
+  assert.doesNotMatch(scheduler, /assess_agent/);
+  assert.doesNotMatch(scheduler, /assessment_engine/);
+});
+
+test("no Revel execution behavior is introduced by the assessment engine", () => {
+  assert.doesNotMatch(engine, /revel_write|update_data_table_row|sendDeviceCommand/);
+  assert.doesNotMatch(runner, /revel_write|update_data_table_row|sendDeviceCommand/);
+  assert.match(envExample, /^REVEL_EXECUTE_ENABLED=false$/m);
+});

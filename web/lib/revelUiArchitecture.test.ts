@@ -14,6 +14,14 @@ const detail = readFileSync(
   join(here, "../app/patients/[id]/PatientDetailClient.tsx"),
   "utf8",
 );
+const careWellnessPanel = readFileSync(
+  join(here, "../components/assessment/CareWellnessPanel.tsx"),
+  "utf8",
+);
+const engineRail = readFileSync(
+  join(here, "../components/assessment/AssessmentEngineRail.tsx"),
+  "utf8",
+);
 const integrations = readFileSync(
   join(here, "../components/ClientIntegrations.tsx"),
   "utf8",
@@ -43,10 +51,11 @@ test("clicking Revel opens the integration drawer, not a page navigation", () =>
 test("right rail no longer contains permanent Revel Diagnostics", () => {
   assert.doesNotMatch(detail, /Revel diagnostics/);
   assert.doesNotMatch(detail, /RevelDiagnosticsList/);
-  assert.match(detail, /data-testid="current-assessment-rail"/);
-  assert.match(detail, /14-day risk/);
-  assert.match(detail, /Latest assessment/);
-  assert.match(detail, /data-testid="latest-assessment"/);
+  assert.match(detail, /AssessmentEngineRail/);
+  assert.match(engineRail, /data-testid="current-assessment-rail"/);
+  assert.match(careWellnessPanel, /14-day risk/);
+  assert.match(careWellnessPanel, /Latest assessment/);
+  assert.match(careWellnessPanel, /data-testid="latest-assessment"/);
 });
 
 test("structured Revel events render in the conversation, not as caregiver\/client", () => {
