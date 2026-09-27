@@ -57,6 +57,13 @@ async def lifespan(_app: FastAPI):
             await seed_two_admins(db)
     except Exception as exc:
         log.warning("admin seed failed (DB may not be ready yet): %s", exc)
+    try:
+        from .personalities.store import seed_system_personalities
+
+        async with async_session_factory() as db:
+            await seed_system_personalities(db)
+    except Exception as exc:
+        log.warning("personality seed failed (DB may not be ready yet): %s", exc)
     start_scheduler()
     # Force Redis connect so a misconfigured URL fails at boot instead of at
     # the first /ws/agent/* handshake. PING throws if the server is down.
@@ -112,6 +119,7 @@ from .routers import voice as voice_router  # noqa: E402
 from .routers import integrations as integrations_router  # noqa: E402
 from .routers import partner as partner_router  # noqa: E402
 from .routers import knowledge as knowledge_router  # noqa: E402
+from .routers import personalities as personalities_router  # noqa: E402
 
 app.include_router(user_router.router, prefix="/api")
 app.include_router(agent_router.router, prefix="/api")
@@ -131,6 +139,7 @@ app.include_router(health_router.router, prefix="/api")
 app.include_router(voice_router.router, prefix="/api")
 app.include_router(integrations_router.router, prefix="/api")
 app.include_router(knowledge_router.router, prefix="/api")
+app.include_router(personalities_router.router, prefix="/api")
 
 
 @app.get("/readyz")

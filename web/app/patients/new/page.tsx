@@ -155,6 +155,7 @@ function OnboardWizard() {
       escalationPhrases: draft.escalationPhrases ?? [],
       topicsToAvoid: draft.topicsToAvoid ?? [],
       personaOverride: draft.personaOverride?.trim() || null,
+      personalityId: draft.personalityId?.trim() || null,
       botName: draft.botName?.trim() || null,
       eui,
       deviceAlias: eui ? (draft.deviceAlias?.trim() || `${draft.name.trim()}'s Watcher`) : null,
@@ -204,7 +205,7 @@ function OnboardWizard() {
           <WizardStepper
             steps={[...CLIENT_FORM_STEPS]}
             current={step}
-            onJump={(i) => i <= step && setStep(i)}
+            onJump={(i) => setStep(i)}
           />
         </div>
 

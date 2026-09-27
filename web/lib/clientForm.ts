@@ -1,4 +1,7 @@
-import type { AgentDetail } from "@/lib/types";
+import type { AgentDetail } from "./types";
+
+/** Same id as `DEFAULT_PERSONALITY_ID` in types.ts — inlined so node tests need no path alias. */
+const DEFAULT_PERSONALITY_ID = "sys_witty_tech_sidekick";
 
 export interface ClientFormDraft {
   name: string;
@@ -10,6 +13,7 @@ export interface ClientFormDraft {
   escalationPhrases: string[];
   topicsToAvoid: string[];
   personaOverride: string;
+  personalityId: string;
 }
 
 export const EMPTY_CLIENT_DRAFT: ClientFormDraft = {
@@ -22,6 +26,7 @@ export const EMPTY_CLIENT_DRAFT: ClientFormDraft = {
   escalationPhrases: [],
   topicsToAvoid: [],
   personaOverride: "",
+  personalityId: DEFAULT_PERSONALITY_ID,
 };
 
 export const CLIENT_FORM_STEPS = [
@@ -60,6 +65,7 @@ export function draftFromAgent(agent: Pick<
   | "escalationPhrases"
   | "topicsToAvoid"
   | "personaOverride"
+  | "personalityId"
 >): ClientFormDraft {
   return {
     name: agent.agentName ?? "",
@@ -71,6 +77,7 @@ export function draftFromAgent(agent: Pick<
     escalationPhrases: [...(agent.escalationPhrases ?? [])],
     topicsToAvoid: [...(agent.topicsToAvoid ?? [])],
     personaOverride: agent.personaOverride ?? "",
+    personalityId: agent.personalityId ?? "",
   };
 }
 
@@ -89,6 +96,7 @@ export function normalizeDraft(d: ClientFormDraft): ClientFormDraft {
     escalationPhrases: d.escalationPhrases.map((t) => t.trim()).filter(Boolean),
     topicsToAvoid: d.topicsToAvoid.map((t) => t.trim()).filter(Boolean),
     personaOverride: d.personaOverride.trim(),
+    personalityId: d.personalityId.trim(),
   };
 }
 
@@ -104,5 +112,6 @@ export function clientPatchBody(draft: ClientFormDraft): Record<string, unknown>
     escalationPhrases: n.escalationPhrases,
     topicsToAvoid: n.topicsToAvoid,
     personaOverride: n.personaOverride || null,
+    personalityId: n.personalityId || null,
   };
 }

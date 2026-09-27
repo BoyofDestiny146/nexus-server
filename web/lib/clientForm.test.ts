@@ -37,6 +37,7 @@ function agent(partial: Partial<AgentDetail> = {}): AgentDetail {
     escalationPhrases: ["I fell"],
     topicsToAvoid: ["diagnosis"],
     personaOverride: "Speak slowly.",
+    personalityId: "sys_witty_tech_sidekick",
     ...partial,
   };
 }
@@ -53,6 +54,7 @@ test("draftFromAgent hydrates every Create Client profile field", () => {
     escalationPhrases: ["I fell"],
     topicsToAvoid: ["diagnosis"],
     personaOverride: "Speak slowly.",
+    personalityId: "sys_witty_tech_sidekick",
   });
 });
 
@@ -77,6 +79,7 @@ test("clientPatchBody sends the same keys Edit saves, never a new client id", ()
     escalationPhrases: ["I fell"],
     topicsToAvoid: ["diagnosis"],
     personaOverride: "Speak slowly.",
+    personalityId: "sys_witty_tech_sidekick",
   });
   assert.equal("id" in body, false);
   assert.equal("agentId" in body, false);
@@ -93,6 +96,7 @@ test("empty persona and condition become null so PATCH can clear them without dr
   const body = clientPatchBody(draft);
   assert.equal(body.condition, null);
   assert.equal(body.personaOverride, null);
+  assert.equal(body.personalityId, "sys_witty_tech_sidekick");
   assert.equal(body.name, "Jane");
 });
 

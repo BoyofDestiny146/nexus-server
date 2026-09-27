@@ -420,13 +420,10 @@ class ConnectionHandler:
                     if persona and persona.get("system_prompt"):
                         per_agent = persona["system_prompt"].strip()
                         first = persona.get("first_name")
-                        # careconnect: pin the assistant's own identity as "Haizel"
-                        # and make crystal-clear that the patient is a DIFFERENT
-                        # person — otherwise the model sometimes introduces itself
-                        # as the patient, which is wrong.
+                        assistant = (persona.get("bot_name") or "").strip() or "Nexus"
                         identity = (
                             "\n\n# WHO YOU ARE — HARD RULE (overrides everything above)\n"
-                            "Your name is Haizel. You are a warm AI companion who looks after "
+                            f"Your name is {assistant}. You are a warm AI companion who looks after "
                             "this person. You are NOT them.\n"
                         )
                         if first:
@@ -436,7 +433,7 @@ class ConnectionHandler:
                                 f"NEVER say \"I am {first}\" and NEVER introduce yourself as {first} — "
                                 f"that is THEIR name, not yours.\n"
                             )
-                        identity += "If anyone asks your name, say you are Haizel."
+                        identity += f"If anyone asks your name, say you are {assistant}."
                         user_prompt = per_agent + identity
                         self.config["prompt"] = user_prompt  # also flow through to RAG enhancement
                         self.logger.bind(tag=TAG).info(

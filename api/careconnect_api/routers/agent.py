@@ -112,6 +112,7 @@ def _agent_info(agent: AiAgent) -> dict[str, Any]:
         "escalationPhrases": profile.get("escalationPhrases") or [],
         "topicsToAvoid": profile.get("topicsToAvoid") or [],
         "personaOverride": profile.get("personaOverride"),
+        "personalityId": profile.get("personalityId"),
         # Resolved Nexus Assessment Engine profile. Missing/unknown/unimplemented
         # stored values become care_wellness; wizard fields are unchanged.
         "assessmentProfile": resolved_assessment_profile_dict(agent.profile_json),

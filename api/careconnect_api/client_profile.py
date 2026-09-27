@@ -22,6 +22,7 @@ PROFILE_KEYS = (
     "escalationPhrases",
     "topicsToAvoid",
     "personaOverride",
+    "personalityId",
 )
 
 _ENGLISH_ONLY_PIN = (
@@ -42,6 +43,7 @@ def empty_profile() -> dict[str, Any]:
         "escalationPhrases": [],
         "topicsToAvoid": [],
         "personaOverride": None,
+        "personalityId": None,
     }
 
 
@@ -86,6 +88,9 @@ def load_profile(raw: Any) -> dict[str, Any]:
     if "personaOverride" in data:
         persona = data.get("personaOverride")
         out["personaOverride"] = str(persona).strip() if persona else None
+    if "personalityId" in data:
+        pid = data.get("personalityId")
+        out["personalityId"] = str(pid).strip() if pid else None
     for key, value in data.items():
         if key not in PROFILE_KEYS:
             out[key] = value
@@ -105,6 +110,7 @@ def profile_is_empty(profile: Mapping[str, Any]) -> bool:
         or profile.get("escalationPhrases")
         or profile.get("topicsToAvoid")
         or profile.get("personaOverride")
+        or profile.get("personalityId")
     )
 
 
@@ -121,7 +127,7 @@ def merge_profile(existing: Mapping[str, Any], patch: Mapping[str, Any]) -> dict
                     out[key] = None
             elif key == "dob":
                 out[key] = str(value).strip()[:32] if value else None
-            elif key in ("condition", "personaOverride"):
+            elif key in ("condition", "personaOverride", "personalityId"):
                 text = str(value).strip() if value else None
                 out[key] = text or None
         elif key not in PROFILE_KEYS:
@@ -139,6 +145,7 @@ def profile_from_onboard(req: Any) -> dict[str, Any]:
             "escalationPhrases": getattr(req, "escalationPhrases", None) or [],
             "topicsToAvoid": getattr(req, "topicsToAvoid", None) or [],
             "personaOverride": getattr(req, "personaOverride", None),
+            "personalityId": getattr(req, "personalityId", None),
         }
     )
 
@@ -170,7 +177,7 @@ def parse_profile_from_prompt(prompt: str | None) -> dict[str, Any]:
         body: list[str] = []
         started = False
         for line in lines[1:]:
-            if not started and (not line.strip() or line.startswith("# Client:")):
+            if not started and (not line.strip() or line.startswith("#")):
                 continue
             started = True
             body.append(line)
@@ -235,20 +242,54 @@ def public_profile(profile: Mapping[str, Any]) -> dict[str, Any]:
     return {key: loaded.get(key) for key in PROFILE_KEYS}
 
 
-def build_system_prompt(*, name: str, profile: Mapping[str, Any]) -> str:
-    """Compose ai_agent.system_prompt from wizard fields (same as Create Client)."""
+def build_system_prompt(
+    *,
+    name: str,
+    profile: Mapping[str, Any],
+    assistant_name: str | None = None,
+    personality: Mapping[str, Any] | None = None,
+) -> str:
+    """Compose ai_agent.system_prompt from wizard fields + personality library.
+
+    Canonical personality text is not copied from the library into profile_json.
+    ``{{assistant_name}}`` is resolved here and never written back to the template.
+    Legacy ``personaOverride`` is kept when no personality is selected.
+    """
+    from .personalities.render import (
+        compose_personality_prompt,
+        resolve_assistant_name,
+    )
+    from .personalities.safety import NEXUS_SAFETY_LAYER
+
     loaded = load_profile(dict(profile))
+    spoken = resolve_assistant_name(assistant_name)
+    template = ""
+    personality_name = None
+    if personality:
+        template = str(personality.get("prompt_template") or personality.get("promptTemplate") or "")
+        personality_name = str(personality.get("name") or "") or None
+    if template.strip():
+        return compose_personality_prompt(
+            client_name=name,
+            assistant_name=spoken,
+            personality_name=personality_name,
+            template=template,
+            profile=loaded,
+        )
+
     override = (loaded.get("personaOverride") or "").strip()
     if override:
         return (
             f"{_ENGLISH_ONLY_PIN}\n\n"
+            f"{NEXUS_SAFETY_LAYER.strip()}\n\n"
             "# Operator override (custom persona)\n"
-            f"# Client: {name}\n\n"
+            f"# Client: {name}\n"
+            f"# Spoken name: {spoken}\n\n"
             f"{override}\n"
         )
 
-    parts: list[str] = [_ENGLISH_ONLY_PIN]
-    ctx_lines = [f"Client name: {name}."]
+    parts: list[str] = [_ENGLISH_ONLY_PIN, NEXUS_SAFETY_LAYER.strip()]
+    ctx_lines = [f"Client name: {name}.", f"Your spoken name is {spoken}."]
     condition = (loaded.get("condition") or "").strip()
     if condition:
         ctx_lines.append(f"Clinical context: {condition}")

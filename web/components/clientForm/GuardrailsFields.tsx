@@ -1,89 +1,100 @@
 "use client";
 
-import { useState } from "react";
-import { Loader2, Wand2 } from "lucide-react";
-import { ApiError, apiPost } from "@/lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { apiGet } from "@/lib/api";
 import type { ClientFormDraft } from "@/lib/clientForm";
 import { ESCALATION_SUGGESTIONS } from "@/lib/clientForm";
-import { ageFromDob } from "@/lib/format";
 import { ChipInput } from "@/components/ChipInput";
-import { useToast } from "@/components/Toast";
+import type { AgentPersonality } from "@/lib/types";
+import { DEFAULT_PERSONALITY_ID, LEGACY_PERSONALITY_ID } from "@/lib/types";
 
 export function GuardrailsFields({
   draft,
   update,
-  preserveExisting = false,
 }: {
   draft: ClientFormDraft;
   update: <K extends keyof ClientFormDraft>(key: K, value: ClientFormDraft[K]) => void;
   preserveExisting?: boolean;
 }) {
-  const toast = useToast();
-  const [aiBusy, setAiBusy] = useState(false);
+  const [personalities, setPersonalities] = useState<AgentPersonality[]>([]);
 
-  async function generateWithAi() {
-    if (aiBusy) return;
-    setAiBusy(true);
-    try {
-      const res = await apiPost<{
-        personaOverride?: string | null;
-        escalationPhrases?: string[];
-        topicsToAvoid?: string[];
-      }>("/agent/draft-guardrails", {
-        name: draft.name,
-        age: draft.age ?? ageFromDob(draft.dob),
-        condition: draft.condition,
-        tags: draft.tags,
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<{ personalities: AgentPersonality[] }>("/personalities")
+      .then((data) => {
+        if (!cancelled) setPersonalities(data.personalities || []);
+      })
+      .catch(() => {
+        if (!cancelled) setPersonalities([]);
       });
-      const keepPersona = preserveExisting && draft.personaOverride.trim();
-      const keepEsc = preserveExisting && draft.escalationPhrases.length > 0;
-      const keepTopics = preserveExisting && draft.topicsToAvoid.length > 0;
-      if (!keepPersona) {
-        update("personaOverride", res.personaOverride ?? draft.personaOverride ?? "");
-      }
-      if (!keepEsc) {
-        update(
-          "escalationPhrases",
-          Array.isArray(res.escalationPhrases) ? res.escalationPhrases : draft.escalationPhrases,
-        );
-      }
-      if (!keepTopics) {
-        update(
-          "topicsToAvoid",
-          Array.isArray(res.topicsToAvoid) ? res.topicsToAvoid : draft.topicsToAvoid,
-        );
-      }
-      toast.push("Drafted guardrails — review and edit before continuing.", "success");
-    } catch (e) {
-      toast.push(
-        e instanceof ApiError ? e.message : "Could not draft guardrails — please write them manually.",
-        "error",
-      );
-    } finally {
-      setAiBusy(false);
+    return () => { cancelled = true; };
+  }, []);
+
+  const hasLegacy = draft.personaOverride.trim().length > 0;
+  const selectValue = draft.personalityId || (hasLegacy ? LEGACY_PERSONALITY_ID : DEFAULT_PERSONALITY_ID);
+  const selected = useMemo(
+    () => personalities.find((p) => p.id === draft.personalityId),
+    [personalities, draft.personalityId],
+  );
+
+  const grouped = useMemo(() => {
+    const buckets: Record<string, AgentPersonality[]> = {
+      system: [],
+      sales: [],
+      care: [],
+      custom: [],
+    };
+    for (const p of personalities) {
+      const key = p.category in buckets ? p.category : "custom";
+      buckets[key].push(p);
     }
-  }
+    return buckets;
+  }, [personalities]);
 
   return (
     <div className="space-y-7">
-      <div className="flex items-center justify-between gap-4 -mt-2">
-        <p className="text-[12.5px] text-slate-muted leading-relaxed max-w-md">
-          Let the model propose a starting set based on the client's profile.
-          You can edit anything it suggests.
-          {preserveExisting ? " Existing persona text is kept unless that field is empty." : ""}
-        </p>
-        <button
-          type="button"
-          onClick={() => void generateWithAi()}
-          disabled={aiBusy || !draft.name?.trim()}
-          className="btn-secondary shrink-0"
-          title={!draft.name?.trim() ? "Add a client name on the previous step first" : "Draft guardrails from the profile"}
+      <div>
+        <label htmlFor="client-personality" className="label">Agent Personality</label>
+        <select
+          id="client-personality"
+          className="input"
+          value={selectValue}
+          onChange={(e) => {
+            const next = e.target.value;
+            if (next === LEGACY_PERSONALITY_ID) {
+              update("personalityId", "");
+              return;
+            }
+            update("personalityId", next);
+          }}
         >
-          {aiBusy
-            ? <><Loader2 size={14} className="animate-spin" /> Drafting…</>
-            : <><Wand2 size={14} /> Generate with AI</>}
-        </button>
+          {hasLegacy && !draft.personalityId && (
+            <option value={LEGACY_PERSONALITY_ID}>Legacy custom persona</option>
+          )}
+          {(["system", "sales", "care", "custom"] as const).map((cat) => (
+            grouped[cat].length > 0 ? (
+              <optgroup key={cat} label={cat === "system" ? "System" : cat === "sales" ? "Sales" : cat === "care" ? "Care" : "Custom"}>
+                {grouped[cat].map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}{p.id === DEFAULT_PERSONALITY_ID ? " (default)" : ""}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null
+          ))}
+        </select>
+        {selected?.description ? (
+          <div className="helper">{selected.description}</div>
+        ) : hasLegacy && !draft.personalityId ? (
+          <div className="helper">
+            This client still has a saved free-text persona. It is kept until you
+            choose a library personality. It is not deleted.
+          </div>
+        ) : (
+          <div className="helper">How Nexus talks. Independent of Assessment Profile and Knowledge Bases.</div>
+        )}
       </div>
+
       <div>
         <label className="label">Escalation phrases</label>
         <ChipInput
@@ -104,21 +115,6 @@ export function GuardrailsFields({
           placeholder="Subjects the caregiver should sidestep"
           ariaLabel="Topics to avoid"
         />
-      </div>
-
-      <div>
-        <label htmlFor="client-persona" className="label">Persona override (optional)</label>
-        <textarea
-          id="client-persona"
-          rows={6}
-          className="input"
-          placeholder="e.g. Speak slower than usual. Avoid medical jargon."
-          value={draft.personaOverride}
-          onChange={(e) => update("personaOverride", e.target.value)}
-        />
-        <div className="helper">
-          Stored on this client. Saving keeps this text; it is not replaced unless you edit it.
-        </div>
       </div>
     </div>
   );

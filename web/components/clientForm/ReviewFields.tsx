@@ -40,7 +40,10 @@ export function ProfileReview({ draft }: { draft: ClientFormDraft }) {
       <ReviewRow label="Tags" value={draft.tags.length ? draft.tags.join(", ") : "—"} />
       <ReviewRow label="Escalation" value={draft.escalationPhrases.length ? draft.escalationPhrases.join(", ") : "—"} />
       <ReviewRow label="Avoid topics" value={draft.topicsToAvoid.length ? draft.topicsToAvoid.join(", ") : "—"} />
-      <ReviewRow label="Persona override" value={draft.personaOverride.trim() ? "(provided)" : "—"} />
+      <ReviewRow
+        label="Personality"
+        value={draft.personalityId.trim() || (draft.personaOverride.trim() ? "Legacy custom persona" : "—")}
+      />
     </div>
   );
 }

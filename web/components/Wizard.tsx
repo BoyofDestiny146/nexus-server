@@ -23,7 +23,7 @@ export function WizardStepper({
       {steps.map((s, i) => {
         const done = i < current;
         const active = i === current;
-        const clickable = !!onJump && i <= current;
+        const clickable = !!onJump;
         return (
           <li key={s.key} className="flex-1 flex items-stretch">
             <button

@@ -65,9 +65,6 @@ export function EditClientWorkspace({
 
   useEffect(() => {
     if (!open) return;
-    const next = draftFromAgent(agentRef.current);
-    setDraft(next);
-    setBaseline(next);
     setStep(0);
     setErr(null);
     setBusy(false);
@@ -76,10 +73,14 @@ export function EditClientWorkspace({
     setKbLoading(true);
     const agentId = agentRef.current.id;
     Promise.all([
+      apiGet<AgentDetail>(`/agent/${agentId}`),
       apiGet<KnowledgeBaseList>("/knowledge-base"),
       apiGet<KnowledgeBaseList>(`/agent/${agentId}/knowledge-bases`),
     ])
-      .then(([all, assigned]) => {
+      .then(([fresh, all, assigned]) => {
+        const next = draftFromAgent(fresh);
+        setDraft(next);
+        setBaseline(next);
         setCatalog(all.list || []);
         const ids = assignedKnowledgeIds(assigned.list);
         setSelectedKbIds(ids);
@@ -87,7 +88,10 @@ export function EditClientWorkspace({
         setKbReady(true);
       })
       .catch((e) => {
-        setKbError(e instanceof ApiError ? e.message : "Failed to load knowledge access.");
+        const fallback = draftFromAgent(agentRef.current);
+        setDraft(fallback);
+        setBaseline(fallback);
+        setKbError(e instanceof ApiError ? e.message : "Failed to load saved client fields.");
       })
       .finally(() => setKbLoading(false));
   }, [open]);
@@ -166,7 +170,7 @@ export function EditClientWorkspace({
           <div className="xl:col-span-2 min-h-[18rem]">
             {step === 0 && <ProfileFields draft={draft} update={update} autoFocusName />}
             {step === 1 && (
-              <GuardrailsFields draft={draft} update={update} preserveExisting />
+              <GuardrailsFields draft={draft} update={update} />
             )}
             {step === 2 && (
               <EditDeviceStep
@@ -245,7 +249,7 @@ export function EditClientWorkspace({
               <div className="kicker mb-3">{EDIT_CLIENT_FORM_STEPS[step].label}</div>
               <p className="text-[13.5px] leading-relaxed text-slate-deep">
                 {step === 0 && "These are the same profile fields as Add a client. Bot name starts voice display commands."}
-                {step === 1 && "Guardrails stay with this client. Existing persona text is kept unless you edit it."}
+                {step === 1 && "Choose how Nexus talks. Escalation phrases and topics to avoid stay with this client. A legacy free-text persona is kept until you pick a library personality."}
                 {step === 2 && "Device bind and unbind stay on the existing Attach device control. This step shows current assignment only."}
                 {step === 3 && "Assign reusable Knowledge Bases. Bound Watchers inherit these. Revel tags are metadata only."}
                 {step === 4 && "Save updates this client and knowledge assignments. Integrations, chat history, and assessments are not changed."}

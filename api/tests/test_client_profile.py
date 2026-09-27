@@ -137,7 +137,12 @@ async def test_onboard_and_patch_profile_round_trip(client: AsyncClient, admin_t
     assert data["escalationPhrases"] == ["I fell"]
     assert data["topicsToAvoid"] == ["diagnosis"]
     assert data["personaOverride"] == "Speak slowly."
-    assert "Speak slowly." in (data["systemPrompt"] or "")
+    assert data["personalityId"] == "sys_witty_tech_sidekick"
+    assert "Witty Tech Sidekick" in (data["systemPrompt"] or "")
+    assert "AdaBot" in (data["systemPrompt"] or "")
+    assert "{{assistant_name}}" not in (data["systemPrompt"] or "")
+    # Legacy override is stored, not copied into the composed library prompt.
+    assert "Speak slowly." not in (data["systemPrompt"] or "")
 
     patched = await client.patch(
         f"/api/agent/{agent_id}",
@@ -166,6 +171,7 @@ async def test_onboard_and_patch_profile_round_trip(client: AsyncClient, admin_t
     assert data["tags"] == ["fall-risk", "medication-reminder"]
     assert data["escalationPhrases"] == ["I fell", "I need help"]
     assert data["personaOverride"] == "Speak slowly."
+    assert data["personalityId"] == "sys_witty_tech_sidekick"
     assert data["botName"] == "AdaBot"
 
 
@@ -195,8 +201,10 @@ async def test_patch_profile_does_not_touch_integrations_or_prompt_when_only_bot
     assert patched.json()["code"] == 0
     after = await client.get(f"/api/agent/{agent_id}", headers=_auth(admin_token))
     assert after.json()["data"]["botName"] == "BeaBot"
-    assert after.json()["data"]["systemPrompt"] == prompt_before
     assert after.json()["data"]["condition"] == "diabetes"
+    # Bot name is substituted into the personality template; integrations stay put.
+    assert "BeaBot" in (after.json()["data"]["systemPrompt"] or "")
+    assert after.json()["data"]["systemPrompt"] != prompt_before
 
     integ = await client.get(f"/api/agent/{agent_id}/integrations", headers=_auth(admin_token))
     revel = next(i for i in integ.json()["data"]["list"] if i["provider"] == "revel")

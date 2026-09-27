@@ -69,6 +69,10 @@ from ..models import (
     ClientIntegration,
     RevelPlayerMap,
 )
+from ..personalities.store import (
+    default_personality_id,
+    personality_mapping,
+)
 from ..rbac import assert_can_access_agent
 from ..settings import settings
 from ..watcher_device import get_watcher_device
@@ -120,6 +124,7 @@ class OnboardRequest(BaseModel):
     escalationPhrases: list[str] = Field(default_factory=list)
     topicsToAvoid: list[str] = Field(default_factory=list)
     personaOverride: str | None = None
+    personalityId: str | None = None
     botName: str | None = None
     # Optional device attach in same call (the wizard's last step)
     eui: str | None = None
@@ -188,8 +193,31 @@ def _sanitize_bot_name(raw: str | None) -> str | None:
     return cleaned or None
 
 
+async def _compose_client_prompt(
+    db: AsyncSession,
+    *,
+    name: str,
+    profile: dict[str, Any],
+    bot_name: str | None,
+) -> str:
+    mapping = await personality_mapping(db, profile.get("personalityId"))
+    return build_system_prompt(
+        name=name,
+        profile=profile,
+        assistant_name=bot_name,
+        personality=mapping,
+    )
+
+
+async def _onboard_profile(db: AsyncSession, req: OnboardRequest) -> dict[str, Any]:
+    profile = profile_from_onboard(req)
+    if not profile.get("personalityId"):
+        profile["personalityId"] = await default_personality_id(db)
+    return profile
+
+
 def _build_persona_prompt(req: OnboardRequest) -> str:
-    """Compose the agent's ``system_prompt`` from wizard fields."""
+    """Sync fallback used only by tests that still call it directly."""
     return build_system_prompt(name=req.name.strip(), profile=profile_from_onboard(req))
 
 
@@ -250,7 +278,13 @@ async def onboard_agent(
 
     agent_id = uuid.uuid4().hex
     agent_code = f"AGT_{int(time.time() * 1000)}"
-    system_prompt = _build_persona_prompt(payload)
+    profile = await _onboard_profile(db, payload)
+    system_prompt = await _compose_client_prompt(
+        db,
+        name=name,
+        profile=profile,
+        bot_name=payload.botName,
+    )
 
     # Single all-or-nothing unit of work. AsyncSession auto-begins on first
     # use, so we just commit at the end and rely on get_db() / the request
@@ -267,7 +301,7 @@ async def onboard_agent(
             agent_code=agent_code,
             agent_name=name,
             bot_name=_sanitize_bot_name(payload.botName) if payload.botName is not None else None,
-            profile_json=dump_profile(profile_from_onboard(payload)),
+            profile_json=dump_profile(profile),
             asr_model_id="ASR_FunASR",
             vad_model_id="VAD_SileroVAD",
             llm_model_id="LLM_OllamaLLM",
@@ -679,6 +713,7 @@ async def onboard_template(
         ],
         "topicsToAvoid": [],
         "personaOverride": None,
+        "personalityId": "sys_witty_tech_sidekick",
         "botName": None,
         "eui": None,
         "deviceAlias": None,
@@ -720,6 +755,7 @@ class ClientPatchRequest(BaseModel):
     escalationPhrases: list[str] | None = None
     topicsToAvoid: list[str] | None = None
     personaOverride: str | None = None
+    personalityId: str | None = None
 
 
 _GUARDRAIL_FALLBACK = {
@@ -886,16 +922,24 @@ async def patch_agent(
         fields_changed.append("botName")
 
     rebuilt_prompt = False
-    if profile_keys_provided:
+    if profile_keys_provided or bot_name_provided or name is not None:
         existing = effective_profile(agent.profile_json, agent.system_prompt)
         patch = {k: getattr(payload, k) for k in profile_keys_provided}
-        merged = merge_profile(existing, patch)
-        dumped = dump_profile(merged)
-        if dumped != (agent.profile_json or dump_profile({})):
-            agent.profile_json = dumped
-            fields_changed.extend(k for k in profile_keys_provided if k not in fields_changed)
+        merged = merge_profile(existing, patch) if profile_keys_provided else existing
+        if profile_keys_provided:
+            dumped = dump_profile(merged)
+            if dumped != (agent.profile_json or dump_profile({})):
+                agent.profile_json = dumped
+                fields_changed.extend(k for k in profile_keys_provided if k not in fields_changed)
         prompt_name = name or agent.agent_name or ""
-        new_prompt = build_system_prompt(name=prompt_name, profile=merged)
+        spoken = bot_name if bot_name_provided else agent.bot_name
+        mapping = await personality_mapping(db, merged.get("personalityId"))
+        new_prompt = build_system_prompt(
+            name=prompt_name,
+            profile=merged,
+            assistant_name=spoken,
+            personality=mapping,
+        )
         if new_prompt != agent.system_prompt:
             agent.system_prompt = new_prompt
             fields_changed.append("systemPrompt")

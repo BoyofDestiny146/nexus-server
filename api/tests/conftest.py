@@ -94,6 +94,12 @@ async def db_engine():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    from careconnect_api.personalities.store import seed_system_personalities
+
+    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with factory() as session:
+        await seed_system_personalities(session)
+
     yield engine
 
     async with engine.begin() as conn:

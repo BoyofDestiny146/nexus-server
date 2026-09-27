@@ -170,6 +170,29 @@ class CcAssessmentResult(Base):
     generated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class CcAgentPersonality(Base):
+    """Reusable Agent Personality library. Clients store personality_id only."""
+
+    __tablename__ = "cc_agent_personality"
+    __table_args__ = (
+        Index("idx_cc_personality_category", "category"),
+        Index("idx_cc_personality_active", "is_active"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(512))
+    prompt_template: Mapped[str] = mapped_column(Text, nullable=False)
+    is_system: Mapped[int] = mapped_column(SmallInteger, default=0)
+    is_active: Mapped[int] = mapped_column(SmallInteger, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
 # ---------- careconnect-only tables ----------
 
 class AdminClientAccess(Base):

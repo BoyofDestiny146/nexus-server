@@ -32,6 +32,7 @@ export interface AgentDetail extends AgentSummary {
   escalationPhrases?: string[];
   topicsToAvoid?: string[];
   personaOverride?: string | null;
+  personalityId?: string | null;
   assessmentProfile?: AssessmentProfileDefinition | null;
 }
 
@@ -94,6 +95,31 @@ export interface AssessmentProfileState {
   profiles: AssessmentProfileDefinition[];
 }
 
+export type PersonalityCategory = "system" | "sales" | "care" | "custom";
+
+export interface AgentPersonality {
+  id: string;
+  name: string;
+  category: PersonalityCategory | string;
+  description: string | null;
+  promptTemplate?: string;
+  isSystem: boolean;
+  isActive: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  inUseCount?: number;
+}
+
+export const DEFAULT_PERSONALITY_ID = "sys_witty_tech_sidekick";
+export const LEGACY_PERSONALITY_ID = "legacy_custom_persona";
+
+export const PERSONALITY_SECTION_ORDER: Array<{ key: string; label: string }> = [
+  { key: "system", label: "System" },
+  { key: "sales", label: "Sales" },
+  { key: "care", label: "Care" },
+  { key: "custom", label: "Custom" },
+];
+
 export interface MedicalAssessment {
   id: number;
   agentId: string;
@@ -149,6 +175,7 @@ export interface OnboardRequest {
   escalationPhrases?: string[];
   topicsToAvoid?: string[];
   personaOverride?: string | null;
+  personalityId?: string | null;
   botName?: string | null;
   eui?: string | null;
   deviceAlias?: string | null;
