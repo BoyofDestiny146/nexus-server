@@ -55,8 +55,8 @@ function AdminsView() {
     <>
       <PageHeader
         kicker="Access"
-        title="Administrators"
-        subtitle="Dashboard users. Organization grouping is separate — assign clients to organizations from the client Profile step. Per-organization user scope is not enforced yet."
+        title="Portal Access"
+        subtitle="Manage staff and administrators who can access the Nexus portal."
         actions={
           <button onClick={() => setCreateOpen(true)} className="btn-primary">
             <Plus size={16} /> Add admin

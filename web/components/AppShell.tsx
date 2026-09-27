@@ -158,9 +158,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </ul>
               )}
             </li>
-          </ul>
-
-          <ul className="space-y-0.5 mt-0.5">
             {MAIN_NAV.map((n) => (
               <li key={n.href}>
                 <NavLink
@@ -178,7 +175,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <div className="px-3 pb-1 text-[10px] uppercase tracking-[0.14em] text-slate-muted">Administration</div>
               <ul className="space-y-0.5">
                 <li>
-                  <NavLink href="/admins" label="Users" icon={Shield} nested active={onAdminUsers} />
+                  <NavLink href="/admins" label="Portal Access" icon={Shield} nested active={onAdminUsers} />
                 </li>
                 <li>
                   <NavLink href="/organizations" label="Organizations" icon={Building2} nested active={onAdminOrgs} />

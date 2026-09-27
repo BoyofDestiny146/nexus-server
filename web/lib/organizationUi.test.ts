@@ -70,18 +70,23 @@ test("Clients submenu indentation matches Administration children", () => {
   assert.match(shell, /label="Create New Client"[\s\S]*nested/);
   assert.match(shell, /label="Organization Clients"[\s\S]*nested/);
   assert.match(shell, /label="Unassigned"[\s\S]*nested/);
-  assert.match(shell, /label="Users"[\s\S]*nested/);
+  assert.match(shell, /label="Portal Access"[\s\S]*nested/);
   assert.match(shell, /label="Organizations"[\s\S]*nested/);
   assert.match(shell, /w-60 shrink-0/);
 });
 
-test("Administration Users and Organizations nav still works", () => {
+test("Administration Portal Access and Organizations nav still works", () => {
   const shell = readFileSync(join(here, "../components/AppShell.tsx"), "utf8");
+  const admins = readFileSync(join(here, "../app/admins/page.tsx"), "utf8");
   assert.match(shell, /Administration/);
-  assert.match(shell, /Users/);
+  assert.match(shell, /label="Portal Access"/);
+  assert.doesNotMatch(shell, /label="Users"/);
   assert.match(shell, /href="\/admins"/);
   assert.match(shell, /href="\/organizations"/);
   assert.match(shell, /label="Organizations"/);
+  assert.match(admins, /title="Portal Access"/);
+  assert.match(admins, /Manage staff and administrators who can access the Nexus portal/);
+  assert.match(admins, /apiGet<AdminSummary\[]>\("\/admin\/users"\)/);
 });
 
 test("Nexus logo remains in the sidebar header", () => {
