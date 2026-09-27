@@ -84,14 +84,14 @@ test("live test control is present and disabled unless execute is enabled", () =
   assert.match(integrations, /Run Dry Test/);
 });
 
-test("header badge is presentational; parent owns GET /agent/{id}/revel/status", () => {
+test("RevelStatusBadge remains presentational; parent still owns GET /agent/{id}/revel/status", () => {
   assert.doesNotMatch(badge, /<Modal/);
   assert.doesNotMatch(badge, /RevelDiagnosticsList/);
   assert.doesNotMatch(badge, /apiGet/);
   assert.doesNotMatch(badge, /onStatus/);
   assert.doesNotMatch(badge, /useEffect/);
   assert.match(detail, /loadRevelStatus\(id, apiGet\)/);
-  assert.match(detail, /status=\{revelStatus\}/);
+  assert.doesNotMatch(detail, /<RevelStatusBadge/);
   assert.doesNotMatch(detail, /patientDetailConversationRevel\(revelStatus\)/);
   assert.doesNotMatch(detail, /onStatus=\{setRevelStatus\}/);
 });

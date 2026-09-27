@@ -38,7 +38,6 @@ import { ClientIntegrations } from "@/components/ClientIntegrations";
 import { EditClientWorkspace } from "@/components/EditClientWorkspace";
 import { RevelContextCard } from "@/components/RevelContextCard";
 import { RevelDisplayEvent } from "@/components/RevelDisplayEvent";
-import { RevelStatusBadge } from "@/components/RevelStatusBadge";
 import { AssessmentEngineRail } from "@/components/assessment/AssessmentEngineRail";
 
 const WATCHER_ONLINE_MS = 5 * 60_000;
@@ -439,26 +438,21 @@ function PatientDetailView({ id }: { id: string }) {
 
   return (
     <>
-      <header className="px-6 md:px-10 pt-7 pb-5 border-b border-slate-line/70">
+      <header
+        className="px-6 md:px-10 pt-4 pb-3 border-b border-slate-line/70"
+        data-testid="client-detail-header"
+        data-revel-loaded={revelStatusLoading ? "loading" : revelStatusError ? "error" : revelStatus ? "ready" : "empty"}
+      >
         <button
           onClick={() => router.push("/patients")}
-          className="inline-flex items-center gap-1.5 text-[12px] uppercase tracking-[0.12em] text-slate-muted hover:text-slate-deep transition mb-4"
+          className="inline-flex items-center gap-1.5 text-[12px] uppercase tracking-[0.12em] text-slate-muted hover:text-slate-deep transition mb-2"
         >
           <ChevronLeft size={14} /> Roster
         </button>
         <div className="flex items-start justify-between gap-6 min-w-0">
           <div className="min-w-0">
-            <div className="flex items-center gap-2.5 mb-2 min-w-0">
-              <span className="kicker">Client detail</span>
-              <LiveBadge status={live.status} />
-              <RevelStatusBadge
-                status={revelStatus}
-                loading={revelStatusLoading}
-                error={revelStatusError}
-              />
-            </div>
             <h1 className="display-1 text-slate-deep leading-[1.05]">{agent.agentName}</h1>
-            <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[12px] text-slate-muted">
+            <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[12px] text-slate-muted">
               <RiskBadge
                 level={latest?.riskLevel ?? null}
                 className="px-2.5 py-1 text-[12px]"
@@ -487,7 +481,7 @@ function PatientDetailView({ id }: { id: string }) {
       <section className={PATIENT_DETAIL_SECTION}>
         {/* Left: connections, Revel, knowledge, devices, sessions */}
         <aside className={PATIENT_DETAIL_LEFT}>
-          <div className="px-3 pt-5 pb-4 space-y-5 border-b border-slate-line/70">
+          <div className="px-3 pt-4 pb-4 space-y-5 border-b border-slate-line/70">
             <div>
               <SectionLabel>Client</SectionLabel>
               <PanelAction icon={Pencil} label="Edit client" onClick={() => setEditOpen(true)} />
@@ -716,39 +710,6 @@ function PatientDetailView({ id }: { id: string }) {
         }}
       />
     </>
-  );
-}
-
-function LiveBadge({ status }: { status: import("@/lib/useLiveChat").LiveChatStatus }) {
-  if (status === "live") {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-teal-deep">
-        <span className="live-dot" /> Live
-      </span>
-    );
-  }
-  if (status === "polling") {
-    return (
-      <span
-        title="Live socket unavailable — refreshing every 2s via REST."
-        className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-slate-muted"
-      >
-        <Loader2 size={10} className="animate-spin" /> Polling
-      </span>
-    );
-  }
-  if (status === "disconnected") {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-risk-urgent">
-        <AlertTriangle size={10} /> Disconnected
-      </span>
-    );
-  }
-  // "connecting"
-  return (
-    <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-slate-muted">
-      <Loader2 size={10} className="animate-spin" /> Connecting
-    </span>
   );
 }
 

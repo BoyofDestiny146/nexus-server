@@ -48,12 +48,13 @@ function livePayload(partial: Partial<RevelStatus> = {}): RevelStatus {
   };
 }
 
-test("PatientDetailClient owns GET /agent/{id}/revel/status for the header badge, not transcript cards", () => {
+test("PatientDetailClient owns GET /agent/{id}/revel/status without a header badge, not transcript cards", () => {
   assert.match(detail, /loadRevelStatus\(id, apiGet\)/);
   assert.match(detail, /\[id, knowledgeTick\]/);
-  assert.match(detail, /status=\{revelStatus\}/);
-  assert.match(detail, /loading=\{revelStatusLoading\}/);
-  assert.match(detail, /error=\{revelStatusError\}/);
+  assert.doesNotMatch(detail, /<RevelStatusBadge/);
+  assert.doesNotMatch(detail, /status=\{revelStatus\}/);
+  assert.doesNotMatch(detail, /loading=\{revelStatusLoading\}/);
+  assert.doesNotMatch(detail, /error=\{revelStatusError\}/);
   assert.doesNotMatch(detail, /onStatus=/);
   assert.doesNotMatch(detail, /setRevelStatus\)\s*\/>/);
   assert.doesNotMatch(detail, /patientDetailConversationRevel\(revelStatus\)/);
@@ -64,7 +65,7 @@ test("PatientDetailClient owns GET /agent/{id}/revel/status for the header badge
   assert.match(badge, /Parent owns Revel status fetching/);
 });
 
-test("parent-owned live status drives the header badge, not a synthetic conversation card", async () => {
+test("parent-owned live status is fetched without inventing a conversation card", async () => {
   const agentId = "agt_live";
   const calls: string[] = [];
   const get = async <T>(path: string): Promise<T> => {
@@ -113,7 +114,7 @@ test("persisted REVEL CONTEXT card model does not require configured, enabled, d
   assert.equal(card.rows.some((row) => row.label === "Display"), false);
 });
 
-test("authenticated status failure leaves the header without inventing transcript REVEL CONTEXT", async () => {
+test("status fetch failure does not invent transcript REVEL CONTEXT", async () => {
   const get = async <T>(_path: string): Promise<T> => {
     throw new Error("Revel status unavailable");
   };
