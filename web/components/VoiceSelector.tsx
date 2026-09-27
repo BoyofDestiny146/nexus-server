@@ -15,6 +15,7 @@ import { apiGet, apiPut, apiPost, apiBinary, apiDelete, ApiError } from "@/lib/a
 import { classNames } from "@/lib/format";
 import { Modal } from "@/components/Modal";
 import type { VoiceCatalog, DeviceVoice } from "@/lib/types";
+import { groupedVoiceOptions, voiceLabel } from "@/lib/voiceCatalog";
 import {
   coercePower,
   DEFAULT_POWER,
@@ -355,10 +356,14 @@ export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted, op
                   className={classNames(selectClass, "min-w-[160px]")}
                   aria-label="Voice"
                 >
-                  {catalog.voices.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.label}{v.recommended ? " ★" : ""}{!v.local ? " (Edge)" : ""}
-                    </option>
+                  {groupedVoiceOptions(catalog.voices, selectedVoice).map((group) => (
+                    <optgroup key={group.key} label={group.label}>
+                      {group.voices.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {voiceLabel(v)}{v.recommended ? " ★" : ""}{!v.local ? " (Edge)" : ""}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
                 {isEdgeVoice ? (

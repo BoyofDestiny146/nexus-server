@@ -217,12 +217,26 @@ export type WsFrame =
 
 // ── Voice selector types ──────────────────────────────────────────────────────
 
+export type VoiceCategory =
+  | "female"
+  | "male"
+  | "child"
+  | "regional"
+  | "specialty"
+  | "other";
+
 export interface VoiceOption {
   id: string;
   label: string;
+  displayName?: string;
   engine: string;
+  provider?: string;
+  category?: VoiceCategory | string;
+  language?: string;
+  locale?: string;
   local: boolean;
   recommended: boolean;
+  enabled?: boolean;
 }
 
 export interface SpeedOption {

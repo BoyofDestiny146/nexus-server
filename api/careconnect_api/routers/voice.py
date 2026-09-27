@@ -5,9 +5,10 @@ Mounted at /api by main.py (admin-gated, same pattern as device.py).
 Endpoints
 ---------
 GET  /voices
-    Proxy to the multi-engine TTS server's voice catalog. Returns the raw
-    catalog JSON: {default, voices:[{id,label,engine,local,recommended}],
-    speeds:[{id,label}], default_speed}.
+    Proxy to the multi-engine TTS server's voice catalog, then normalize
+    each row to {id, displayName, provider, category, language, locale,
+    engine, recommended, enabled, label, local}. Existing voice ids are
+    unchanged. Missing category metadata is ``other``.
 
 GET  /device/{mac}/voice
     Return the configured {voice, speed} for a device. Falls back to the
@@ -74,6 +75,7 @@ from ..rbac import assert_can_access_agent
 from ..settings import settings
 from ..watcher_device import get_watcher_device
 from ..xiaozhi_control import notify_xiaozhi_device_settings
+from ..voice_catalog import normalize_voice_catalog
 
 
 log = logging.getLogger("voice")
@@ -318,6 +320,7 @@ async def list_voices(
     the TTS catalog changes only on server restart.
     """
     catalog = await _fetch_catalog()
+    catalog = normalize_voice_catalog(catalog)
     log.debug(
         "voice catalog proxied: %d voices, engines=%s",
         len(catalog.get("voices", [])),
@@ -424,10 +427,12 @@ async def set_device_voice(
         } or {"brief", "normal", "detailed"}
 
         if payload.voice is not None and payload.voice not in valid_voice_ids:
-            raise APIException(
-                400,
-                f"unknown voice {payload.voice!r}; valid: {sorted(valid_voice_ids)}",
-            )
+            current = ((_read_config().get("devices") or {}).get(mac) or {}).get("voice")
+            if payload.voice != current:
+                raise APIException(
+                    400,
+                    f"unknown voice {payload.voice!r}; valid: {sorted(valid_voice_ids)}",
+                )
         if payload.speed is not None and payload.speed not in valid_speed_ids:
             raise APIException(
                 400,

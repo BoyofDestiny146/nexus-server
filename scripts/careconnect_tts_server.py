@@ -34,13 +34,18 @@ PIPER_VOICE_DIR = Path(os.environ.get("PIPER_VOICE_DIR", str(Path.home() / ".loc
 KOKORO_DIR = Path(os.environ.get("KOKORO_DIR", str(Path.home() / ".local/share/careconnect/kokoro")))
 DEFAULT_VOICE = os.environ.get("CC_TTS_DEFAULT_VOICE", "kokoro:af_heart")
 
-# Curated catalog surfaced to the dashboard selector (the 2026-06-03 keepers).
+# Curated catalog surfaced to the dashboard selector.
+# Ids are stable: existing device configs keep the same voice string.
+# category is female|male|child|regional|specialty|other — extra keys are additive.
 VOICE_CATALOG = [
-    {"id": "kokoro:af_heart",               "label": "Hazel — Heart (Kokoro)",  "engine": "kokoro", "local": True,  "recommended": True},
-    {"id": "edge:en-US-AvaNeural",          "label": "Ava (Edge neural)",       "engine": "edge",   "local": False, "recommended": True},
-    {"id": "edge:en-US-JennyNeural",        "label": "Jenny (Edge neural)",     "engine": "edge",   "local": False, "recommended": True},
-    {"id": "edge:en-US-EmmaNeural",         "label": "Emma (Edge neural)",      "engine": "edge",   "local": False, "recommended": False},
-    {"id": "piper:en_US-hfc_female-medium", "label": "Clara (Piper hfc female)","engine": "piper",  "local": True,  "recommended": True},
+    {"id": "kokoro:af_heart",               "label": "Hazel — Heart (Kokoro)",  "displayName": "Hazel — Heart", "engine": "kokoro", "provider": "kokoro", "category": "female", "language": "en", "locale": "en-US", "local": True,  "recommended": True,  "enabled": True},
+    {"id": "edge:en-US-AvaNeural",          "label": "Ava (Edge neural)",       "displayName": "Ava",           "engine": "edge",   "provider": "edge",   "category": "female", "language": "en", "locale": "en-US", "local": False, "recommended": True,  "enabled": True},
+    {"id": "edge:en-US-JennyNeural",        "label": "Jenny (Edge neural)",     "displayName": "Jenny",         "engine": "edge",   "provider": "edge",   "category": "female", "language": "en", "locale": "en-US", "local": False, "recommended": True,  "enabled": True},
+    {"id": "edge:en-US-EmmaNeural",         "label": "Emma (Edge neural)",      "displayName": "Emma",          "engine": "edge",   "provider": "edge",   "category": "female", "language": "en", "locale": "en-US", "local": False, "recommended": False, "enabled": True},
+    {"id": "piper:en_US-hfc_female-medium", "label": "Clara (Piper hfc female)","displayName": "Clara",         "engine": "piper",  "provider": "piper",  "category": "female", "language": "en", "locale": "en-US", "local": True,  "recommended": True,  "enabled": True},
+    {"id": "kokoro:am_adam",                "label": "Adam (Kokoro)",           "displayName": "Adam",          "engine": "kokoro", "provider": "kokoro", "category": "male",   "language": "en", "locale": "en-US", "local": True,  "recommended": False, "enabled": True},
+    {"id": "edge:en-US-GuyNeural",          "label": "Guy (Edge neural)",       "displayName": "Guy",           "engine": "edge",   "provider": "edge",   "category": "male",   "language": "en", "locale": "en-US", "local": False, "recommended": True,  "enabled": True},
+    {"id": "edge:en-US-AndrewNeural",       "label": "Andrew (Edge neural)",    "displayName": "Andrew",        "engine": "edge",   "provider": "edge",   "category": "male",   "language": "en", "locale": "en-US", "local": False, "recommended": False, "enabled": True},
 ]
 
 _piper_voices: dict[str, object] = {}
