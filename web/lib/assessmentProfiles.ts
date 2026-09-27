@@ -12,6 +12,7 @@ import type {
 } from "./types";
 
 export const CARE_WELLNESS_ID = "care_wellness" as const;
+export const SALES_PRODUCT_ID = "sales_product" as const;
 
 export const ASSESSMENT_PROFILES: readonly AssessmentProfileDefinition[] = [
   {
@@ -24,8 +25,9 @@ export const ASSESSMENT_PROFILES: readonly AssessmentProfileDefinition[] = [
   {
     id: "sales_product",
     displayName: "Sales & Product Guide",
-    implemented: false,
-    description: "Product and sales conversation assessment. Coming soon.",
+    implemented: true,
+    description:
+      "Session-scoped sales and product-guide assessment: interest, products discussed, needs, questions, objections, and follow-up.",
   },
   {
     id: "information_kiosk",

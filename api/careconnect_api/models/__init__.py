@@ -2,7 +2,7 @@
 plus the careconnect-only tables (cc_admin_client_access, future)."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
@@ -10,6 +10,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     SmallInteger,
@@ -130,6 +131,42 @@ class AiMedicalAssessment(Base):
     recommendations_json: Mapped[str | None] = mapped_column(Text)
     source_msg_count: Mapped[int | None] = mapped_column(Integer)
     llm_model: Mapped[str | None] = mapped_column(String(64))
+    generated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CcAssessmentResult(Base):
+    """Generic Nexus Assessment Engine result for non-care profiles.
+
+    Care & Wellness continues to use ``ai_medical_assessment``. Sales (and
+    later kiosk/operations) persist JSON payloads here, keyed by profile_id.
+    """
+
+    __tablename__ = "cc_assessment_result"
+    __table_args__ = (
+        Index("idx_cc_assessment_agent", "agent_id"),
+        Index("idx_cc_assessment_agent_profile", "agent_id", "profile_id"),
+        Index(
+            "idx_cc_assessment_agent_profile_generated",
+            "agent_id",
+            "profile_id",
+            "generated_at",
+        ),
+        Index("idx_cc_assessment_session", "session_id"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    agent_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    profile_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    for_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    payload_json: Mapped[str | None] = mapped_column(Text)
+    source_msg_count: Mapped[int] = mapped_column(Integer, default=0)
+    llm_model: Mapped[str | None] = mapped_column(String(128))
     generated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

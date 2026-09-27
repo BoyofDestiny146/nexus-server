@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   ASSESSMENT_PROFILES,
   CARE_WELLNESS_ID,
+  SALES_PRODUCT_ID,
   canActivateAssessmentEngine,
   dropdownLabel,
   resolveAssessmentProfile,
@@ -18,7 +19,7 @@ const pythonRegistry = readFileSync(
   "utf8",
 );
 
-test("registry exposes all four profiles and only Care & Wellness is implemented", () => {
+test("registry exposes all four profiles; Care and Sales are implemented", () => {
   assert.equal(ASSESSMENT_PROFILES.length, 4);
   assert.deepEqual(
     ASSESSMENT_PROFILES.map((p) => p.id),
@@ -28,9 +29,10 @@ test("registry exposes all four profiles and only Care & Wellness is implemented
   assert.equal(ASSESSMENT_PROFILES[1].displayName, "Sales & Product Guide");
   assert.equal(ASSESSMENT_PROFILES[2].displayName, "Information Kiosk");
   assert.equal(ASSESSMENT_PROFILES[3].displayName, "Operations & Staff Assistant");
-  assert.equal(ASSESSMENT_PROFILES.filter((p) => p.implemented).length, 1);
+  assert.equal(ASSESSMENT_PROFILES.filter((p) => p.implemented).length, 2);
   assert.equal(ASSESSMENT_PROFILES[0].implemented, true);
-  assert.ok(ASSESSMENT_PROFILES.slice(1).every((p) => p.implemented === false));
+  assert.equal(ASSESSMENT_PROFILES[1].implemented, true);
+  assert.ok(ASSESSMENT_PROFILES.slice(2).every((p) => p.implemented === false));
 });
 
 test("Python registry is the source of truth for the same four ids and names", () => {
@@ -43,6 +45,7 @@ test("Python registry is the source of truth for the same four ids and names", (
   }
   assert.match(pythonRegistry, /implemented=True/);
   assert.match(pythonRegistry, /implemented=False/);
+  assert.match(pythonRegistry, /id=SALES_PRODUCT_ID[\s\S]*implemented=True/);
 });
 
 test("missing assessmentProfile resolves to care_wellness", () => {
@@ -60,19 +63,17 @@ test("unknown profile resolves to care_wellness", () => {
 
 test("unimplemented profiles cannot activate the engine", () => {
   assert.equal(canActivateAssessmentEngine("care_wellness"), true);
-  assert.equal(canActivateAssessmentEngine("sales_product"), false);
+  assert.equal(canActivateAssessmentEngine("sales_product"), true);
   assert.equal(canActivateAssessmentEngine("information_kiosk"), false);
   assert.equal(canActivateAssessmentEngine("operations_staff"), false);
   assert.equal(canActivateAssessmentEngine("invented"), false);
-  assert.equal(resolveAssessmentProfileId("sales_product"), CARE_WELLNESS_ID);
+  assert.equal(resolveAssessmentProfileId("sales_product"), SALES_PRODUCT_ID);
+  assert.equal(resolveAssessmentProfileId("information_kiosk"), CARE_WELLNESS_ID);
 });
 
 test("dropdown labels mark unimplemented profiles Coming soon", () => {
   assert.equal(dropdownLabel(ASSESSMENT_PROFILES[0]), "Care & Wellness");
-  assert.equal(
-    dropdownLabel(ASSESSMENT_PROFILES[1]),
-    "Sales & Product Guide — Coming soon",
-  );
+  assert.equal(dropdownLabel(ASSESSMENT_PROFILES[1]), "Sales & Product Guide");
   assert.equal(
     dropdownLabel(ASSESSMENT_PROFILES[2]),
     "Information Kiosk — Coming soon",

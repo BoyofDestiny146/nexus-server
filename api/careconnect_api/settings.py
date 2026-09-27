@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     # Ollama (used by triage scheduler)
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_triage_model: str = "llama3.1:8b-instruct-q4_K_M"
+    # Sales & Product Guide assessment. Empty = reuse ollama_triage_model.
+    ollama_sales_model: str = ""
     ollama_timeout_s: float = 60.0
     # Conversational Watcher model (xiaozhi-server OllamaLLM). Health probes
     # this, not the triage model. Compose default is qwen2.5:3b.

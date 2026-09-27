@@ -657,6 +657,7 @@ function PatientDetailView({ id }: { id: string }) {
           regenBusy={regenBusy}
           onRegenerate={regenerate}
           liveHighlight={live.assessmentTick > 0}
+          activeSession={activeSession}
         />
       </section>
 

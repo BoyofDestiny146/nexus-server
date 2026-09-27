@@ -1,23 +1,26 @@
-"""Medical-risk assessment read endpoints (Phase 2/5 port).
+"""Assessment read/regenerate endpoints.
 
 Mounted at /api/agent/{agent_id}/assessment/* by main.py (parent prefix is
-/api). The Java original lives at:
-  xiaozhi.modules.agent.controller.MedicalAssessmentController
+/api).
 
-All read endpoints honor per-admin client scoping via
-``rbac.assert_can_access_agent``. The ``regenerate`` endpoint synchronously
-re-runs the triage compute for one agent (root only) via the Nexus
-Assessment Engine, which Phase 1 resolves to Care & Wellness and calls
-:func:`careconnect_api.triage.runner.run_for_agent`.
+Care & Wellness compatibility
+-----------------------------
+``GET .../assessment/latest`` and ``GET .../assessment/history`` remain
+medical-only (``ai_medical_assessment``). The Care & Wellness right rail
+still consumes that shape.
 
-Field mapping notes
--------------------
-The ai_medical_assessment table stores concerns/recommendations as TEXT
-columns containing a JSON-encoded array of strings. We parse them
-server-side and return real Python lists; the dashboard's
-DecodedAssessment shape consumes ``concerns`` / ``recommendations``
-directly. (The legacy ``concernsJson`` / ``recommendationsJson`` raw
-strings are no longer needed downstream.)
+Profile-aware endpoints
+-----------------------
+``GET .../assessment/current`` returns a normalized envelope for the
+agent's persisted Assessment Profile (care medical payload or sales
+``cc_assessment_result``). ``POST .../assessment/regenerate`` dispatches
+from that same persisted profile — callers cannot pick a profile in the
+request. Care regenerate still returns the medical serialize used by the
+existing UI. Sales returns the generic envelope.
+
+The engine wrapper calls ``run_for_agent`` for Care & Wellness and the
+sales runner for Sales & Product Guide. Nightly cron does not enter this
+router.
 """
 from __future__ import annotations
 
@@ -31,12 +34,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..assessment_engine.engine import assess_agent
-from ..assessment_engine.profiles import catalog_dicts, parse_selectable_profile_id
-from ..assessment_engine.storage import apply_assessment_profile, profile_payload
+from ..assessment_engine.profiles import (
+    CARE_WELLNESS_ID,
+    SALES_PRODUCT_ID,
+    catalog_dicts,
+    parse_selectable_profile_id,
+)
+from ..assessment_engine.sales_schema import sanitize_sales_payload
+from ..assessment_engine.storage import apply_assessment_profile, profile_payload, resolved_definition
 from ..auth import CurrentUser, get_current_user, require_root
 from ..db import get_db
 from ..envelope import APIException
-from ..models import AiAgent, AiMedicalAssessment
+from ..models import AiAgent, AiMedicalAssessment, CcAssessmentResult
 from ..rbac import assert_can_access_agent
 
 
@@ -73,16 +82,24 @@ def _serialize(row: AiMedicalAssessment) -> dict[str, Any]:
     }
 
 
-@router.get("/agent/{agent_id}/assessment/latest", response_model=None)
-async def latest(
-    agent_id: str,
-    db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-) -> dict[str, Any] | None:
-    """Most recent medical-risk assessment for this agent, or null."""
-    await assert_can_access_agent(db, user, agent_id)
+def _serialize_generic(row: CcAssessmentResult) -> dict[str, Any]:
+    try:
+        raw = json.loads(row.payload_json or "{}")
+    except (ValueError, TypeError):
+        raw = {}
+    payload = sanitize_sales_payload(raw)
+    return {
+        "profileId": row.profile_id,
+        "sessionId": row.session_id,
+        "generatedAt": row.generated_at,
+        "sourceMsgCount": row.source_msg_count,
+        "llmModel": row.llm_model,
+        "payload": payload,
+    }
 
-    row = (
+
+async def _latest_medical(db: AsyncSession, agent_id: str) -> AiMedicalAssessment | None:
+    return (
         await db.execute(
             select(AiMedicalAssessment)
             .where(AiMedicalAssessment.agent_id == agent_id)
@@ -94,6 +111,56 @@ async def latest(
         )
     ).scalar_one_or_none()
 
+
+async def _latest_generic(
+    db: AsyncSession,
+    agent_id: str,
+    profile_id: str,
+    session_id: str | None = None,
+) -> CcAssessmentResult | None:
+    stmt = select(CcAssessmentResult).where(
+        CcAssessmentResult.agent_id == agent_id,
+        CcAssessmentResult.profile_id == profile_id,
+    )
+    if session_id:
+        stmt = stmt.where(CcAssessmentResult.session_id == session_id)
+    return (
+        await db.execute(
+            stmt.order_by(
+                CcAssessmentResult.generated_at.desc(),
+                CcAssessmentResult.id.desc(),
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+def _serialize_care_envelope(row: AiMedicalAssessment) -> dict[str, Any]:
+    medical = _serialize(row)
+    return {
+        "profileId": CARE_WELLNESS_ID,
+        "sessionId": None,
+        "generatedAt": medical["generatedAt"],
+        "sourceMsgCount": medical["sourceMsgCount"],
+        "llmModel": medical["llmModel"],
+        "payload": {
+            "riskLevel": medical["riskLevel"],
+            "confidence": medical["confidence"],
+            "concerns": medical["concerns"],
+            "recommendations": medical["recommendations"],
+        },
+    }
+
+
+@router.get("/agent/{agent_id}/assessment/latest", response_model=None)
+async def latest(
+    agent_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | None:
+    """Most recent medical-risk assessment for this agent, or null."""
+    await assert_can_access_agent(db, user, agent_id)
+
+    row = await _latest_medical(db, agent_id)
     if row is None:
         return None
     return _serialize(row)
@@ -171,21 +238,57 @@ async def put_assessment_profile(
     return profile_payload(agent.profile_json)
 
 
+@router.get("/agent/{agent_id}/assessment/current", response_model=None)
+async def current(
+    agent_id: str,
+    session_id: str | None = Query(default=None, alias="sessionId"),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any] | None:
+    """Latest result for the agent's persisted Assessment Profile.
+
+    Care & Wellness → medical envelope (does not read ``cc_assessment_result``).
+    Sales & Product Guide → generic envelope (does not read medical rows).
+    Optional ``sessionId`` scopes sales lookup to that session only.
+    """
+    await assert_can_access_agent(db, user, agent_id)
+    agent = await db.get(AiAgent, agent_id)
+    if agent is None:
+        raise APIException(404, f"agent {agent_id} not found")
+    profile_id = resolved_definition(agent.profile_json).id
+    if profile_id == SALES_PRODUCT_ID:
+        sid = (session_id or "").strip() or None
+        row = await _latest_generic(db, agent_id, SALES_PRODUCT_ID, sid)
+        if row is None:
+            return None
+        return _serialize_generic(row)
+    medical = await _latest_medical(db, agent_id)
+    if medical is None:
+        return None
+    return _serialize_care_envelope(medical)
+
+
 @router.post("/agent/{agent_id}/assessment/regenerate", response_model=None)
 async def regenerate(
     agent_id: str,
+    session_id: str | None = Query(default=None, alias="sessionId"),
     db: AsyncSession = Depends(get_db),
     _user: CurrentUser = Depends(require_root),
 ) -> dict[str, Any]:
-    """Synchronously recompute today's triage assessment for one agent and
-    return the freshly-inserted row. Root only. May be slow (~20-30s) if the
-    Ollama qwen2.5:7b model is cold.
+    """Recompute assessment for the agent's persisted profile. Root only.
 
-    Phase 1: Nexus Assessment Engine resolves the stored profile (unknown /
-    unimplemented → care_wellness) and calls the existing Care & Wellness
-    runner. Prompt, window, model, and persistence are unchanged.
+    Profile is never taken from the request body. Care & Wellness still
+    returns the medical serialize the existing UI expects. Sales returns
+    the generic envelope and uses the active/latest session (optional
+    ``sessionId`` must belong to this agent).
     """
-    row = await assess_agent(db, agent_id)
-    if row is None:
+    run = await assess_agent(db, agent_id, session_id=session_id)
+    if run is None:
         raise APIException(404, f"agent {agent_id} not found")
-    return _serialize(row)
+    if run.profile_id == SALES_PRODUCT_ID:
+        if run.generic is None:
+            raise APIException(404, "sales assessment could not be generated")
+        return _serialize_generic(run.generic)
+    if run.medical is None:
+        raise APIException(404, "assessment could not be generated")
+    return _serialize(run.medical)

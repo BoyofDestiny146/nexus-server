@@ -1,12 +1,13 @@
-"""Nexus Assessment Engine — profile registry and thin runner wrap.
+"""Nexus Assessment Engine — profile registry and runner wrap.
 
-Phase 1: Care & Wellness is the only implemented profile. Execution always
-delegates to :func:`careconnect_api.triage.runner.run_for_agent` without
-changing prompt, window, model, or persistence.
+Care & Wellness delegates to :func:`careconnect_api.triage.runner.run_for_agent`.
+Sales & Product Guide uses a separate session-scoped runner and
+``cc_assessment_result``.
 """
-from .engine import assess_agent
+from .engine import AssessmentRun, assess_agent
 from .profiles import (
     CARE_WELLNESS_ID,
+    SALES_PRODUCT_ID,
     AssessmentProfileDefinition,
     definition_for,
     list_assessment_profiles,
@@ -17,7 +18,9 @@ from .profiles import (
 
 __all__ = [
     "CARE_WELLNESS_ID",
+    "SALES_PRODUCT_ID",
     "AssessmentProfileDefinition",
+    "AssessmentRun",
     "assess_agent",
     "definition_for",
     "list_assessment_profiles",

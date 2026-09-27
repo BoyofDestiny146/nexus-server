@@ -107,6 +107,28 @@ export interface MedicalAssessment {
   generatedAt: string;
 }
 
+export type SalesInterestLevel = "low" | "medium" | "high";
+
+export interface SalesAssessmentPayload {
+  interestLevel: SalesInterestLevel;
+  productsDiscussed: string[];
+  customerNeeds: string[];
+  questions: string[];
+  objections: string[];
+  recommendedNextTopics: string[];
+  followUp: string[];
+  summary: string;
+}
+
+export interface GenericAssessmentEnvelope {
+  profileId: string;
+  sessionId?: string | null;
+  generatedAt: string | null;
+  sourceMsgCount: number;
+  llmModel?: string | null;
+  payload: SalesAssessmentPayload | Record<string, unknown>;
+}
+
 export interface AdminSummary {
   id: number;
   username: string;

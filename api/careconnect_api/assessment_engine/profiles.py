@@ -1,8 +1,8 @@
 """Assessment Profile registry — single source of truth for ids and names.
 
-Phase 1 registers four profiles. Only ``care_wellness`` is implemented and
-may be selected for execution. The other three appear in the dashboard
-dropdown as Coming soon and cannot become the active engine.
+Phase 2 registers four profiles. ``care_wellness`` and ``sales_product`` are
+implemented. The remaining two appear in the dashboard as Coming soon and
+cannot become the active engine.
 """
 from __future__ import annotations
 
@@ -40,8 +40,11 @@ ASSESSMENT_PROFILES: tuple[AssessmentProfileDefinition, ...] = (
     AssessmentProfileDefinition(
         id=SALES_PRODUCT_ID,
         displayName="Sales & Product Guide",
-        implemented=False,
-        description="Product and sales conversation assessment. Coming soon.",
+        implemented=True,
+        description=(
+            "Session-scoped sales and product-guide assessment: interest, "
+            "products discussed, needs, questions, objections, and follow-up."
+        ),
     ),
     AssessmentProfileDefinition(
         id=INFORMATION_KIOSK_ID,
@@ -106,7 +109,7 @@ def parse_selectable_profile_id(value: Any) -> str:
     """Validate a client-supplied id for persistence.
 
     Arbitrary strings are rejected. Unimplemented registry ids are rejected
-    so they cannot be stored as the active profile in Phase 1.
+    so they cannot be stored as the active profile.
     """
     if not isinstance(value, str) or not value.strip():
         raise APIException(400, "assessmentProfile is required")

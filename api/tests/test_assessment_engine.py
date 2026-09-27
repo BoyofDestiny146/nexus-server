@@ -81,7 +81,7 @@ def test_registry_exposes_all_four_profiles_only_care_wellness_implemented():
         "Information Kiosk",
         "Operations & Staff Assistant",
     ]
-    assert [p.implemented for p in profiles] == [True, False, False, False]
+    assert [p.implemented for p in profiles] == [True, True, False, False]
 
 
 def test_missing_empty_unknown_resolve_to_care_wellness():
@@ -90,7 +90,7 @@ def test_missing_empty_unknown_resolve_to_care_wellness():
     assert resolve_assessment_profile_id("   ") == CARE_WELLNESS_ID
     assert resolve_assessment_profile_id("not_a_profile") == CARE_WELLNESS_ID
     assert resolve_assessment_profile_id({"id": "sales_product"}) == CARE_WELLNESS_ID
-    assert resolve_assessment_profile_id("sales_product") == CARE_WELLNESS_ID
+    assert resolve_assessment_profile_id("sales_product") == "sales_product"
     assert resolve_assessment_profile_id("information_kiosk") == CARE_WELLNESS_ID
     assert resolve_assessment_profile_id("operations_staff") == CARE_WELLNESS_ID
     assert resolve_assessment_profile_id("care_wellness") == CARE_WELLNESS_ID
@@ -100,12 +100,13 @@ def test_unimplemented_profiles_cannot_be_persisted():
     with pytest.raises(APIException) as unknown:
         parse_selectable_profile_id("hacked_engine")
     assert unknown.value.code == 400
-    for pid in ("sales_product", "information_kiosk", "operations_staff"):
+    for pid in ("information_kiosk", "operations_staff"):
         with pytest.raises(APIException) as pending:
             parse_selectable_profile_id(pid)
         assert pending.value.code == 400
         assert "not available" in pending.value.msg
     assert parse_selectable_profile_id("care_wellness") == CARE_WELLNESS_ID
+    assert parse_selectable_profile_id("sales_product") == "sales_product"
 
 
 def test_unrelated_profile_json_fields_are_preserved_on_merge():
@@ -171,7 +172,7 @@ async def test_get_resolves_missing_and_unknown_without_migration(
         "information_kiosk",
         "operations_staff",
     ]
-    assert [p["implemented"] for p in data["profiles"]] == [True, False, False, False]
+    assert [p["implemented"] for p in data["profiles"]] == [True, True, False, False]
 
     agent = (await db_session.execute(select(AiAgent).where(AiAgent.id == agent_id))).scalar_one()
     stored = load_profile(agent.profile_json)
@@ -199,7 +200,7 @@ async def test_put_rejects_arbitrary_and_unimplemented_ids(
     client: AsyncClient, admin_token: str, db_session: AsyncSession
 ):
     agent_id = await _onboard(client, admin_token, "Cara")
-    for bad in ("hacked_profile", "sales_product", "information_kiosk", "operations_staff"):
+    for bad in ("hacked_profile", "information_kiosk", "operations_staff"):
         resp = await client.put(
             f"/api/agent/{agent_id}/assessment/profile",
             json={"assessmentProfile": bad},
@@ -212,7 +213,6 @@ async def test_put_rejects_arbitrary_and_unimplemented_ids(
     loaded = load_profile(agent.profile_json)
     assert loaded.get("assessmentProfile") not in {
         "hacked_profile",
-        "sales_product",
         "information_kiosk",
         "operations_staff",
     }
@@ -304,7 +304,9 @@ async def test_catalog_endpoint_lists_four_profiles(client: AsyncClient, admin_t
     assert len(profiles) == 4
     assert profiles[0]["id"] == "care_wellness"
     assert profiles[0]["implemented"] is True
-    assert all(not p["implemented"] for p in profiles[1:])
+    assert profiles[1]["id"] == "sales_product"
+    assert profiles[1]["implemented"] is True
+    assert all(not p["implemented"] for p in profiles[2:])
 
 
 @pytest.mark.asyncio
@@ -314,7 +316,7 @@ async def test_unimplemented_stored_profile_still_runs_care_wellness(
     agent_id = await _onboard(client, admin_token, "Faye")
     agent = (await db_session.execute(select(AiAgent).where(AiAgent.id == agent_id))).scalar_one()
     stored = load_profile(agent.profile_json)
-    stored["assessmentProfile"] = "sales_product"
+    stored["assessmentProfile"] = "information_kiosk"
     agent.profile_json = dump_profile(stored)
     await db_session.commit()
 
@@ -343,7 +345,10 @@ async def test_unimplemented_stored_profile_still_runs_care_wellness(
     row = await assess_agent(db_session, agent_id)
     assert called["agent_id"] == agent_id
     assert row is not None
-    assert row.risk_level == "low"
+    assert row.profile_id == CARE_WELLNESS_ID
+    assert row.medical is not None
+    assert row.medical.risk_level == "low"
+    assert row.generic is None
 
 
 @pytest.mark.asyncio
@@ -389,7 +394,8 @@ async def test_regenerate_uses_engine_then_existing_runner(
 
 def test_care_wellness_runner_source_is_unchanged():
     assert 'from ..triage.runner import run_for_agent' in ENGINE_SRC
-    assert "return await run_for_agent(db, agent_id, for_date)" in ENGINE_SRC
+    assert "await run_for_agent(db, agent_id, for_date)" in ENGINE_SRC
+    assert "run_sales_for_agent" in ENGINE_SRC
     assert '"num_predict": 300' in RUNNER_SRC
     assert '"temperature": 0.2' in RUNNER_SRC
     assert ".order_by(AiAgentChatHistory.id.asc())" in RUNNER_SRC

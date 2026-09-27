@@ -126,6 +126,11 @@ docker compose exec -T api wget -qO- \
 Apply `api/migrations/020_revel_player_map.sql` (and 021) with
 `deploy/scripts/apply-revel-player-map.sh` on existing databases. See Phase 2C.
 
+Apply `api/migrations/022_cc_assessment_result.sql` for the generic Nexus
+Assessment Engine table (`cc_assessment_result`). Additive only — it does
+not alter `ai_medical_assessment`. Verify with
+`api/migrations/022_cc_assessment_result.verify.sql`.
+
 ## Nexus Revel table binding + write path (Phase 2C)
 
 Live Data Table PUTs stay **off**. Only the API process env
@@ -181,6 +186,14 @@ docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
 docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
   'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
   < api/migrations/020_021_revel_player_map.verify.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/022_cc_assessment_result.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/022_cc_assessment_result.verify.sql
 ```
 
 ### Operator-selected test player (do not auto-bind)

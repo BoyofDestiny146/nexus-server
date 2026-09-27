@@ -4,6 +4,13 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { ASSESSMENT_PROFILES, dropdownLabel } from "./assessmentProfiles.ts";
+import {
+  asSalesPayload,
+  emptySalesPayload,
+  hasSalesSummary,
+  interestLevelLabel,
+  visibleSalesListSections,
+} from "./salesAssessment.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -21,6 +28,10 @@ const selector = readFileSync(
 );
 const care = readFileSync(
   join(here, "../components/assessment/CareWellnessPanel.tsx"),
+  "utf8",
+);
+const sales = readFileSync(
+  join(here, "../components/assessment/SalesProductPanel.tsx"),
   "utf8",
 );
 const comingSoon = readFileSync(
@@ -54,16 +65,21 @@ test("dropdown renders all four Assessment Profiles", () => {
     assert.ok(dropdownLabel(profile).includes(profile.displayName));
   }
   assert.ok(ASSESSMENT_PROFILES.some((p) => dropdownLabel(p).includes("Coming soon")));
+  assert.equal(dropdownLabel(ASSESSMENT_PROFILES[1]), "Sales & Product Guide");
 });
 
-test("right rail is Nexus Assessment Engine with selector then Care & Wellness", () => {
+test("right rail is Nexus Assessment Engine with selector then profile panel", () => {
   assert.match(detail, /AssessmentEngineRail/);
   assert.match(rail, /Nexus Assessment Engine/);
   assert.match(rail, /data-testid="nexus-assessment-engine-heading"/);
   assert.match(rail, /AssessmentProfileSelector/);
   assert.match(rail, /CareWellnessPanel/);
+  assert.match(rail, /SalesProductPanel/);
   assert.match(rail, /isCareWellnessPanel/);
+  assert.match(rail, /isSalesProductPanel/);
   assert.match(care, /data-testid="care-wellness-panel"/);
+  assert.match(sales, /data-testid="sales-product-panel"/);
+  assert.match(detail, /activeSession=\{activeSession\}/);
 });
 
 test("right panel still renders existing Care & Wellness data", () => {
@@ -78,12 +94,46 @@ test("right panel still renders existing Care & Wellness data", () => {
   assert.doesNotMatch(care, /Sparkline/);
 });
 
+test("sales panel hides empty sections and does not show medical widgets", () => {
+  assert.match(sales, /Current assessment/);
+  assert.match(sales, /Interest Level/);
+  assert.match(sales, /visibleSalesListSections/);
+  assert.match(sales, /hasSalesSummary/);
+  assert.match(sales, /Regenerate/);
+  assert.doesNotMatch(sales, /riskLevel/);
+  assert.doesNotMatch(sales, /ConfidenceRing/);
+  assert.doesNotMatch(sales, /14-day/);
+  assert.doesNotMatch(sales, /concerns/);
+  assert.doesNotMatch(sales, /recommendations/);
+  const empty = emptySalesPayload();
+  assert.deepEqual(visibleSalesListSections(empty), []);
+  assert.equal(hasSalesSummary(empty), false);
+  const filled = asSalesPayload({
+    interestLevel: "high",
+    productsDiscussed: ["Nexus Watcher"],
+    customerNeeds: [],
+    questions: [],
+    objections: [],
+    recommendedNextTopics: [],
+    followUp: [],
+    summary: "Asked about the Watcher.",
+  });
+  assert.ok(filled);
+  assert.deepEqual(
+    visibleSalesListSections(filled).map((s) => s.title),
+    ["Products Discussed"],
+  );
+  assert.equal(hasSalesSummary(filled), true);
+  assert.equal(interestLevelLabel("high"), "HIGH");
+});
+
 test("assessment history API remains for future longitudinal analysis", () => {
   const assessmentRouter = readFileSync(
     join(here, "../../api/careconnect_api/routers/assessment.py"),
     "utf8",
   );
   assert.match(assessmentRouter, /\/agent\/\{agent_id\}\/assessment\/history/);
+  assert.match(assessmentRouter, /\/agent\/\{agent_id\}\/assessment\/current/);
   assert.doesNotMatch(detail, /assessment\/history/);
   assert.doesNotMatch(rail, /Sparkline/);
 });
@@ -105,10 +155,9 @@ test("unimplemented profile panels do not invent assessment values", () => {
   assert.doesNotMatch(comingSoon, /riskLevel|confidence|concerns|recommendations/);
   assert.doesNotMatch(comingSoon, /low|moderate|elevated|urgent/);
   assert.match(panels, /care_wellness: "care_wellness"/);
-  assert.match(panels, /sales_product: "coming_soon"/);
+  assert.match(panels, /sales_product: "sales_product"/);
   assert.match(panels, /information_kiosk: "coming_soon"/);
   assert.match(panels, /operations_staff: "coming_soon"/);
-  assert.match(rail, /isCareWellnessPanel/);
   assert.match(rail, /ComingSoonPanel/);
 });
 
@@ -116,11 +165,12 @@ test("Regenerate still posts the Care & Wellness assessment endpoint", () => {
   assert.match(detail, /\/agent\/\$\{id\}\/assessment\/regenerate/);
   assert.match(care, /onRegenerate/);
   assert.match(rail, /onRegenerate=\{onRegenerate\}/);
+  assert.match(sales, /\/agent\/\$\{agentId\}\/assessment\/regenerate/);
 });
 
 test("Care & Wellness engine wrapper still calls the existing runner", () => {
   assert.match(engine, /from \.\.triage\.runner import run_for_agent/);
-  assert.match(engine, /return await run_for_agent\(db, agent_id, for_date\)/);
+  assert.match(engine, /await run_for_agent\(db, agent_id, for_date\)/);
   assert.match(runner, /"options": \{"num_predict": 300, "temperature": 0\.2\}/);
   assert.match(runner, /\.order_by\(AiAgentChatHistory\.id\.asc\(\)\)/);
   assert.match(runner, /\.limit\(settings\.triage_max_messages\)/);
@@ -132,10 +182,20 @@ test("nightly cron still calls run_for_all directly", () => {
   assert.match(scheduler, /id="daily_triage"/);
   assert.doesNotMatch(scheduler, /assess_agent/);
   assert.doesNotMatch(scheduler, /assessment_engine/);
+  assert.doesNotMatch(scheduler, /run_sales_for_agent/);
 });
 
 test("no Revel execution behavior is introduced by the assessment engine", () => {
   assert.doesNotMatch(engine, /revel_write|update_data_table_row|sendDeviceCommand/);
   assert.doesNotMatch(runner, /revel_write|update_data_table_row|sendDeviceCommand/);
   assert.match(envExample, /^REVEL_EXECUTE_ENABLED=false$/m);
+});
+
+test("switching back to Care restores Care panel without reading sales payload", () => {
+  assert.match(rail, /showCareWellness \? \(/);
+  assert.match(rail, /CareWellnessPanel/);
+  assert.match(rail, /latest=\{latest\}/);
+  assert.doesNotMatch(care, /interestLevel/);
+  assert.doesNotMatch(care, /cc_assessment_result/);
+  assert.match(sales, /profileId === SALES_PRODUCT_ID/);
 });

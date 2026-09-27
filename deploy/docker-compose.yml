@@ -122,6 +122,8 @@ services:
       CC_ADMIN2_PASSWORD: "${CC_ADMIN2_PASSWORD}"
       CC_OLLAMA_URL: "${CC_OLLAMA_URL:-http://host-gateway:11434}"
       CC_OLLAMA_TRIAGE_MODEL: "${CC_OLLAMA_TRIAGE_MODEL:-cc-llm}"
+      # Sales & Product Guide. Empty reuses CC_OLLAMA_TRIAGE_MODEL. Does not change Care.
+      CC_OLLAMA_SALES_MODEL: "${CC_OLLAMA_SALES_MODEL:-}"
       # Conversational model name for System Status (xiaozhi-server uses the
       # same value). Does not change triage; that stays on CC_OLLAMA_TRIAGE_MODEL.
       CC_LLM_MODEL: "${CC_LLM_MODEL:-qwen2.5:3b}"

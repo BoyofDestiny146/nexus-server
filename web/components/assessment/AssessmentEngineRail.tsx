@@ -15,11 +15,12 @@ import {
   resolveAssessmentProfile,
   resolveAssessmentProfileId,
 } from "@/lib/assessmentProfiles";
-import { isCareWellnessPanel } from "@/lib/assessmentPanels";
+import { isCareWellnessPanel, isSalesProductPanel } from "@/lib/assessmentPanels";
 import { PATIENT_DETAIL_RIGHT } from "@/lib/patientDetailLayout";
 import { AssessmentProfileSelector } from "@/components/assessment/AssessmentProfileSelector";
 import { CareWellnessPanel } from "@/components/assessment/CareWellnessPanel";
 import { ComingSoonPanel } from "@/components/assessment/ComingSoonPanel";
+import { SalesProductPanel } from "@/components/assessment/SalesProductPanel";
 
 export function AssessmentEngineRail({
   agentId,
@@ -29,6 +30,7 @@ export function AssessmentEngineRail({
   regenBusy,
   onRegenerate,
   liveHighlight,
+  activeSession,
 }: {
   agentId: string;
   initialProfile?: AssessmentProfileDefinition | null;
@@ -37,6 +39,7 @@ export function AssessmentEngineRail({
   regenBusy: boolean;
   onRegenerate: () => void;
   liveHighlight: boolean;
+  activeSession: string | null;
 }) {
   const [profiles, setProfiles] = useState<readonly AssessmentProfileDefinition[]>(
     ASSESSMENT_PROFILES,
@@ -89,6 +92,7 @@ export function AssessmentEngineRail({
 
   const active = resolveAssessmentProfile(activeId);
   const showCareWellness = isCareWellnessPanel(activeId);
+  const showSales = isSalesProductPanel(activeId);
 
   return (
     <aside
@@ -117,6 +121,12 @@ export function AssessmentEngineRail({
             isRoot={isRoot}
             regenBusy={regenBusy}
             onRegenerate={onRegenerate}
+          />
+        ) : showSales ? (
+          <SalesProductPanel
+            agentId={agentId}
+            sessionId={activeSession}
+            isRoot={isRoot}
           />
         ) : (
           <ComingSoonPanel profile={active} />
