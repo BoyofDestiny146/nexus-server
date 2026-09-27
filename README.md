@@ -137,6 +137,12 @@ library (`cc_agent_personality`). Clients store a `personalityId` on
 Existing free-text `personaOverride` is kept in profile JSON and shown as
 “Legacy custom persona” until an operator picks a library personality. It
 is not deleted. Verify with `api/migrations/023_cc_agent_personality.verify.sql`.
+Existing deployments that already created the table should also apply
+`api/migrations/025_cc_agent_personality_source_text.sql`, which UPDATEs the
+nine canonical `is_system=1` rows to Ted’s source templates without touching
+custom duplicates or recreating the table. API boot seed upserts the same
+system rows. Verify with
+`api/migrations/025_cc_agent_personality_source_text.verify.sql`.
 
 Apply `api/migrations/024_cc_organization.sql` for customer/facility grouping
 (`cc_organization` plus nullable `ai_agent.organization_id`). Existing

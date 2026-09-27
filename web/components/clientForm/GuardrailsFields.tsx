@@ -54,7 +54,7 @@ export function GuardrailsFields({
   return (
     <div className="space-y-7">
       <div>
-        <label htmlFor="client-personality" className="label">Agent Personality</label>
+        <label htmlFor="client-personality" className="label">Agent Personality Selection</label>
         <select
           id="client-personality"
           className="input"

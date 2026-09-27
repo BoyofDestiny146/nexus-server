@@ -20,7 +20,8 @@ test("Edit Client wizard headings are clickable and Generate with AI is gone", (
   assert.doesNotMatch(wizard, /i <= current/);
   assert.doesNotMatch(guard, /Generate with AI/);
   assert.doesNotMatch(guard, /Let the model propose/);
-  assert.match(guard, /Agent Personality/);
+  assert.match(guard, /Agent Personality Selection/);
   assert.doesNotMatch(guard, /Persona override/);
+  assert.doesNotMatch(guard, /Persona Override/);
   assert.match(edit, /apiGet<AgentDetail>\(`\/agent\/\$\{agentId\}`\)/);
 });
