@@ -379,12 +379,19 @@ function PatientDetailView({ id }: { id: string }) {
     return () => window.clearInterval(t);
   }, [id]);
 
-  // Apply live assessment.updated frames
+  // assessment.updated is a slim envelope — refetch latest so the rail
+  // does not render WS payload as a MedicalAssessment (and so manual
+  // regenerate HTTP state is not double-applied from a second copy).
   useEffect(() => {
-    if (live.liveAssessment) {
-      setLatest(live.liveAssessment);
-    }
-  }, [live.assessmentTick, live.liveAssessment]);
+    if (live.assessmentTick <= 0 || regenBusy) return;
+    let cancelled = false;
+    apiGet<MedicalAssessment | null>(`/agent/${id}/assessment/latest`)
+      .then((next) => {
+        if (!cancelled && next) setLatest(next);
+      })
+      .catch(() => { /* ignore */ });
+    return () => { cancelled = true; };
+  }, [id, live.assessmentTick, regenBusy]);
 
   // Auto-scroll on new messages
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -657,6 +664,7 @@ function PatientDetailView({ id }: { id: string }) {
           regenBusy={regenBusy}
           onRegenerate={regenerate}
           liveHighlight={live.assessmentTick > 0}
+          assessmentTick={live.assessmentTick}
           activeSession={activeSession}
         />
       </section>

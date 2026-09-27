@@ -223,12 +223,13 @@ def test_sales_runner_does_not_change_revel_writes():
 
 
 def test_sales_is_not_on_nightly_cron():
-    assert "from .triage.runner import run_for_all" in SCHEDULER_SRC
+    assert "tick_due_assessments" in SCHEDULER_SRC
     assert "run_sales_for_agent" not in SCHEDULER_SRC
     assert "assess_agent" not in SCHEDULER_SRC
     assert "assessment_engine" not in SCHEDULER_SRC
     assert "sales_product" not in SCHEDULER_SRC
     assert "cc_assessment_result" not in SCHEDULER_SRC
+    assert 'id="daily_triage"' not in SCHEDULER_SRC
 
 
 def test_migration_is_additive_only():
@@ -709,6 +710,7 @@ async def test_current_endpoint_is_profile_aware_and_first_sales_may_be_empty(
 def test_engine_dispatches_sales_without_rewriting_care_runner():
     assert "from ..triage.runner import run_for_agent" in ENGINE_SRC
     assert "await run_for_agent(db, agent_id, for_date)" in ENGINE_SRC
+    assert "await run_for_agent(db, agent_id, for_date," not in ENGINE_SRC
     assert "run_sales_for_agent" in ENGINE_SRC
     assert 'TriageResult("low", 0.0, [], [])' in RUNNER_SRC
     assert '"num_predict": 300' in RUNNER_SRC

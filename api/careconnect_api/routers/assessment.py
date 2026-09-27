@@ -41,7 +41,8 @@ from ..assessment_engine.profiles import (
     parse_selectable_profile_id,
 )
 from ..assessment_engine.sales_schema import sanitize_sales_payload
-from ..assessment_engine.storage import apply_assessment_profile, profile_payload, resolved_definition
+from ..assessment_engine.storage import apply_assessment_profile, apply_assessment_schedule, profile_payload, resolved_definition
+from ..assessment_engine.schedule import parse_schedule_put, schedule_view
 from ..auth import CurrentUser, get_current_user, require_root
 from ..db import get_db
 from ..envelope import APIException
@@ -52,8 +53,16 @@ from ..rbac import assert_can_access_agent
 router = APIRouter(tags=["assessment"])
 
 
+class AssessmentSchedulePut(BaseModel):
+    enabled: bool | None = None
+    mode: str | None = None
+    intervalMinutes: int | None = None
+    onlyIfNewData: bool | None = None
+
+
 class AssessmentProfilePut(BaseModel):
-    assessmentProfile: str
+    assessmentProfile: str | None = None
+    assessmentSchedule: AssessmentSchedulePut | None = None
 
 
 def _serialize(row: AiMedicalAssessment) -> dict[str, Any]:
@@ -79,6 +88,9 @@ def _serialize(row: AiMedicalAssessment) -> dict[str, Any]:
         "sourceMsgCount": row.source_msg_count,
         "llmModel": row.llm_model,
         "generatedAt": row.generated_at,
+        "triggerType": row.trigger_type,
+        "triggerMessageId": row.trigger_message_id,
+        "scheduledDueAt": row.scheduled_due_at,
     }
 
 
@@ -215,7 +227,9 @@ async def get_assessment_profile(
     agent = await db.get(AiAgent, agent_id)
     if agent is None:
         raise APIException(404, f"agent {agent_id} not found")
-    return profile_payload(agent.profile_json)
+    payload = profile_payload(agent.profile_json)
+    payload.update(await schedule_view(db, agent))
+    return payload
 
 
 @router.put("/agent/{agent_id}/assessment/profile", response_model=None)
@@ -228,14 +242,26 @@ async def put_assessment_profile(
     """Persist an Assessment Profile selection. Only implemented registry ids
     are accepted — the frontend cannot store arbitrary or Coming-soon ids."""
     await assert_can_access_agent(db, user, agent_id)
-    profile_id = parse_selectable_profile_id(payload.assessmentProfile)
+    if payload.assessmentProfile is None and payload.assessmentSchedule is None:
+        raise APIException(400, "assessmentProfile or assessmentSchedule is required")
     agent = await db.get(AiAgent, agent_id)
     if agent is None:
         raise APIException(404, f"agent {agent_id} not found")
-    apply_assessment_profile(agent, profile_id)
+    if payload.assessmentProfile is not None:
+        profile_id = parse_selectable_profile_id(payload.assessmentProfile)
+        apply_assessment_profile(agent, profile_id)
+    if payload.assessmentSchedule is not None:
+        profile_id = resolved_definition(agent.profile_json).id
+        schedule = parse_schedule_put(
+            payload.assessmentSchedule.model_dump(exclude_none=True),
+            profile_id=profile_id,
+        )
+        apply_assessment_schedule(agent, schedule)
     await db.commit()
     await db.refresh(agent)
-    return profile_payload(agent.profile_json)
+    out = profile_payload(agent.profile_json)
+    out.update(await schedule_view(db, agent))
+    return out
 
 
 @router.get("/agent/{agent_id}/assessment/current", response_model=None)

@@ -131,6 +131,14 @@ Assessment Engine table (`cc_assessment_result`). Additive only — it does
 not alter `ai_medical_assessment`. Verify with
 `api/migrations/022_cc_assessment_result.verify.sql`.
 
+Apply `api/migrations/026_assessment_trigger_metadata.sql` to add nullable
+`trigger_type`, `trigger_message_id`, and `scheduled_due_at` on
+`ai_medical_assessment`. Existing rows stay intact. Per-client schedule
+config lives on `ai_agent.profile_json.assessmentSchedule` (no column).
+Care & Wellness defaults to every 24 hours with `onlyIfNewData=true`;
+Sales stays manual. Verify with
+`api/migrations/026_assessment_trigger_metadata.verify.sql`.
+
 Apply `api/migrations/023_cc_agent_personality.sql` for the Agent Personality
 library (`cc_agent_personality`). Clients store a `personalityId` on
 `ai_agent.profile_json`; canonical prompt text lives in the library.
@@ -223,6 +231,14 @@ docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
 docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
   'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
   < api/migrations/023_cc_agent_personality.verify.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/026_assessment_trigger_metadata.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/026_assessment_trigger_metadata.verify.sql
 
 docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
   'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \

@@ -23,10 +23,12 @@ export function SalesProductPanel({
   agentId,
   sessionId,
   isRoot,
+  assessmentTick = 0,
 }: {
   agentId: string;
   sessionId: string | null;
   isRoot: boolean;
+  assessmentTick?: number;
 }) {
   const [current, setCurrent] = useState<GenericAssessmentEnvelope | null>(null);
   const [payload, setPayload] = useState<SalesAssessmentPayload | null>(null);
@@ -37,7 +39,7 @@ export function SalesProductPanel({
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      setLoading(true);
+      if (assessmentTick === 0) setLoading(true);
       setError(null);
       const q = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
       try {
@@ -63,7 +65,7 @@ export function SalesProductPanel({
     }
     load();
     return () => { cancelled = true; };
-  }, [agentId, sessionId]);
+  }, [agentId, sessionId, assessmentTick]);
 
   async function regenerate() {
     if (regenBusy || !isRoot) return;

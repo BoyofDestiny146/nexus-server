@@ -81,7 +81,9 @@ class Settings(BaseSettings):
     health_probe_timeout_s: float = 3.0
     health_total_timeout_s: float = 5.0
 
-    # Triage scheduler
+    # Assessment due-check (replaces the global 02:00 Care cron).
+    assessment_due_check_seconds: int = 300
+    # Kept for compatibility; the due-check job no longer uses these.
     triage_cron_hour: int = 2
     triage_cron_minute: int = 0
     triage_history_window_hours: int = 24

@@ -92,9 +92,22 @@ export interface AssessmentProfileDefinition {
   description: string;
 }
 
+export type AssessmentScheduleMode = "manual" | "interval";
+
+export interface AssessmentSchedule {
+  enabled: boolean;
+  mode: AssessmentScheduleMode;
+  intervalMinutes: number | null;
+  onlyIfNewData: boolean;
+}
+
 export interface AssessmentProfileState {
   assessmentProfile: AssessmentProfileDefinition;
   profiles: AssessmentProfileDefinition[];
+  assessmentSchedule?: AssessmentSchedule;
+  scheduleSupported?: boolean;
+  lastAssessmentAt?: string | null;
+  nextAssessmentAt?: string | null;
 }
 
 export type PersonalityCategory = "system" | "sales" | "care" | "custom";
@@ -156,6 +169,9 @@ export interface MedicalAssessment {
   sourceMsgCount: number;
   llmModel: string;
   generatedAt: string;
+  triggerType?: string | null;
+  triggerMessageId?: number | null;
+  scheduledDueAt?: string | null;
 }
 
 export type SalesInterestLevel = "low" | "medium" | "high";
@@ -210,10 +226,16 @@ export interface OnboardRequest {
   firmwareType?: FirmwareType | null;
 }
 
+export interface AssessmentUpdatedPayload {
+  agentId: string;
+  profileId: string;
+  generatedAt: string | null;
+}
+
 export type WsFrame =
   | { type: "hello"; payload: { agentId: string; serverTs: number; channels?: string[] } }
   | { type: "chat.turn"; payload: ChatMessage & { agentId: string; sessionId: string } }
-  | { type: "assessment.updated"; payload: MedicalAssessment };
+  | { type: "assessment.updated"; payload: AssessmentUpdatedPayload };
 
 // ── Voice selector types ──────────────────────────────────────────────────────
 

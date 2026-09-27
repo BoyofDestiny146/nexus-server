@@ -73,6 +73,7 @@ test("right rail is Nexus Assessment Engine with selector then profile panel", (
   assert.match(rail, /Nexus Assessment Engine/);
   assert.match(rail, /data-testid="nexus-assessment-engine-heading"/);
   assert.match(rail, /AssessmentProfileSelector/);
+  assert.match(rail, /AssessmentScheduleControls/);
   assert.match(rail, /CareWellnessPanel/);
   assert.match(rail, /SalesProductPanel/);
   assert.match(rail, /isCareWellnessPanel/);
@@ -161,6 +162,30 @@ test("unimplemented profile panels do not invent assessment values", () => {
   assert.match(rail, /ComingSoonPanel/);
 });
 
+test("assessment schedule controls sit under the profile selector", () => {
+  const controls = readFileSync(
+    join(here, "../components/assessment/AssessmentScheduleControls.tsx"),
+    "utf8",
+  );
+  const scheduleLib = readFileSync(join(here, "./assessmentSchedule.ts"), "utf8");
+  assert.match(rail, /AssessmentScheduleControls/);
+  assert.match(controls, /Assessment Schedule/);
+  assert.match(controls, /Only assess when new data exists/);
+  assert.match(controls, /Last Assessment/);
+  assert.match(controls, /Next Assessment/);
+  assert.match(controls, /MANUAL_SCHEDULE_LABEL/);
+  assert.match(controls, /\? "Manual"/);
+  assert.match(controls, /ASSESSMENT_INTERVAL_CHOICES/);
+  assert.match(scheduleLib, /Every 24 hours/);
+  assert.match(scheduleLib, /Manual only/);
+  assert.match(detail, /assessment\/latest/);
+  assert.match(detail, /live\.assessmentTick/);
+  assert.match(detail, /assessmentTick=\{live\.assessmentTick\}/);
+  assert.match(rail, /assessmentTick=\{assessmentTick\}/);
+  assert.match(sales, /assessmentTick/);
+  assert.match(sales, /\/agent\/\$\{agentId\}\/assessment\/current/);
+});
+
 test("Regenerate still posts the Care & Wellness assessment endpoint", () => {
   assert.match(detail, /\/agent\/\$\{id\}\/assessment\/regenerate/);
   assert.match(care, /onRegenerate/);
@@ -177,12 +202,13 @@ test("Care & Wellness engine wrapper still calls the existing runner", () => {
   assert.match(runner, /TriageResult\("low", 0\.0, \[\], \[\]\)/);
 });
 
-test("nightly cron still calls run_for_all directly", () => {
-  assert.match(scheduler, /from \.triage\.runner import run_for_all/);
-  assert.match(scheduler, /id="daily_triage"/);
-  assert.doesNotMatch(scheduler, /assess_agent/);
-  assert.doesNotMatch(scheduler, /assessment_engine/);
+test("due-check scheduler replaces global Care cron and keeps Sales off it", () => {
+  assert.match(scheduler, /tick_due_assessments/);
+  assert.match(scheduler, /id="assessment_due_check"/);
+  assert.doesNotMatch(scheduler, /id="daily_triage"/);
+  assert.doesNotMatch(scheduler, /from \.triage\.runner import run_for_all/);
   assert.doesNotMatch(scheduler, /run_sales_for_agent/);
+  assert.doesNotMatch(scheduler, /assess_agent/);
 });
 
 test("no Revel execution behavior is introduced by the assessment engine", () => {

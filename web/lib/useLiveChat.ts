@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { apiGet, wsUrl } from "./api";
-import type { ChatMessage, ChatSession, MedicalAssessment, WsFrame } from "./types";
+import type { ChatMessage, ChatSession, WsFrame } from "./types";
 
 export type LiveChatStatus = "connecting" | "live" | "polling" | "disconnected";
 
@@ -14,8 +14,8 @@ export interface LiveChatState {
   /** Messages received since the hook mounted, oldest-first.
    *  Includes both WS-delivered frames AND new rows discovered via REST polling. */
   newMessages: (ChatMessage & { agentId: string; sessionId: string })[];
-  /** Most recent assessment frame received over the wire (or null). */
-  liveAssessment: MedicalAssessment | null;
+  /** Most recent assessment.updated envelope (slim; caller refetches latest). */
+  liveAssessment: { agentId: string; profileId: string; generatedAt: string | null } | null;
   /** A monotonic counter that bumps on every assessment update — useful for
    *  triggering a flash animation in the right-hand panel. */
   assessmentTick: number;
@@ -41,7 +41,7 @@ export function useLiveChat(agentId: string | null | undefined): LiveChatState {
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<LiveChatStatus>("connecting");
   const [newMessages, setNewMessages] = useState<LiveChatState["newMessages"]>([]);
-  const [liveAssessment, setLiveAssessment] = useState<MedicalAssessment | null>(null);
+  const [liveAssessment, setLiveAssessment] = useState<LiveChatState["liveAssessment"]>(null);
   const [assessmentTick, setAssessmentTick] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);

@@ -2,7 +2,8 @@
 
 Currently runs:
 
-* daily medical-risk triage at ``settings.triage_cron_*`` (default 02:00)
+* per-client Care & Wellness due-check every ``settings.assessment_due_check_seconds``
+  (default 300s). Sales is not on this job.
 * Google Calendar read-only reminder poll every ``settings.gcal_poll_seconds``
   (default 60s)
 
@@ -10,19 +11,19 @@ Hooked into the FastAPI lifespan in :mod:`careconnect_api.main`:
 :func:`start_scheduler` runs before ``yield``; :func:`stop_scheduler` runs
 after. Single-process only — if we ever scale to multiple uvicorn workers
 this needs to move to a leader-elected sidecar (or APScheduler's
-SQLAlchemyJobStore with ``coalesce``+``max_instances=1``).
+SQLAlchemyJobStore with ``coalesce``+``max_instances=1``). Redis + in-process
+locks additionally prevent double-runs of the same client.
 """
 from __future__ import annotations
 
 import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from .assessment_scheduler import tick_due_assessments
 from .calendar_poller import poll_google_calendars
 from .settings import settings
-from .triage.runner import run_for_all
 
 
 log = logging.getLogger("scheduler")
@@ -33,12 +34,12 @@ scheduler = AsyncIOScheduler()
 def start_scheduler() -> None:
     """Register jobs and start the scheduler."""
     scheduler.add_job(
-        run_for_all,
-        CronTrigger(hour=settings.triage_cron_hour, minute=settings.triage_cron_minute),
-        id="daily_triage",
+        tick_due_assessments,
+        IntervalTrigger(seconds=max(60, int(settings.assessment_due_check_seconds))),
+        id="assessment_due_check",
         max_instances=1,
         coalesce=True,
-        misfire_grace_time=3600,
+        misfire_grace_time=55,
         replace_existing=True,
     )
     scheduler.add_job(
@@ -52,9 +53,8 @@ def start_scheduler() -> None:
     )
     scheduler.start()
     log.info(
-        "scheduler started (daily_triage at %02d:%02d, google_calendar_poll every %ss)",
-        settings.triage_cron_hour,
-        settings.triage_cron_minute,
+        "scheduler started (assessment_due_check every %ss, google_calendar_poll every %ss)",
+        settings.assessment_due_check_seconds,
         settings.gcal_poll_seconds,
     )
 

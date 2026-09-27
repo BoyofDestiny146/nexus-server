@@ -41,6 +41,7 @@ os.environ.setdefault(
 )
 # Do not run the 60s calendar poller during tests if FastAPI lifespan starts.
 os.environ.setdefault("CC_GCAL_POLL_SECONDS", "86400")
+os.environ.setdefault("CC_ASSESSMENT_DUE_CHECK_SECONDS", "86400")
 # Phase 1 Revel discovery: point at a missing file so unit tests never
 # accidentally call live Revel. Live tests read REVEL_API_KEY_FILE if set.
 os.environ.setdefault("REVEL_API_KEY_FILE", str(Path(_TMP_CFG) / "revel-api-key-absent"))

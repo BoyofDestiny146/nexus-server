@@ -15,8 +15,9 @@ Endpoints
 * ``POST /api/internal/notify/chat-turn`` — bridge → API hand-off after each
   ``ai_agent_chat_history`` insert. Validates the token, normalizes the
   payload, publishes onto the agent's Redis chat channel. Fire-and-forget
-  from the bridge's POV (it uses a 500ms timeout), so we keep the work here
-  trivial — no DB writes, no LLM calls.
+  from the bridge's POV (it uses a 500ms timeout). Chat publish stays
+  synchronous; escalation-triggered assessment is queued on the event loop
+  and never blocks this response.
 * ``GET /api/internal/revel/devices`` — Nexus-system Revel discovery
   (read-only GraphQL device list). Requires ``X-Internal-Token``. Does not
   accept GraphQL from the caller and does not write to Revel.
@@ -44,6 +45,7 @@ from ..envelope import APIException
 from ..knowledge_retrieval import device_knowledge_search
 from ..knowledge_revel import evaluate_knowledge_revel
 from ..pubsub import publish_chat_turn
+from ..assessment_escalation import maybe_queue_escalation_assessment
 from ..revel_command import evaluate_voice_command
 from ..revel_datatables import get_data_table, list_data_tables
 from ..revel_display import apply_display_state
@@ -125,6 +127,18 @@ async def notify_chat_turn(payload: ChatTurnNotify) -> dict[str, Any]:
         # bridge's warning log captures the failure.
         log.exception("publish_chat_turn failed for agent=%s", payload.agentId)
         raise APIException(500, f"publish failed: {exc}") from exc
+
+    # Escalation-triggered Care assessment is fire-and-forget. The bridge has
+    # a 500ms timeout; we must not await the LLM here.
+    try:
+        maybe_queue_escalation_assessment(
+            agent_id=payload.agentId,
+            chat_type=payload.chatType,
+            content=content,
+            message_id=payload.id,
+        )
+    except Exception:
+        log.warning("escalation queue raised agent=%s", payload.agentId)
 
     log.info(
         "notify chat-turn agent=%s session=%s type=%d subs=%d len=%d",

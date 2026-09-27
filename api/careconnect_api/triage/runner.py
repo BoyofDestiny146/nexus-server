@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..chat_events import (
@@ -214,12 +214,25 @@ async def _invoke_llm(dialogue: str) -> TriageResult:
     return _parse_llm_json(str(content))
 
 
+async def _sqlite_next_assessment_id(db: AsyncSession) -> int | None:
+    """SQLite BigInteger PKs are NOT NULL without AUTOINCREMENT; MariaDB is fine."""
+    conn = await db.connection()
+    if conn.dialect.name != "sqlite":
+        return None
+    nxt = (await db.execute(select(func.max(AiMedicalAssessment.id)))).scalar()
+    return int(nxt or 0) + 1
+
+
 # ---------- public entry points ----------
 
 async def run_for_agent(
     db: AsyncSession,
     agent_id: str,
     for_date: date | None = None,
+    *,
+    trigger_type: str | None = None,
+    trigger_message_id: int | None = None,
+    scheduled_due_at: datetime | None = None,
 ) -> AiMedicalAssessment | None:
     """Compute and persist one assessment row for the given agent.
 
@@ -299,17 +312,24 @@ async def run_for_agent(
             agent_id, result.risk_level, result.confidence, source_count,
         )
 
-    row = AiMedicalAssessment(
-        agent_id=agent_id,
-        for_date=for_date,
-        risk_level=result.risk_level,
-        confidence=Decimal(f"{result.confidence:.3f}"),
-        concerns_json=json.dumps(result.concerns, ensure_ascii=False),
-        recommendations_json=json.dumps(result.recommendations, ensure_ascii=False),
-        source_msg_count=source_count,
-        llm_model=settings.ollama_triage_model,
-        generated_at=datetime.now(),
-    )
+    fields: dict[str, Any] = {
+        "agent_id": agent_id,
+        "for_date": for_date,
+        "risk_level": result.risk_level,
+        "confidence": Decimal(f"{result.confidence:.3f}"),
+        "concerns_json": json.dumps(result.concerns, ensure_ascii=False),
+        "recommendations_json": json.dumps(result.recommendations, ensure_ascii=False),
+        "source_msg_count": source_count,
+        "llm_model": settings.ollama_triage_model,
+        "generated_at": datetime.now(),
+        "trigger_type": trigger_type,
+        "trigger_message_id": trigger_message_id,
+        "scheduled_due_at": scheduled_due_at,
+    }
+    sqlite_id = await _sqlite_next_assessment_id(db)
+    if sqlite_id is not None:
+        fields["id"] = sqlite_id
+    row = AiMedicalAssessment(**fields)
     db.add(row)
     await db.commit()
     await db.refresh(row)
@@ -319,6 +339,17 @@ async def run_for_agent(
         await push_assessment_best_effort(db, agent_id, row)
     except Exception:
         log.warning("careconnect push raised after persist")
+    try:
+        from ..assessment_engine.notify import publish_assessment_run
+        from ..assessment_engine.profiles import CARE_WELLNESS_ID
+
+        await publish_assessment_run(
+            agent_id,
+            profile_id=CARE_WELLNESS_ID,
+            generated_at=row.generated_at,
+        )
+    except Exception:
+        log.warning("assessment.updated publish raised after persist")
     return row
 
 

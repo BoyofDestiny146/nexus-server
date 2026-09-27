@@ -105,8 +105,13 @@ class AiDevice(Base):
 
 class AiAgentChatHistory(Base):
     __tablename__ = "ai_agent_chat_history"
+    __table_args__ = ({"sqlite_autoincrement": True},)
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
     mac_address: Mapped[str | None] = mapped_column(String(50))
     agent_id: Mapped[str | None] = mapped_column(String(32))
     session_id: Mapped[str | None] = mapped_column(String(50))
@@ -123,8 +128,13 @@ class AiAgentChatHistory(Base):
 
 class AiMedicalAssessment(Base):
     __tablename__ = "ai_medical_assessment"
+    __table_args__ = ({"sqlite_autoincrement": True},)
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
     agent_id: Mapped[str] = mapped_column(String(32), index=True)
     for_date: Mapped[Date] = mapped_column(Date, index=True)
     risk_level: Mapped[str] = mapped_column(String(16))  # low / moderate / elevated / urgent
@@ -134,6 +144,9 @@ class AiMedicalAssessment(Base):
     source_msg_count: Mapped[int | None] = mapped_column(Integer)
     llm_model: Mapped[str | None] = mapped_column(String(64))
     generated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    trigger_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    trigger_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    scheduled_due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class CcAssessmentResult(Base):

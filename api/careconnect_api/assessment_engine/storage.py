@@ -43,3 +43,10 @@ def apply_assessment_profile(agent: AiAgent, profile_id: str) -> None:
     existing = load_profile(agent.profile_json)
     merged = merge_profile(existing, {PROFILE_JSON_KEY: profile_id})
     agent.profile_json = dump_profile(merged)
+
+
+def apply_assessment_schedule(agent: AiAgent, schedule: dict[str, Any]) -> None:
+    """Set ``assessmentSchedule`` on profile_json; leave every other key intact."""
+    existing = load_profile(agent.profile_json)
+    merged = merge_profile(existing, {"assessmentSchedule": dict(schedule)})
+    agent.profile_json = dump_profile(merged)

@@ -124,6 +124,8 @@ services:
       CC_OLLAMA_TRIAGE_MODEL: "${CC_OLLAMA_TRIAGE_MODEL:-cc-llm}"
       # Sales & Product Guide. Empty reuses CC_OLLAMA_TRIAGE_MODEL. Does not change Care.
       CC_OLLAMA_SALES_MODEL: "${CC_OLLAMA_SALES_MODEL:-}"
+      # Per-client Care & Wellness due-check (replaces the global 02:00 cron).
+      CC_ASSESSMENT_DUE_CHECK_SECONDS: "${CC_ASSESSMENT_DUE_CHECK_SECONDS:-300}"
       # Conversational model name for System Status (xiaozhi-server uses the
       # same value). Does not change triage; that stays on CC_OLLAMA_TRIAGE_MODEL.
       CC_LLM_MODEL: "${CC_LLM_MODEL:-qwen2.5:3b}"

@@ -188,6 +188,16 @@ async def run_sales_for_agent(
     db.add(row)
     await db.commit()
     await db.refresh(row)
+    try:
+        from .notify import publish_assessment_run
+
+        await publish_assessment_run(
+            agent_id,
+            profile_id=SALES_PRODUCT_ID,
+            generated_at=row.generated_at,
+        )
+    except Exception:
+        log.warning("sales assessment.updated publish raised after persist")
     log.info(
         "sales assessment: agent=%s session=%s interest=%s source_count=%d",
         agent_id,

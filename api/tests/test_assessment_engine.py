@@ -395,6 +395,7 @@ async def test_regenerate_uses_engine_then_existing_runner(
 def test_care_wellness_runner_source_is_unchanged():
     assert 'from ..triage.runner import run_for_agent' in ENGINE_SRC
     assert "await run_for_agent(db, agent_id, for_date)" in ENGINE_SRC
+    assert "await run_for_agent(db, agent_id, for_date," not in ENGINE_SRC
     assert "run_sales_for_agent" in ENGINE_SRC
     assert '"num_predict": 300' in RUNNER_SRC
     assert '"temperature": 0.2' in RUNNER_SRC
@@ -405,16 +406,19 @@ def test_care_wellness_runner_source_is_unchanged():
     assert "revel_status_for_agent" in RUNNER_SRC
     assert "compose_assessment_dialogue" in RUNNER_SRC
     assert "push_assessment_best_effort" in RUNNER_SRC
-    assert "publish_assessment_updated" not in RUNNER_SRC
+    assert "publish_assessment_run" in RUNNER_SRC
+    assert "trigger_type" in RUNNER_SRC
     assert "risk_level" in PROMPT_SRC
 
 
-def test_nightly_cron_still_calls_run_for_all_directly():
-    assert "from .triage.runner import run_for_all" in SCHEDULER_SRC
-    assert 'id="daily_triage"' in SCHEDULER_SRC
+def test_due_check_scheduler_replaces_global_daily_triage():
+    assert "tick_due_assessments" in SCHEDULER_SRC
+    assert 'id="assessment_due_check"' in SCHEDULER_SRC
     assert "assess_agent" not in SCHEDULER_SRC
-    assert "assessment_engine" not in SCHEDULER_SRC
-    assert "CronTrigger(hour=settings.triage_cron_hour, minute=settings.triage_cron_minute)" in SCHEDULER_SRC
+    assert "run_sales_for_agent" not in SCHEDULER_SRC
+    assert "sales_product" not in SCHEDULER_SRC
+    assert 'id="daily_triage"' not in SCHEDULER_SRC
+    assert "from .triage.runner import run_for_all" not in SCHEDULER_SRC
 
 
 def test_no_revel_execute_from_engine_or_runner():
