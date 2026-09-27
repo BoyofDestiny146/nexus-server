@@ -67,6 +67,8 @@ export function coerceSchedule(
     assessOnEscalationPhrases: raw.assessOnEscalationPhrases ?? fallback.assessOnEscalationPhrases,
   };
 }
+
+export function scheduleSelectValue(schedule: AssessmentSchedule | null | undefined): string {
   if (!schedule || !schedule.enabled || schedule.mode === "manual" || schedule.intervalMinutes == null) {
     return "manual";
   }

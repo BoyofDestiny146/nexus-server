@@ -221,7 +221,10 @@ test("lower controls hold profile, schedule, delivery, next run, and regenerate"
   assert.match(controls, /data-testid="assessment-schedule-escalation-phrases"/);
   assert.match(controls, /Assessment Delivery/);
   assert.match(controls, /data-testid="assessment-delivery"/);
-  assert.match(controls, /CareConnect/);
+  assert.match(controls, /ASSESSMENT_DELIVERY_CHOICES/);
+  const deliveryLib = readFileSync(join(here, "./assessmentDelivery.ts"), "utf8");
+  assert.match(deliveryLib, /CareConnect/);
+  assert.match(deliveryLib, /destination: "careconnect"/);
   assert.match(controls, /Next Assessment/);
   assert.doesNotMatch(controls, /Last Assessment/);
   assert.doesNotMatch(controls, /Send Assessment to CareConnect/);

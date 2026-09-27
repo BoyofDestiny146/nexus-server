@@ -18,7 +18,7 @@ import {
   resolveAssessmentProfile,
   resolveAssessmentProfileId,
 } from "@/lib/assessmentProfiles";
-import { defaultCareSchedule, defaultManualSchedule } from "@/lib/assessmentSchedule";
+import { coerceSchedule, defaultCareSchedule, defaultManualSchedule } from "@/lib/assessmentSchedule";
 import { defaultAssessmentDelivery, parseAssessmentDelivery } from "@/lib/assessmentDelivery";
 import { isCareWellnessPanel, isSalesProductPanel } from "@/lib/assessmentPanels";
 import { PATIENT_DETAIL_RIGHT } from "@/lib/patientDetailLayout";
@@ -81,7 +81,9 @@ export function AssessmentEngineRail({
           setProfiles(data.profiles);
         }
         setActiveId(resolveAssessmentProfileId(data.assessmentProfile?.id));
-        if (data.assessmentSchedule) setSchedule(data.assessmentSchedule);
+        if (data.assessmentSchedule) {
+          setSchedule(coerceSchedule(data.assessmentSchedule, data.scheduleSupported ?? true));
+        }
         if (data.assessmentDelivery) setDelivery(parseAssessmentDelivery(data.assessmentDelivery));
         if (typeof data.scheduleSupported === "boolean") {
           setScheduleSupported(data.scheduleSupported);
@@ -111,7 +113,9 @@ export function AssessmentEngineRail({
         setProfiles(next.profiles);
       }
       setActiveId(resolveAssessmentProfileId(next.assessmentProfile?.id));
-      if (next.assessmentSchedule) setSchedule(next.assessmentSchedule);
+      if (next.assessmentSchedule) {
+        setSchedule(coerceSchedule(next.assessmentSchedule, next.scheduleSupported ?? scheduleSupported));
+      }
       if (next.assessmentDelivery) setDelivery(parseAssessmentDelivery(next.assessmentDelivery));
       if (typeof next.scheduleSupported === "boolean") {
         setScheduleSupported(next.scheduleSupported);
@@ -140,7 +144,9 @@ export function AssessmentEngineRail({
         `/agent/${agentId}/assessment/profile`,
         { assessmentSchedule: nextSchedule },
       );
-      if (next.assessmentSchedule) setSchedule(next.assessmentSchedule);
+      if (next.assessmentSchedule) {
+        setSchedule(coerceSchedule(next.assessmentSchedule, next.scheduleSupported ?? scheduleSupported));
+      }
       if (next.assessmentDelivery) setDelivery(parseAssessmentDelivery(next.assessmentDelivery));
       if (next.nextAssessmentAt !== undefined) {
         setNextAssessmentAt(next.nextAssessmentAt ?? null);
@@ -167,7 +173,9 @@ export function AssessmentEngineRail({
         { assessmentDelivery: nextDelivery },
       );
       if (next.assessmentDelivery) setDelivery(parseAssessmentDelivery(next.assessmentDelivery));
-      if (next.assessmentSchedule) setSchedule(next.assessmentSchedule);
+      if (next.assessmentSchedule) {
+        setSchedule(coerceSchedule(next.assessmentSchedule, next.scheduleSupported ?? scheduleSupported));
+      }
     } catch (e) {
       if (e instanceof ApiError) {
         console.error("assessment delivery save failed:", e.message);

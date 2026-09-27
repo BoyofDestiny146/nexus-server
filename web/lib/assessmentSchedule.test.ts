@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   ASSESSMENT_INTERVAL_CHOICES,
   DEFAULT_CARE_INTERVAL_MINUTES,
+  coerceSchedule,
   defaultCareSchedule,
   defaultManualSchedule,
   intervalLabel,
@@ -40,9 +41,17 @@ test("hourly / 2h / 4h / 8h / 12h / daily / 3d / weekly persist as minutes", () 
     const parsed = scheduleFromSelectValue(String(value), true);
     assert.equal(parsed.enabled, true);
     assert.equal(parsed.intervalMinutes, value);
+    assert.equal(parsed.assessOnEscalationPhrases, true);
   }
   const manual = scheduleFromSelectValue("manual", true, false);
   assert.equal(manual.mode, "manual");
   assert.equal(manual.enabled, false);
   assert.equal(manual.assessOnEscalationPhrases, false);
+});
+
+test("missing assessOnEscalationPhrases resolves to Care on / Sales off", () => {
+  const care = coerceSchedule({ enabled: true, mode: "interval", intervalMinutes: 60, onlyIfNewData: true } as never, true);
+  assert.equal(care.assessOnEscalationPhrases, true);
+  const sales = coerceSchedule({ enabled: false, mode: "manual", intervalMinutes: null, onlyIfNewData: true } as never, false);
+  assert.equal(sales.assessOnEscalationPhrases, false);
 });
