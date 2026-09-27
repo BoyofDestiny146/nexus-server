@@ -45,7 +45,9 @@ export function groupedVoiceOptions(
   const buckets = new Map<VoiceCategoryKey, VoiceOption[]>();
   for (const cat of VOICE_CATEGORY_ORDER) buckets.set(cat.key, []);
   for (const voice of list) {
-    if (voice.enabled === false) continue;
+    // Keep a currently configured id visible even if the provider marked it
+    // disabled, so existing device settings never disappear from the control.
+    if (voice.enabled === false && voice.id !== selectedId) continue;
     buckets.get(voiceCategory(voice))!.push(voice);
   }
   return VOICE_CATEGORY_ORDER

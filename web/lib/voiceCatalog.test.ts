@@ -16,7 +16,7 @@ const KEEPER_IDS = [
   "piper:en_US-hfc_female-medium",
 ];
 
-test("TTS catalog keeps existing voice ids and adds Female/Male metadata", () => {
+test("TTS catalog keeps existing voice ids and Female/Male metadata", () => {
   const src = readFileSync(join(here, "../../scripts/careconnect_tts_server.py"), "utf8");
   for (const id of KEEPER_IDS) {
     assert.match(src, new RegExp(id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -24,6 +24,9 @@ test("TTS catalog keeps existing voice ids and adds Female/Male metadata", () =>
   assert.match(src, /"category": "female"/);
   assert.match(src, /"category": "male"/);
   assert.match(src, /edge:en-US-GuyNeural/);
+  assert.match(src, /kokoro:am_adam/);
+  assert.match(src, /edge:en-US-AndrewNeural/);
+  assert.match(src, /_runtime_voices/);
 });
 
 test("Female and Male groups render; unknown selected voice lands in Other", () => {
@@ -40,6 +43,22 @@ test("Female and Male groups render; unknown selected voice lands in Other", () 
   assert.ok(other);
   assert.equal(other!.voices[0].id, "legacy:custom-voice");
   assert.equal(voiceCategory({ id: "x", label: "x" }), "other");
+});
+
+test("Female and Male groups remain when a category is empty or disabled", () => {
+  const voices: VoiceOption[] = [
+    { id: "kokoro:af_heart", label: "Hazel", engine: "kokoro", local: true, recommended: true, category: "female" },
+    { id: "kokoro:am_adam", label: "Adam", engine: "kokoro", local: true, recommended: false, category: "male", enabled: false },
+    { id: "edge:en-US-GuyNeural", label: "Guy", engine: "edge", local: false, recommended: true, category: "male", enabled: false },
+  ];
+  const groups = groupedVoiceOptions(voices);
+  assert.deepEqual(groups.map((g) => g.key), ["female", "male"]);
+  assert.equal(groups.find((g) => g.key === "female")?.voices.length, 1);
+  assert.equal(groups.find((g) => g.key === "male")?.voices.length, 0);
+
+  const selectedDisabled = groupedVoiceOptions(voices, "edge:en-US-GuyNeural");
+  assert.equal(selectedDisabled.find((g) => g.key === "male")?.voices[0].id, "edge:en-US-GuyNeural");
+  assert.equal(selectedDisabled.find((g) => g.key === "male")?.voices.length, 1);
 });
 
 test("VoiceSelector uses grouped select and keeps Preview/Test Voice", () => {

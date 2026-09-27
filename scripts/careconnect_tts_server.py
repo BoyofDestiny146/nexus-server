@@ -43,10 +43,20 @@ VOICE_CATALOG = [
     {"id": "edge:en-US-JennyNeural",        "label": "Jenny (Edge neural)",     "displayName": "Jenny",         "engine": "edge",   "provider": "edge",   "category": "female", "language": "en", "locale": "en-US", "local": False, "recommended": True,  "enabled": True},
     {"id": "edge:en-US-EmmaNeural",         "label": "Emma (Edge neural)",      "displayName": "Emma",          "engine": "edge",   "provider": "edge",   "category": "female", "language": "en", "locale": "en-US", "local": False, "recommended": False, "enabled": True},
     {"id": "piper:en_US-hfc_female-medium", "label": "Clara (Piper hfc female)","displayName": "Clara",         "engine": "piper",  "provider": "piper",  "category": "female", "language": "en", "locale": "en-US", "local": True,  "recommended": True,  "enabled": True},
-    {"id": "kokoro:am_adam",                "label": "Adam (Kokoro)",           "displayName": "Adam",          "engine": "kokoro", "provider": "kokoro", "category": "male",   "language": "en", "locale": "en-US", "local": True,  "recommended": False, "enabled": True},
-    {"id": "edge:en-US-GuyNeural",          "label": "Guy (Edge neural)",       "displayName": "Guy",           "engine": "edge",   "provider": "edge",   "category": "male",   "language": "en", "locale": "en-US", "local": False, "recommended": True,  "enabled": True},
-    {"id": "edge:en-US-AndrewNeural",       "label": "Andrew (Edge neural)",    "displayName": "Andrew",        "engine": "edge",   "provider": "edge",   "category": "male",   "language": "en", "locale": "en-US", "local": False, "recommended": False, "enabled": True},
+    # Male ids stay in the catalog so already-configured devices keep working.
+    # Selectable only after _runtime_voices() confirms the engine actually has them.
+    {"id": "kokoro:am_adam",                "label": "Adam (Kokoro)",           "displayName": "Adam",          "engine": "kokoro", "provider": "kokoro", "category": "male",   "language": "en", "locale": "en-US", "local": True,  "recommended": False, "enabled": False},
+    {"id": "edge:en-US-GuyNeural",          "label": "Guy (Edge neural)",       "displayName": "Guy",           "engine": "edge",   "provider": "edge",   "category": "male",   "language": "en", "locale": "en-US", "local": False, "recommended": True,  "enabled": False},
+    {"id": "edge:en-US-AndrewNeural",       "label": "Andrew (Edge neural)",    "displayName": "Andrew",        "engine": "edge",   "provider": "edge",   "category": "male",   "language": "en", "locale": "en-US", "local": False, "recommended": False, "enabled": False},
 ]
+
+# Newly added male voices. Enabled in GET /voices only when the live engine
+# confirms them (Kokoro voices-v1.0.bin membership, or edge-tts import).
+_RUNTIME_GATED_VOICE_IDS = {
+    "kokoro:am_adam",
+    "edge:en-US-GuyNeural",
+    "edge:en-US-AndrewNeural",
+}
 
 _piper_voices: dict[str, object] = {}
 _kokoro = None
@@ -199,9 +209,55 @@ LENGTH_OPTIONS = [
 ]
 
 
+def _kokoro_voice_names() -> set[str] | None:
+    """Voice names in the loaded Kokoro pack, or None if Kokoro is not loaded."""
+    try:
+        model = _kokoro_model()
+    except Exception:
+        return None
+    voices = getattr(model, "voices", None)
+    if isinstance(voices, dict):
+        return set(voices.keys())
+    get_voices = getattr(model, "get_voices", None)
+    if callable(get_voices):
+        try:
+            return set(get_voices())
+        except Exception:
+            return None
+    return None
+
+
+def _edge_available() -> bool:
+    try:
+        import edge_tts  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _runtime_voices() -> list[dict]:
+    """Catalog with gated male voices enabled only when the engine has them."""
+    kokoro_names = _kokoro_voice_names()
+    edge_ok = _edge_available()
+    rows: list[dict] = []
+    for raw in VOICE_CATALOG:
+        row = dict(raw)
+        vid = row["id"]
+        if vid in _RUNTIME_GATED_VOICE_IDS:
+            if vid.startswith("kokoro:"):
+                name = vid.split(":", 1)[1]
+                row["enabled"] = bool(kokoro_names is not None and name in kokoro_names)
+            elif vid.startswith("edge:"):
+                row["enabled"] = bool(edge_ok)
+            else:
+                row["enabled"] = False
+        rows.append(row)
+    return rows
+
+
 @app.get("/voices")
 def voices():
-    return {"default": DEFAULT_VOICE, "voices": VOICE_CATALOG,
+    return {"default": DEFAULT_VOICE, "voices": _runtime_voices(),
             "speeds": SPEED_OPTIONS, "default_speed": "normal",
             "lengths": LENGTH_OPTIONS, "default_length": "brief"}
 

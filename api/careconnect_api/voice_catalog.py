@@ -10,6 +10,16 @@ from typing import Any
 
 VOICE_CATEGORIES = ("female", "male", "child", "regional", "specialty", "other")
 
+# Newly added male ids. Keepers stay selectable even if an engine is down.
+# These three are only offered when the live engine/provider confirms them.
+RUNTIME_GATED_VOICE_IDS = frozenset(
+    {
+        "kokoro:am_adam",
+        "edge:en-US-GuyNeural",
+        "edge:en-US-AndrewNeural",
+    }
+)
+
 # Known keepers + male additions. Ids must never change.
 _KNOWN: dict[str, dict[str, str]] = {
     "kokoro:af_heart": {
@@ -105,6 +115,38 @@ def normalize_voice_entry(raw: Any) -> dict[str, Any] | None:
     }
 
 
+def apply_runtime_voice_availability(
+    voices: list[dict[str, Any]],
+    *,
+    kokoro_voice_names: set[str] | None = None,
+    edge_available: bool | None = None,
+) -> list[dict[str, Any]]:
+    """Mark unverified-at-runtime male voices disabled. Never drop ids.
+
+    ``kokoro_voice_names is None`` means the Kokoro voice pack was not loaded
+    in this process, so ``kokoro:am_adam`` is not selectable.
+    ``edge_available is not True`` means Edge TTS was not importable, so the
+    gated Edge male voices are not selectable.
+    """
+    out: list[dict[str, Any]] = []
+    for raw in voices:
+        row = dict(raw)
+        vid = str(row.get("id") or "")
+        if vid not in RUNTIME_GATED_VOICE_IDS:
+            out.append(row)
+            continue
+        engine = str(row.get("engine") or (vid.split(":", 1)[0] if ":" in vid else ""))
+        if engine == "kokoro":
+            name = vid.split(":", 1)[-1]
+            row["enabled"] = bool(kokoro_voice_names is not None and name in kokoro_voice_names)
+        elif engine == "edge":
+            row["enabled"] = bool(edge_available is True)
+        else:
+            row["enabled"] = False
+        out.append(row)
+    return out
+
+
 def normalize_voice_catalog(catalog: dict[str, Any] | None) -> dict[str, Any]:
     """Return catalog with normalized voice rows. Unknown extra keys pass through."""
     src = dict(catalog or {})
@@ -116,6 +158,17 @@ def normalize_voice_catalog(catalog: dict[str, Any] | None) -> dict[str, Any]:
             continue
         seen.add(row["id"])
         voices.append(row)
+    # TTS may already have set enabled. Only re-gate when the payload includes
+    # live inventory; otherwise preserve the provider's enabled flag.
+    if "kokoroVoiceNames" in src or "edgeAvailable" in src:
+        names = src.get("kokoroVoiceNames")
+        if names is not None:
+            names = set(names)
+        voices = apply_runtime_voice_availability(
+            voices,
+            kokoro_voice_names=names,
+            edge_available=src.get("edgeAvailable"),
+        )
     src["voices"] = voices
     src["categories"] = list(VOICE_CATEGORIES)
     return src
