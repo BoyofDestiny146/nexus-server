@@ -55,7 +55,7 @@ test("right rail no longer contains permanent Revel Diagnostics", () => {
   assert.match(engineRail, /data-testid="current-assessment-rail"/);
   assert.doesNotMatch(careWellnessPanel, /14-day risk/);
   assert.doesNotMatch(careWellnessPanel, /Sparkline/);
-  assert.match(careWellnessPanel, /Latest assessment/);
+  assert.match(careWellnessPanel, /Latest Assessment/);
   assert.match(careWellnessPanel, /data-testid="latest-assessment"/);
 });
 

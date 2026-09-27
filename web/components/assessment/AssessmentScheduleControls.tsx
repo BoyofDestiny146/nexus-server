@@ -12,14 +12,12 @@ import {
 export function AssessmentScheduleControls({
   schedule,
   scheduleSupported,
-  lastAssessmentAt,
   nextAssessmentAt,
   disabled,
   onChange,
 }: {
   schedule: AssessmentSchedule;
   scheduleSupported: boolean;
-  lastAssessmentAt: string | null;
   nextAssessmentAt: string | null;
   disabled?: boolean;
   onChange: (next: AssessmentSchedule) => void;
@@ -28,12 +26,12 @@ export function AssessmentScheduleControls({
   const locked = disabled || !scheduleSupported;
 
   return (
-    <div className="mt-5" data-testid="assessment-schedule">
-      <label className="block">
+    <div className="mt-5 min-w-0" data-testid="assessment-schedule">
+      <label className="block min-w-0">
         <div className="kicker mb-1.5">Assessment Schedule</div>
         <select
           data-testid="assessment-schedule-select"
-          className="input text-[13px]"
+          className="input text-[13px] w-full min-w-0"
           value={selectValue}
           disabled={locked}
           onChange={(e) => {
@@ -54,14 +52,14 @@ export function AssessmentScheduleControls({
           <input
             type="checkbox"
             data-testid="assessment-schedule-only-new-data"
-            className="mt-0.5"
+            className="mt-0.5 shrink-0"
             checked={schedule.onlyIfNewData}
             disabled={locked || selectValue === "manual"}
             onChange={(e) => {
               onChange({ ...schedule, onlyIfNewData: e.target.checked });
             }}
           />
-          <span>Only assess when new data exists</span>
+          <span className="min-w-0 leading-relaxed">Only assess when new data exists</span>
         </label>
       ) : (
         <p className="mt-2 text-[12px] text-slate-muted leading-relaxed">
@@ -69,22 +67,14 @@ export function AssessmentScheduleControls({
         </p>
       )}
 
-      <div className="mt-4 grid grid-cols-1 gap-2 text-[13px]">
-        <div>
-          <div className="kicker mb-1">Last Assessment</div>
-          <div className="text-slate-deep num" data-testid="assessment-last-at">
-            {lastAssessmentAt ? longTime(lastAssessmentAt) : "—"}
-          </div>
-        </div>
-        <div>
-          <div className="kicker mb-1">Next Assessment</div>
-          <div className="text-slate-deep num" data-testid="assessment-next-at">
-            {!scheduleSupported || selectValue === "manual"
-              ? "Manual"
-              : nextAssessmentAt
-                ? longTime(nextAssessmentAt)
-                : "—"}
-          </div>
+      <div className="mt-4 min-w-0">
+        <div className="kicker mb-1">Next Assessment</div>
+        <div className="text-slate-deep num text-[13px] break-words" data-testid="assessment-next-at">
+          {!scheduleSupported || selectValue === "manual"
+            ? "Manual"
+            : nextAssessmentAt
+              ? longTime(nextAssessmentAt)
+              : "—"}
         </div>
       </div>
     </div>

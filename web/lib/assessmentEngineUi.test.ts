@@ -68,10 +68,12 @@ test("dropdown renders all four Assessment Profiles", () => {
   assert.equal(dropdownLabel(ASSESSMENT_PROFILES[1]), "Sales & Product Guide");
 });
 
-test("right rail is Nexus Assessment Engine with selector then profile panel", () => {
+test("right rail shows Latest Assessment above Assessment Settings", () => {
   assert.match(detail, /AssessmentEngineRail/);
   assert.match(rail, /Nexus Assessment Engine/);
   assert.match(rail, /data-testid="nexus-assessment-engine-heading"/);
+  assert.match(rail, /data-testid="latest-assessment-section"/);
+  assert.match(rail, /data-testid="assessment-settings"/);
   assert.match(rail, /AssessmentProfileSelector/);
   assert.match(rail, /AssessmentScheduleControls/);
   assert.match(rail, /CareWellnessPanel/);
@@ -81,31 +83,51 @@ test("right rail is Nexus Assessment Engine with selector then profile panel", (
   assert.match(care, /data-testid="care-wellness-panel"/);
   assert.match(sales, /data-testid="sales-product-panel"/);
   assert.match(detail, /activeSession=\{activeSession\}/);
+
+  const render = rail.slice(rail.indexOf("return ("));
+  const latestIdx = render.indexOf('data-testid="latest-assessment-section"');
+  const settingsIdx = render.indexOf('data-testid="assessment-settings"');
+  const profileIdx = render.indexOf("<AssessmentProfileSelector");
+  const scheduleIdx = render.indexOf("<AssessmentScheduleControls");
+  assert.ok(latestIdx >= 0 && settingsIdx >= 0 && latestIdx < settingsIdx);
+  assert.ok(profileIdx > settingsIdx);
+  assert.ok(scheduleIdx > settingsIdx);
+  assert.ok(profileIdx > latestIdx);
+  assert.ok(scheduleIdx > latestIdx);
 });
 
 test("right panel still renders existing Care & Wellness data", () => {
-  assert.match(care, /Latest assessment/);
+  assert.match(care, /Latest Assessment/);
   assert.match(care, /latest\.riskLevel/);
   assert.match(care, /latest\.confidence/);
   assert.match(care, /latest\.concerns/);
   assert.match(care, /latest\.recommendations/);
-  assert.match(care, /Regenerate/);
+  assert.match(care, /Last Assessment/);
+  assert.match(care, /data-testid="assessment-last-at"/);
   assert.match(care, /No current observations/);
   assert.doesNotMatch(care, /14-day risk/);
   assert.doesNotMatch(care, /Sparkline/);
+  assert.doesNotMatch(care, /Regenerate/);
+  assert.doesNotMatch(care, /Assessment Profile/);
+  assert.doesNotMatch(care, /Assessment Schedule/);
+  assert.doesNotMatch(care, /Next Assessment/);
 });
 
 test("sales panel hides empty sections and does not show medical widgets", () => {
-  assert.match(sales, /Current assessment/);
+  assert.match(sales, /Latest Assessment/);
   assert.match(sales, /Interest Level/);
   assert.match(sales, /visibleSalesListSections/);
   assert.match(sales, /hasSalesSummary/);
-  assert.match(sales, /Regenerate/);
+  assert.match(sales, /Last Assessment/);
+  assert.match(sales, /data-testid="assessment-last-at"/);
+  assert.doesNotMatch(sales, /Regenerate/);
   assert.doesNotMatch(sales, /riskLevel/);
   assert.doesNotMatch(sales, /ConfidenceRing/);
   assert.doesNotMatch(sales, /14-day/);
   assert.doesNotMatch(sales, /concerns/);
   assert.doesNotMatch(sales, /recommendations/);
+  assert.doesNotMatch(sales, /Assessment Profile/);
+  assert.doesNotMatch(sales, /Next Assessment/);
   const empty = emptySalesPayload();
   assert.deepEqual(visibleSalesListSections(empty), []);
   assert.equal(hasSalesSummary(empty), false);
@@ -142,7 +164,7 @@ test("assessment history API remains for future longitudinal analysis", () => {
 test("decorative graphic and red mockup divider are absent", () => {
   const header = rail.slice(
     rail.indexOf("nexus-assessment-engine-header"),
-    rail.indexOf("</div>", rail.indexOf("AssessmentProfileSelector")) + 6,
+    rail.indexOf("latest-assessment-section"),
   );
   assert.doesNotMatch(header, /<svg/);
   assert.doesNotMatch(rail, /border-red|bg-red|text-red|#e11d48|#ef4444|#dc2626|#ff0000/);
@@ -162,35 +184,59 @@ test("unimplemented profile panels do not invent assessment values", () => {
   assert.match(rail, /ComingSoonPanel/);
 });
 
-test("assessment schedule controls sit under the profile selector", () => {
+test("assessment settings hold profile, schedule, next run, and regenerate", () => {
   const controls = readFileSync(
     join(here, "../components/assessment/AssessmentScheduleControls.tsx"),
     "utf8",
   );
   const scheduleLib = readFileSync(join(here, "./assessmentSchedule.ts"), "utf8");
-  assert.match(rail, /AssessmentScheduleControls/);
+  const settings = rail.slice(rail.indexOf('data-testid="assessment-settings"'));
+  const latest = rail.slice(
+    rail.indexOf('data-testid="latest-assessment-section"'),
+    rail.indexOf('data-testid="assessment-settings"'),
+  );
+
+  assert.match(rail, /Assessment Settings/);
+  assert.match(settings, /AssessmentProfileSelector/);
+  assert.match(settings, /AssessmentScheduleControls/);
+  assert.match(settings, /nextAssessmentAt/);
+  assert.match(settings, /Regenerate Assessment/);
+  assert.match(settings, /data-testid="regenerate-assessment"/);
+  assert.match(settings, /onRegenerate/);
+  assert.doesNotMatch(settings, /lastAssessmentAt/);
+  assert.doesNotMatch(latest, /AssessmentProfileSelector/);
+  assert.doesNotMatch(latest, /AssessmentScheduleControls/);
+  assert.doesNotMatch(latest, /Regenerate Assessment/);
+
   assert.match(controls, /Assessment Schedule/);
   assert.match(controls, /Only assess when new data exists/);
-  assert.match(controls, /Last Assessment/);
   assert.match(controls, /Next Assessment/);
+  assert.doesNotMatch(controls, /Last Assessment/);
   assert.match(controls, /MANUAL_SCHEDULE_LABEL/);
   assert.match(controls, /\? "Manual"/);
   assert.match(controls, /ASSESSMENT_INTERVAL_CHOICES/);
   assert.match(scheduleLib, /Every 24 hours/);
   assert.match(scheduleLib, /Manual only/);
+
+  assert.match(care, /Last Assessment/);
+  assert.match(sales, /Last Assessment/);
+  assert.doesNotMatch(care, /Next Assessment/);
+  assert.doesNotMatch(sales, /Next Assessment/);
+
   assert.match(detail, /assessment\/latest/);
   assert.match(detail, /live\.assessmentTick/);
   assert.match(detail, /assessmentTick=\{live\.assessmentTick\}/);
-  assert.match(rail, /assessmentTick=\{assessmentTick\}/);
+  assert.match(rail, /assessmentTick=\{assessmentTick \+ salesRefresh\}/);
   assert.match(sales, /assessmentTick/);
   assert.match(sales, /\/agent\/\$\{agentId\}\/assessment\/current/);
 });
 
 test("Regenerate still posts the Care & Wellness assessment endpoint", () => {
   assert.match(detail, /\/agent\/\$\{id\}\/assessment\/regenerate/);
-  assert.match(care, /onRegenerate/);
-  assert.match(rail, /onRegenerate=\{onRegenerate\}/);
-  assert.match(sales, /\/agent\/\$\{agentId\}\/assessment\/regenerate/);
+  assert.match(detail, /onRegenerate=\{regenerate\}/);
+  assert.match(rail, /showSales \? regenerateSales : onRegenerate/);
+  assert.match(rail, /Regenerate Assessment/);
+  assert.match(rail, /\/agent\/\$\{agentId\}\/assessment\/regenerate/);
 });
 
 test("Care & Wellness engine wrapper still calls the existing runner", () => {

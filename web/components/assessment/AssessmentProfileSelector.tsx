@@ -25,7 +25,7 @@ export function AssessmentProfileSelector({
       <div className="kicker mb-1.5">Assessment Profile</div>
       <select
         data-testid="assessment-profile-select"
-        className="input text-[13px]"
+        className="input text-[13px] w-full min-w-0"
         value={selected}
         disabled={disabled}
         onChange={(e) => {

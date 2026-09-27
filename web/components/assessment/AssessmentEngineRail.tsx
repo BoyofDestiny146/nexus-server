@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiGet, apiPut, ApiError } from "@/lib/api";
+import { Loader2, RefreshCw } from "lucide-react";
+import { apiGet, apiPost, apiPut, ApiError } from "@/lib/api";
 import { classNames } from "@/lib/format";
 import type {
   AssessmentProfileDefinition,
@@ -57,6 +58,8 @@ export function AssessmentEngineRail({
   const [scheduleSupported, setScheduleSupported] = useState(true);
   const [lastAssessmentAt, setLastAssessmentAt] = useState<string | null>(latest?.generatedAt ?? null);
   const [nextAssessmentAt, setNextAssessmentAt] = useState<string | null>(null);
+  const [salesRegenBusy, setSalesRegenBusy] = useState(false);
+  const [salesRefresh, setSalesRefresh] = useState(0);
 
   useEffect(() => {
     setActiveId(resolveAssessmentProfileId(initialProfile?.id));
@@ -90,7 +93,7 @@ export function AssessmentEngineRail({
         /* local catalog + care_wellness remain */
       });
     return () => { cancelled = true; };
-  }, [agentId, assessmentTick]);
+  }, [agentId, assessmentTick, salesRefresh]);
 
   async function selectProfile(id: AssessmentProfileId) {
     if (!canActivateAssessmentEngine(id) || id === activeId || saving) return;
@@ -148,9 +151,25 @@ export function AssessmentEngineRail({
     }
   }
 
+  async function regenerateSales() {
+    if (salesRegenBusy || !isRoot) return;
+    setSalesRegenBusy(true);
+    try {
+      const q = activeSession ? `?sessionId=${encodeURIComponent(activeSession)}` : "";
+      await apiPost(`/agent/${agentId}/assessment/regenerate${q}`);
+      setSalesRefresh((n) => n + 1);
+    } catch (e) {
+      console.error("sales regenerate failed:", e);
+    } finally {
+      setSalesRegenBusy(false);
+    }
+  }
+
   const active = resolveAssessmentProfile(activeId);
   const showCareWellness = isCareWellnessPanel(activeId);
   const showSales = isSalesProductPanel(activeId);
+  const canRegenerate = isRoot && (showCareWellness || showSales);
+  const regenerateBusy = showSales ? salesRegenBusy : regenBusy;
 
   return (
     <aside
@@ -164,6 +183,31 @@ export function AssessmentEngineRail({
         <div className="kicker mb-4" data-testid="nexus-assessment-engine-heading">
           Nexus Assessment Engine
         </div>
+      </div>
+
+      <div data-testid="latest-assessment-section" className="min-w-0">
+        {showCareWellness ? (
+          <CareWellnessPanel
+            latest={latest}
+            lastAssessmentAt={lastAssessmentAt}
+          />
+        ) : showSales ? (
+          <SalesProductPanel
+            agentId={agentId}
+            sessionId={activeSession}
+            assessmentTick={assessmentTick + salesRefresh}
+            lastAssessmentAt={lastAssessmentAt}
+          />
+        ) : (
+          <ComingSoonPanel profile={active} />
+        )}
+      </div>
+
+      <div
+        data-testid="assessment-settings"
+        className="mt-8 pt-6 border-t border-slate-line/70 min-w-0"
+      >
+        <div className="kicker mb-4">Assessment Settings</div>
         <AssessmentProfileSelector
           profiles={profiles}
           value={activeId}
@@ -173,30 +217,22 @@ export function AssessmentEngineRail({
         <AssessmentScheduleControls
           schedule={scheduleSupported ? schedule : defaultManualSchedule()}
           scheduleSupported={scheduleSupported}
-          lastAssessmentAt={lastAssessmentAt}
           nextAssessmentAt={nextAssessmentAt}
           disabled={saving}
           onChange={(next) => { void saveSchedule(next); }}
         />
-      </div>
-
-      <div className="mt-6">
-        {showCareWellness ? (
-          <CareWellnessPanel
-            latest={latest}
-            isRoot={isRoot}
-            regenBusy={regenBusy}
-            onRegenerate={onRegenerate}
-          />
-        ) : showSales ? (
-          <SalesProductPanel
-            agentId={agentId}
-            sessionId={activeSession}
-            isRoot={isRoot}
-            assessmentTick={assessmentTick}
-          />
-        ) : (
-          <ComingSoonPanel profile={active} />
+        {canRegenerate && (
+          <button
+            type="button"
+            data-testid="regenerate-assessment"
+            onClick={showSales ? regenerateSales : onRegenerate}
+            disabled={regenerateBusy || saving}
+            className="btn-ghost mt-6 text-[12px] text-slate-muted hover:text-slate-deep px-0"
+          >
+            {regenerateBusy
+              ? <><Loader2 size={12} className="animate-spin" /> Regenerating…</>
+              : <><RefreshCw size={12} /> Regenerate Assessment</>}
+          </button>
         )}
       </div>
     </aside>
