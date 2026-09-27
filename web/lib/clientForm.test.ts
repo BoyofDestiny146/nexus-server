@@ -38,6 +38,7 @@ function agent(partial: Partial<AgentDetail> = {}): AgentDetail {
     topicsToAvoid: ["diagnosis"],
     personaOverride: "Speak slowly.",
     personalityId: "sys_witty_tech_sidekick",
+    organizationId: "",
     ...partial,
   };
 }
@@ -55,6 +56,7 @@ test("draftFromAgent hydrates every Create Client profile field", () => {
     topicsToAvoid: ["diagnosis"],
     personaOverride: "Speak slowly.",
     personalityId: "sys_witty_tech_sidekick",
+    organizationId: "",
   });
 });
 
@@ -80,6 +82,7 @@ test("clientPatchBody sends the same keys Edit saves, never a new client id", ()
     topicsToAvoid: ["diagnosis"],
     personaOverride: "Speak slowly.",
     personalityId: "sys_witty_tech_sidekick",
+    organizationId: null,
   });
   assert.equal("id" in body, false);
   assert.equal("agentId" in body, false);

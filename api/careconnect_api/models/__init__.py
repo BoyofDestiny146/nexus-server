@@ -69,6 +69,8 @@ class AiAgent(Base):
     created_at: Mapped[datetime | None] = mapped_column(DateTime)
     updater: Mapped[int | None] = mapped_column(BigInteger)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Grouping only in v1. NULL = Unassigned. Not an authorization boundary yet.
+    organization_id: Mapped[str | None] = mapped_column(String(32), index=True)
 
 
 class AiDevice(Base):
@@ -187,6 +189,40 @@ class CcAgentPersonality(Base):
     prompt_template: Mapped[str] = mapped_column(Text, nullable=False)
     is_system: Mapped[int] = mapped_column(SmallInteger, default=0)
     is_active: Mapped[int] = mapped_column(SmallInteger, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CcOrganization(Base):
+    """Customer/facility grouping. Clients link via ai_agent.organization_id.
+
+    v1 is grouping only. Future org-scoped admins can use a join table
+    ``cc_admin_organization(admin_user_id, organization_id)`` without changing
+    this row shape.
+    """
+
+    __tablename__ = "cc_organization"
+    __table_args__ = (
+        Index("idx_cc_org_status", "status"),
+        Index("idx_cc_org_name", "name"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    main_contact_name: Mapped[str | None] = mapped_column(String(128))
+    main_contact_email: Mapped[str | None] = mapped_column(String(128))
+    main_contact_phone: Mapped[str | None] = mapped_column(String(64))
+    address_line1: Mapped[str | None] = mapped_column(String(256))
+    address_line2: Mapped[str | None] = mapped_column(String(256))
+    city: Mapped[str | None] = mapped_column(String(128))
+    state: Mapped[str | None] = mapped_column(String(64))
+    postal_code: Mapped[str | None] = mapped_column(String(32))
+    country: Mapped[str | None] = mapped_column(String(64))
+    notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

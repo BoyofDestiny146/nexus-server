@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ChevronLeft, ChevronRight, Check, Loader2, RefreshCw,
@@ -55,6 +55,7 @@ function isValidEui(raw: string): boolean {
 
 function OnboardWizard() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const toast = useToast();
 
   const [step, setStep] = useState(0);
@@ -80,7 +81,11 @@ function OnboardWizard() {
         }
       }
     } catch { /* ignore */ }
-  }, []);
+    const org = searchParams.get("organization");
+    if (org && org !== "unassigned") {
+      setDraft((d) => d.organizationId ? d : { ...d, organizationId: org });
+    }
+  }, [searchParams]);
 
   // persist draft on every change
   useEffect(() => {
@@ -156,6 +161,7 @@ function OnboardWizard() {
       topicsToAvoid: draft.topicsToAvoid ?? [],
       personaOverride: draft.personaOverride?.trim() || null,
       personalityId: draft.personalityId?.trim() || null,
+      organizationId: draft.organizationId?.trim() || null,
       botName: draft.botName?.trim() || null,
       eui,
       deviceAlias: eui ? (draft.deviceAlias?.trim() || `${draft.name.trim()}'s Watcher`) : null,

@@ -1,37 +1,88 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Users, Cpu, Shield, Settings, LogOut, Activity, HeartPulse, BookOpen, Sparkles,
+  Building2, Plus,
 } from "lucide-react";
-import { clearSession } from "@/lib/api";
+import { apiGet, clearSession } from "@/lib/api";
 import { useAuthedUser } from "./RequireAuth";
 import { classNames } from "@/lib/format";
+import type { Organization } from "@/lib/types";
+import { UNASSIGNED_ORGANIZATION_ID } from "@/lib/types";
 
-const NAV = [
-  { href: "/patients", label: "Clients",       icon: Users },
-  { href: "/devices",  label: "Devices",        icon: Cpu },
+const MAIN_NAV = [
+  { href: "/devices", label: "Devices", icon: Cpu },
   { href: "/personalities", label: "Agent Personality", icon: Sparkles },
-  { href: "/knowledge", label: "Knowledge",     icon: BookOpen },
-  { href: "/health",   label: "System Status",  icon: HeartPulse },
-  { href: "/admins",   label: "Admins",          icon: Shield, rootOnly: true },
-  { href: "/settings", label: "Settings",        icon: Settings },
+  { href: "/knowledge", label: "Knowledge", icon: BookOpen },
+  { href: "/health", label: "System Status", icon: HeartPulse },
 ];
+
+function NavLink({
+  href,
+  label,
+  icon: Icon,
+  active,
+  nested = false,
+}: {
+  href: string;
+  label: string;
+  icon?: typeof Users;
+  active: boolean;
+  nested?: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={classNames(
+        "flex items-center gap-3 rounded-card text-[14px] tracking-tight transition border",
+        nested ? "pl-8 pr-3 py-1.5 text-[13px]" : "px-3 py-2",
+        active
+          ? "bg-white border-slate-line/80 text-slate-deep"
+          : "text-slate hover:text-slate-deep hover:bg-bone-soft border-transparent",
+      )}
+    >
+      {Icon ? (
+        <Icon size={nested ? 14 : 16} strokeWidth={1.75} className={active ? "text-teal" : "text-slate-muted"} />
+      ) : null}
+      <span className="truncate">{label}</span>
+    </Link>
+  );
+}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname() ?? "";
+  const searchParams = useSearchParams();
   const { user } = useAuthedUser();
+  const [orgs, setOrgs] = useState<Organization[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<{ organizations: Organization[] }>("/organizations")
+      .then((data) => {
+        if (!cancelled) setOrgs(data.organizations || []);
+      })
+      .catch(() => {
+        if (!cancelled) setOrgs([]);
+      });
+    return () => { cancelled = true; };
+  }, [pathname]);
 
   function logout() {
     clearSession();
     router.push("/login");
   }
 
+  const orgFilter = searchParams.get("organization");
+  const onClients = pathname === "/patients" || pathname.startsWith("/patients/");
+  const onAdminUsers = pathname === "/admins" || pathname.startsWith("/administration/users");
+  const onAdminOrgs = pathname === "/organizations" || pathname.startsWith("/administration/organizations");
+
   return (
     <div className="min-h-screen flex bg-bone">
-      {/* Sidebar — narrow, hairline-bordered, monolithic. */}
       <aside className="w-60 shrink-0 border-r border-slate-line/80 bg-bone flex flex-col sticky top-0 h-screen">
         <div className="px-6 pt-7 pb-6 border-b border-slate-line/70">
           <Link href="/patients" className="block">
@@ -44,33 +95,85 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
         </div>
 
-        <nav className="flex-1 py-4 px-3" aria-label="Primary">
+        <nav className="flex-1 py-4 px-3 overflow-y-auto" aria-label="Primary">
+          <div className="px-3 pb-1 text-[10px] uppercase tracking-[0.14em] text-slate-muted">Clients</div>
+          <ul className="space-y-0.5 mb-4">
+            <li>
+              <NavLink
+                href="/patients/new"
+                label="Create New Client"
+                icon={Plus}
+                active={pathname.startsWith("/patients/new")}
+              />
+            </li>
+            <li>
+              <NavLink
+                href="/patients"
+                label="All Clients"
+                icon={Users}
+                nested
+                active={pathname === "/patients" && !orgFilter}
+              />
+            </li>
+            {orgs.map((org) => (
+              <li key={org.id}>
+                <NavLink
+                  href={`/patients?organization=${encodeURIComponent(org.id)}`}
+                  label={org.name}
+                  nested
+                  active={onClients && orgFilter === org.id}
+                />
+              </li>
+            ))}
+            <li>
+              <NavLink
+                href={`/patients?organization=${UNASSIGNED_ORGANIZATION_ID}`}
+                label="Unassigned"
+                nested
+                active={onClients && orgFilter === UNASSIGNED_ORGANIZATION_ID}
+              />
+            </li>
+          </ul>
+
           <ul className="space-y-0.5">
-            {NAV.filter((n) => !n.rootOnly || user?.role === "root").map((n) => {
-              const active = pathname === n.href || pathname.startsWith(n.href + "/");
-              const Icon = n.icon;
-              return (
-                <li key={n.href}>
-                  <Link
-                    href={n.href}
-                    className={classNames(
-                      "flex items-center gap-3 px-3 py-2 rounded-card text-[14px] tracking-tight transition",
-                      active
-                        ? "bg-white border border-slate-line/80 text-slate-deep"
-                        : "text-slate hover:text-slate-deep hover:bg-bone-soft border border-transparent",
-                    )}
-                  >
-                    <Icon size={16} strokeWidth={1.75}
-                          className={active ? "text-teal" : "text-slate-muted"} />
-                    {n.label}
-                  </Link>
+            {MAIN_NAV.map((n) => (
+              <li key={n.href}>
+                <NavLink
+                  href={n.href}
+                  label={n.label}
+                  icon={n.icon}
+                  active={pathname === n.href || pathname.startsWith(n.href + "/")}
+                />
+              </li>
+            ))}
+          </ul>
+
+          {user?.role === "root" && (
+            <div className="mt-4">
+              <div className="px-3 pb-1 text-[10px] uppercase tracking-[0.14em] text-slate-muted">Administration</div>
+              <ul className="space-y-0.5">
+                <li>
+                  <NavLink href="/admins" label="Users" icon={Shield} nested active={onAdminUsers} />
                 </li>
-              );
-            })}
+                <li>
+                  <NavLink href="/organizations" label="Organizations" icon={Building2} nested active={onAdminOrgs} />
+                </li>
+              </ul>
+            </div>
+          )}
+
+          <ul className="space-y-0.5 mt-2">
+            <li>
+              <NavLink
+                href="/settings"
+                label="Settings"
+                icon={Settings}
+                active={pathname === "/settings" || pathname.startsWith("/settings/")}
+              />
+            </li>
           </ul>
         </nav>
 
-        {/* User chip */}
         <div className="px-3 py-4 border-t border-slate-line/70">
           <div className="px-3 py-3 rounded-card border border-slate-line/70 bg-white">
             <div className="flex items-center gap-2">

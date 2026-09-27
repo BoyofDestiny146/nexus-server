@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Plus, Search, Users, RefreshCw } from "lucide-react";
 import { apiGet, ApiError } from "@/lib/api";
-import type { AgentSummary } from "@/lib/types";
+import type { AgentSummary, Organization } from "@/lib/types";
+import { UNASSIGNED_ORGANIZATION_ID } from "@/lib/types";
 import { classNames, relativeTime } from "@/lib/format";
 import { AppShell, PageHeader } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -14,17 +16,27 @@ import { EmptyState } from "@/components/EmptyState";
 const REFRESH_MS = 30_000;
 
 function PatientsView() {
+  const searchParams = useSearchParams();
+  const orgFilter = searchParams.get("organization");
   const [agents, setAgents] = useState<AgentSummary[] | null>(null);
+  const [orgName, setOrgName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
+    setQuery("");
+  }, [orgFilter]);
+
+  useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const data = await apiGet<AgentSummary[]>("/agent/list");
+        const path = orgFilter
+          ? `/agent/list?organizationId=${encodeURIComponent(orgFilter)}`
+          : "/agent/list";
+        const data = await apiGet<AgentSummary[]>(path);
         if (!cancelled) {
           setAgents(data);
           setError(null);
@@ -35,12 +47,27 @@ function PatientsView() {
         if (!cancelled) setLoading(false);
       }
     }
+    setLoading(true);
     load();
     return () => { cancelled = true; };
-  }, [refreshTick]);
+  }, [refreshTick, orgFilter]);
 
-  // 30s soft refresh — no per-agent WS yet (the API exposes one channel per
-  // agent_id; an aggregate channel is a future enhancement).
+  useEffect(() => {
+    let cancelled = false;
+    if (!orgFilter || orgFilter === UNASSIGNED_ORGANIZATION_ID) {
+      setOrgName(orgFilter === UNASSIGNED_ORGANIZATION_ID ? "Unassigned" : null);
+      return;
+    }
+    apiGet<Organization>(`/organizations/${orgFilter}`)
+      .then((org) => {
+        if (!cancelled) setOrgName(org.name);
+      })
+      .catch(() => {
+        if (!cancelled) setOrgName("Organization");
+      });
+    return () => { cancelled = true; };
+  }, [orgFilter]);
+
   useEffect(() => {
     const i = window.setInterval(() => setRefreshTick((t) => t + 1), REFRESH_MS);
     return () => window.clearInterval(i);
@@ -56,12 +83,24 @@ function PatientsView() {
     );
   }, [agents, query]);
 
+  const title = orgName || "Clients";
+  const kicker = orgFilter ? "Organization" : "Roster";
+  const newHref = orgFilter && orgFilter !== UNASSIGNED_ORGANIZATION_ID
+    ? `/patients/new?organization=${encodeURIComponent(orgFilter)}`
+    : "/patients/new";
+
   return (
     <>
       <PageHeader
-        kicker="Roster"
-        title="Clients"
-        subtitle="Every resident issued a Watcher. Click a card to review their conversation history and risk indicators."
+        kicker={kicker}
+        title={title}
+        subtitle={
+          orgFilter === UNASSIGNED_ORGANIZATION_ID
+            ? "Clients not yet linked to a facility or customer organization."
+            : orgFilter
+              ? "Clients in this organization. Search stays within this group."
+              : "Every resident issued a Watcher. Click a card to review their conversation history and risk indicators."
+        }
         actions={
           <>
             <button
@@ -72,7 +111,7 @@ function PatientsView() {
             >
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
             </button>
-            <Link href="/patients/new" className="btn-primary">
+            <Link href={newHref} className="btn-primary">
               <Plus size={16} /> Add client
             </Link>
           </>
@@ -116,12 +155,16 @@ function PatientsView() {
         {filtered && filtered.length === 0 && !loading && (
           <EmptyState
             icon={Users}
-            title={query ? "No matching clients" : "No clients yet"}
+            title={query ? "No matching clients" : orgFilter ? "No clients in this group" : "No clients yet"}
             body={query
               ? "Try a different search."
-              : "Add a client to begin. You can attach a Watcher in the same flow or pair one later."}
+              : orgFilter === UNASSIGNED_ORGANIZATION_ID
+                ? "Existing clients stay Unassigned until you link them from Edit Client."
+                : orgFilter
+                  ? "Create a client in this organization or assign one from Edit Client."
+                  : "Add a client to begin. You can attach a Watcher in the same flow or pair one later."}
             action={!query && (
-              <Link href="/patients/new" className="btn-primary">
+              <Link href={newHref} className="btn-primary">
                 <Plus size={16} /> Add the first client
               </Link>
             )}

@@ -120,6 +120,7 @@ from .routers import integrations as integrations_router  # noqa: E402
 from .routers import partner as partner_router  # noqa: E402
 from .routers import knowledge as knowledge_router  # noqa: E402
 from .routers import personalities as personalities_router  # noqa: E402
+from .routers import organizations as organizations_router  # noqa: E402
 
 app.include_router(user_router.router, prefix="/api")
 app.include_router(agent_router.router, prefix="/api")
@@ -140,6 +141,7 @@ app.include_router(voice_router.router, prefix="/api")
 app.include_router(integrations_router.router, prefix="/api")
 app.include_router(knowledge_router.router, prefix="/api")
 app.include_router(personalities_router.router, prefix="/api")
+app.include_router(organizations_router.router, prefix="/api")
 
 
 @app.get("/readyz")

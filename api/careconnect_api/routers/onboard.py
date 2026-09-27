@@ -73,6 +73,7 @@ from ..personalities.store import (
     default_personality_id,
     personality_mapping,
 )
+from ..organizations import resolve_organization_id
 from ..rbac import assert_can_access_agent
 from ..settings import settings
 from ..watcher_device import get_watcher_device
@@ -125,6 +126,7 @@ class OnboardRequest(BaseModel):
     topicsToAvoid: list[str] = Field(default_factory=list)
     personaOverride: str | None = None
     personalityId: str | None = None
+    organizationId: str | None = None
     botName: str | None = None
     # Optional device attach in same call (the wizard's last step)
     eui: str | None = None
@@ -317,6 +319,7 @@ async def onboard_agent(
             creator=user.id,
             created_at=func.now(),
             updated_at=func.now(),
+            organization_id=await resolve_organization_id(db, payload.organizationId),
         )
         db.add(agent)
         await db.flush()
@@ -714,6 +717,7 @@ async def onboard_template(
         "topicsToAvoid": [],
         "personaOverride": None,
         "personalityId": "sys_witty_tech_sidekick",
+        "organizationId": None,
         "botName": None,
         "eui": None,
         "deviceAlias": None,
@@ -756,6 +760,7 @@ class ClientPatchRequest(BaseModel):
     topicsToAvoid: list[str] | None = None
     personaOverride: str | None = None
     personalityId: str | None = None
+    organizationId: str | None = None
 
 
 _GUARDRAIL_FALLBACK = {
@@ -893,12 +898,14 @@ async def patch_agent(
     bot_name_provided = "botName" in provided
     bot_name = _sanitize_bot_name(payload.botName) if bot_name_provided else None
     profile_keys_provided = [k for k in PROFILE_KEYS if k in provided]
+    org_provided = "organizationId" in provided
 
     if (
         not name
         and system_prompt is None
         and not bot_name_provided
         and not profile_keys_provided
+        and not org_provided
     ):
         raise APIException(
             400,
@@ -920,6 +927,15 @@ async def patch_agent(
     if bot_name_provided and bot_name != agent.bot_name:
         agent.bot_name = bot_name
         fields_changed.append("botName")
+    if org_provided:
+        new_org = await resolve_organization_id(
+            db,
+            payload.organizationId,
+            allow_inactive_id=agent.organization_id,
+        )
+        if new_org != agent.organization_id:
+            agent.organization_id = new_org
+            fields_changed.append("organizationId")
 
     rebuilt_prompt = False
     if profile_keys_provided or bot_name_provided or name is not None:

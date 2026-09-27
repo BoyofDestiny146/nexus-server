@@ -14,6 +14,7 @@ export interface ClientFormDraft {
   topicsToAvoid: string[];
   personaOverride: string;
   personalityId: string;
+  organizationId: string;
 }
 
 export const EMPTY_CLIENT_DRAFT: ClientFormDraft = {
@@ -27,6 +28,7 @@ export const EMPTY_CLIENT_DRAFT: ClientFormDraft = {
   topicsToAvoid: [],
   personaOverride: "",
   personalityId: DEFAULT_PERSONALITY_ID,
+  organizationId: "",
 };
 
 export const CLIENT_FORM_STEPS = [
@@ -66,6 +68,7 @@ export function draftFromAgent(agent: Pick<
   | "topicsToAvoid"
   | "personaOverride"
   | "personalityId"
+  | "organizationId"
 >): ClientFormDraft {
   return {
     name: agent.agentName ?? "",
@@ -78,6 +81,7 @@ export function draftFromAgent(agent: Pick<
     topicsToAvoid: [...(agent.topicsToAvoid ?? [])],
     personaOverride: agent.personaOverride ?? "",
     personalityId: agent.personalityId ?? "",
+    organizationId: agent.organizationId ?? "",
   };
 }
 
@@ -97,6 +101,7 @@ export function normalizeDraft(d: ClientFormDraft): ClientFormDraft {
     topicsToAvoid: d.topicsToAvoid.map((t) => t.trim()).filter(Boolean),
     personaOverride: d.personaOverride.trim(),
     personalityId: d.personalityId.trim(),
+    organizationId: d.organizationId.trim(),
   };
 }
 
@@ -113,5 +118,6 @@ export function clientPatchBody(draft: ClientFormDraft): Record<string, unknown>
     topicsToAvoid: n.topicsToAvoid,
     personaOverride: n.personaOverride || null,
     personalityId: n.personalityId || null,
+    organizationId: n.organizationId || null,
   };
 }

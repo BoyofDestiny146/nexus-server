@@ -38,6 +38,10 @@ export function ProfileReview({ draft }: { draft: ClientFormDraft }) {
       />
       <ReviewRow label="Condition" value={draft.condition || "—"} />
       <ReviewRow label="Tags" value={draft.tags.length ? draft.tags.join(", ") : "—"} />
+      <ReviewRow
+        label="Organization"
+        value={draft.organizationId.trim() || "Unassigned"}
+      />
       <ReviewRow label="Escalation" value={draft.escalationPhrases.length ? draft.escalationPhrases.join(", ") : "—"} />
       <ReviewRow label="Avoid topics" value={draft.topicsToAvoid.length ? draft.topicsToAvoid.join(", ") : "—"} />
       <ReviewRow

@@ -1,10 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ClientFormDraft } from "@/lib/clientForm";
 import { TAG_SUGGESTIONS } from "@/lib/clientForm";
 import { ageFromDob } from "@/lib/format";
 import { ChipInput } from "@/components/ChipInput";
+import { apiGet } from "@/lib/api";
+import type { Organization } from "@/lib/types";
+import { UNASSIGNED_ORGANIZATION_ID } from "@/lib/types";
 
 export function ProfileFields({
   draft,
@@ -16,6 +19,24 @@ export function ProfileFields({
   autoFocusName?: boolean;
 }) {
   const age = useMemo(() => draft.age ?? ageFromDob(draft.dob), [draft.dob, draft.age]);
+  const [orgs, setOrgs] = useState<Organization[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<{ organizations: Organization[] }>("/organizations?includeInactive=true")
+      .then((data) => {
+        if (!cancelled) setOrgs(data.organizations || []);
+      })
+      .catch(() => {
+        if (!cancelled) setOrgs([]);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const selectable = orgs.filter(
+    (o) => o.status === "active" || o.id === draft.organizationId,
+  );
+
   return (
     <div className="space-y-7">
       <div>
@@ -30,6 +51,29 @@ export function ProfileFields({
           required
         />
         <div className="helper">As shown on the roster card and dashboard headings.</div>
+      </div>
+
+      <div>
+        <label htmlFor="client-organization" className="label">Organization</label>
+        <select
+          id="client-organization"
+          className="input"
+          value={draft.organizationId || UNASSIGNED_ORGANIZATION_ID}
+          onChange={(e) => {
+            const next = e.target.value;
+            update("organizationId", next === UNASSIGNED_ORGANIZATION_ID ? "" : next);
+          }}
+        >
+          <option value={UNASSIGNED_ORGANIZATION_ID}>Unassigned</option>
+          {selectable.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name}{o.status !== "active" ? " (inactive)" : ""}
+            </option>
+          ))}
+        </select>
+        <div className="helper">
+          Groups this client under a facility or customer. Independent of personality, voice, and knowledge.
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">

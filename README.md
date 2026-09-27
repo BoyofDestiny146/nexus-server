@@ -138,6 +138,14 @@ Existing free-text `personaOverride` is kept in profile JSON and shown as
 “Legacy custom persona” until an operator picks a library personality. It
 is not deleted. Verify with `api/migrations/023_cc_agent_personality.verify.sql`.
 
+Apply `api/migrations/024_cc_organization.sql` for customer/facility grouping
+(`cc_organization` plus nullable `ai_agent.organization_id`). Existing
+clients stay **Unassigned** until linked. Organization is grouping only in
+v1 — it is not an authorization boundary. Future org-scoped admins can add
+`cc_admin_organization(admin_user_id, organization_id)` and filter agents by
+`organization_id IN (...)` while keeping `cc_admin_client_access`. Verify
+with `api/migrations/024_cc_organization.verify.sql`.
+
 ## Nexus Revel table binding + write path (Phase 2C)
 
 Live Data Table PUTs stay **off**. Only the API process env
@@ -209,6 +217,14 @@ docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
 docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
   'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
   < api/migrations/023_cc_agent_personality.verify.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/024_cc_organization.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/024_cc_organization.verify.sql
 ```
 
 ### Operator-selected test player (do not auto-bind)

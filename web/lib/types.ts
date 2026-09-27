@@ -12,6 +12,7 @@ export interface AgentSummary {
   language: string | null;
   riskLevel: RiskLevel | null;
   createdAt: string | null;
+  organizationId?: string | null;
 }
 
 export interface AgentDetail extends AgentSummary {
@@ -33,6 +34,7 @@ export interface AgentDetail extends AgentSummary {
   topicsToAvoid?: string[];
   personaOverride?: string | null;
   personalityId?: string | null;
+  organizationId?: string | null;
   assessmentProfile?: AssessmentProfileDefinition | null;
 }
 
@@ -112,6 +114,29 @@ export interface AgentPersonality {
 
 export const DEFAULT_PERSONALITY_ID = "sys_witty_tech_sidekick";
 export const LEGACY_PERSONALITY_ID = "legacy_custom_persona";
+export const UNASSIGNED_ORGANIZATION_ID = "unassigned";
+
+export type OrganizationStatus = "active" | "inactive";
+
+export interface Organization {
+  id: string;
+  name: string;
+  status: OrganizationStatus | string;
+  mainContactName?: string | null;
+  mainContactEmail?: string | null;
+  mainContactPhone?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postalCode?: string | null;
+  country?: string | null;
+  notes?: string | null;
+  clientCount?: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  clients?: Array<{ id: string; agentName: string | null; createdAt?: string | null }>;
+}
 
 export const PERSONALITY_SECTION_ORDER: Array<{ key: string; label: string }> = [
   { key: "system", label: "System" },
@@ -176,6 +201,7 @@ export interface OnboardRequest {
   topicsToAvoid?: string[];
   personaOverride?: string | null;
   personalityId?: string | null;
+  organizationId?: string | null;
   botName?: string | null;
   eui?: string | null;
   deviceAlias?: string | null;

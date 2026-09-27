@@ -75,6 +75,7 @@ def _agent_summary(
         # careconnect extension: latest risk level so the dashboard can render
         # a risk dot per card without an N+1 fetch.
         "riskLevel": risk_level,
+        "organizationId": agent.organization_id,
     }
 
 
@@ -113,6 +114,7 @@ def _agent_info(agent: AiAgent) -> dict[str, Any]:
         "topicsToAvoid": profile.get("topicsToAvoid") or [],
         "personaOverride": profile.get("personaOverride"),
         "personalityId": profile.get("personalityId"),
+        "organizationId": agent.organization_id,
         # Resolved Nexus Assessment Engine profile. Missing/unknown/unimplemented
         # stored values become care_wellness; wizard fields are unchanged.
         "assessmentProfile": resolved_assessment_profile_dict(agent.profile_json),
@@ -189,13 +191,26 @@ async def _latest_risk_by_agent(
 
 @router.get("/list", response_model=None)
 async def list_agents(
+    organizationId: str | None = Query(None),
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    """Agents the current user can see (root: all; admin: scoped)."""
+    """Agents the current user can see (root: all; admin: scoped).
+
+    Optional ``organizationId`` filters grouping. Use ``unassigned`` for
+    clients with no organization. Omitted returns every visible client.
+    """
     scope = await scoped_agent_ids(db, user)
 
     stmt = select(AiAgent).order_by(AiAgent.sort.asc(), AiAgent.created_at.desc())
+    if organizationId is not None:
+        from ..organizations import normalize_organization_ref
+
+        oid = normalize_organization_ref(organizationId)
+        if oid is None:
+            stmt = stmt.where(AiAgent.organization_id.is_(None))
+        else:
+            stmt = stmt.where(AiAgent.organization_id == oid)
     if scope is not None:
         if not scope:
             return []

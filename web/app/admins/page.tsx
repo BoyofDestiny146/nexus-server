@@ -56,7 +56,7 @@ function AdminsView() {
       <PageHeader
         kicker="Access"
         title="Administrators"
-        subtitle="Add other staff to this dashboard. Scope an admin to specific clients to limit what they can see."
+        subtitle="Dashboard users. Organization grouping is separate — assign clients to organizations from the client Profile step. Per-organization user scope is not enforced yet."
         actions={
           <button onClick={() => setCreateOpen(true)} className="btn-primary">
             <Plus size={16} /> Add admin
