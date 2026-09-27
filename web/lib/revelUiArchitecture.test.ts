@@ -53,11 +53,8 @@ test("structured Revel events render in the conversation, not as caregiver\/clie
   assert.match(detail, /RevelDisplayEvent/);
   assert.match(detail, /data-testid="revel-timeline-item"/);
   assert.match(eventCard, /data-testid="revel-display-event"/);
-  const revelBranch = detail.slice(detail.indexOf("if (revel)"));
-  const caregiverBranch = revelBranch.indexOf("fromCaregiver");
-  const revelReturn = revelBranch.indexOf("return (");
-  assert.ok(revelReturn >= 0);
-  assert.ok(caregiverBranch < 0 || caregiverBranch > revelReturn);
+  assert.match(detail, /item\.type === "revel_display"/);
+  assert.match(detail, /item\.type === "revel_context"/);
   assert.match(eventCard, /Display event/);
   assert.doesNotMatch(eventCard, /"caregiver"/);
   assert.doesNotMatch(eventCard, /\{fromCaregiver \? "caregiver" : "client"\}/);
@@ -98,11 +95,13 @@ test("desktop layout remains approximately 26 \/ 48 \/ 26", () => {
   assert.match(detail, /PATIENT_DETAIL_RIGHT/);
 });
 
-test("REVEL CONTEXT appears from parent-owned topic tag and stays separate from DISPLAY EVENT", () => {
+test("REVEL CONTEXT is a chronological timeline item, not a pinned group header", () => {
   assert.match(detail, /patientDetailConversationRevel\(revelStatus\)/);
+  assert.match(detail, /buildConversationTimeline\(messages, revelContext\)/);
   assert.match(detail, /RevelContextCard/);
   assert.match(detail, /data-testid="revel-context-item"/);
-  assert.match(detail, /gi === 0 && revelContext/);
+  assert.match(detail, /data-testid="conversation-timeline"/);
+  assert.doesNotMatch(detail, /gi === 0 && revelContext/);
   assert.match(contextCard, /data-testid="revel-context-card"/);
   assert.match(contextCard, /revelContextCardModel/);
   assert.match(contextCard, /card\.title/);

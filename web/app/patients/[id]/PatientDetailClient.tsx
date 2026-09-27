@@ -13,7 +13,12 @@ import type {
 } from "@/lib/types";
 import { deviceSetupUrl } from "@/lib/serverConfig";
 import { classNames, dayLabel, relativeTime, shortTime } from "@/lib/format";
-import { parseGcalTimeline, isSystemChat } from "@/lib/calendarTimeline";
+import { parseGcalTimeline } from "@/lib/calendarTimeline";
+import {
+  buildConversationTimeline,
+  groupTimelineByDay,
+  type ConversationTimelineItem,
+} from "@/lib/conversationTimeline";
 import { revelTimelineFromMessage } from "@/lib/revelTimeline";
 import {
   PATIENT_DETAIL_CENTER,
@@ -67,6 +72,94 @@ function shortSessionId(id: string): string {
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return <div className="kicker px-2 mb-1.5">{children}</div>;
+}
+
+function TimelineRow({ item }: { item: ConversationTimelineItem }) {
+  if (item.type === "revel_context") {
+    return (
+      <li className="flex justify-center" data-testid="revel-context-item">
+        <RevelContextCard context={item.context} />
+      </li>
+    );
+  }
+  if (item.type === "revel_display") {
+    const revel = revelTimelineFromMessage(item.message);
+    if (revel) {
+      return (
+        <li className="flex justify-center" data-testid="revel-timeline-item">
+          <RevelDisplayEvent event={revel} timestamp={item.message.createdAt} />
+        </li>
+      );
+    }
+  }
+  if (item.type === "calendar" || item.type === "revel_display") {
+    const m = item.message;
+    const gcal = parseGcalTimeline(m.content);
+    const when = shortTime(gcal?.occurrenceStart || m.createdAt);
+    const spoken = (gcal?.spokenText || m.content || "").trim();
+    return (
+      <li className="flex justify-center">
+        <div className="w-full max-w-[min(100%,28rem)] border border-dashed border-slate-line bg-bone-soft/70 rounded-card px-3.5 py-2.5">
+          <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-muted">
+            <Calendar size={12} className="shrink-0 text-slate-muted" aria-hidden />
+            <span>Calendar reminder{when ? ` · ${when}` : ""}</span>
+          </div>
+          {spoken ? (
+            <div className="mt-1.5 text-[13.5px] leading-relaxed text-slate-deep whitespace-pre-wrap">
+              {spoken}
+            </div>
+          ) : null}
+        </div>
+      </li>
+    );
+  }
+
+  const m = item.message;
+  const fromCaregiver = m.chatType === 2;
+  return (
+    <li
+      className={classNames(
+        "flex",
+        fromCaregiver ? "justify-end" : "justify-start",
+      )}
+    >
+      <div className={classNames(
+        "max-w-[min(100%,22rem)] sm:max-w-[70%] flex flex-col gap-1",
+        fromCaregiver ? "items-end" : "items-start",
+      )}>
+        <div className={classNames(
+          "px-3.5 py-2 rounded-2xl text-[14px] leading-[1.45]",
+          fromCaregiver
+            ? "bg-teal-tint border border-teal/15 text-slate-deep rounded-tr-sm"
+            : "bg-bone-soft border border-slate-line/70 text-slate-deep rounded-tl-sm",
+        )}>
+          {(() => {
+            const ph = m.content.match(/^\s*\[\[photo:([^\]]+)\]\]\s*([\s\S]*)$/);
+            if (ph) {
+              return (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={ph[1]}
+                    alt="Captured by the Watcher camera"
+                    className="rounded-lg mb-1.5 max-h-56 w-auto border border-slate-line/60"
+                  />
+                  {ph[2] ? <div>{ph[2]}</div> : null}
+                </>
+              );
+            }
+            return m.content;
+          })()}
+        </div>
+        <div className={classNames(
+          "text-[10px] uppercase tracking-[0.12em] text-slate-muted px-1",
+          fromCaregiver ? "text-right" : "text-left",
+        )}>
+          {fromCaregiver ? "caregiver" : "client"} · {shortTime(m.createdAt)}
+        </div>
+      </div>
+    </li>
+  );
 }
 
 function PanelAction({
@@ -329,21 +422,17 @@ function PatientDetailView({ id }: { id: string }) {
     }
   }
 
-  // Group messages by day for date dividers
-  const grouped = useMemo(() => {
-    const out: Array<{ day: string; items: ChatMessage[] }> = [];
-    for (const m of messages) {
-      const d = dayLabel(m.createdAt);
-      const last = out[out.length - 1];
-      if (last && last.day === d) last.items.push(m);
-      else out.push({ day: d, items: [m] });
-    }
-    return out;
-  }, [messages]);
-
   const { revelContext } = useMemo(
     () => patientDetailConversationRevel(revelStatus),
     [revelStatus],
+  );
+
+  const grouped = useMemo(
+    () => groupTimelineByDay(
+      buildConversationTimeline(messages, revelContext),
+      dayLabel,
+    ),
+    [messages, revelContext],
   );
 
   if (agentError) {
@@ -557,113 +646,29 @@ function PatientDetailView({ id }: { id: string }) {
           )}
 
           {!loadingMsgs && grouped.length === 0 && (
-            <>
-              {revelContext ? (
-                <div className="mb-7 max-w-2xl mx-auto">
-                  <ol className="space-y-4">
-                    <li className="flex justify-center" data-testid="revel-context-item">
-                      <RevelContextCard context={revelContext} />
-                    </li>
-                  </ol>
-                </div>
-              ) : null}
-              <EmptyState
-                icon={MessageCircle}
-                title="No messages in this session"
-                body="When the client speaks to the Watcher, the conversation will stream in here."
-              />
-            </>
+            <EmptyState
+              icon={MessageCircle}
+              title="No messages in this session"
+              body="When the client speaks to the Watcher, the conversation will stream in here."
+            />
           )}
 
           {!loadingMsgs && grouped.map((group, gi) => (
             <div key={gi} className="mb-7 max-w-2xl mx-auto">
-              <div className="flex items-center gap-3 mb-3.5">
-                <div className="kicker">{group.day}</div>
-                <div className="flex-1 h-px grid-rule" />
-              </div>
-              <ol className="space-y-4">
-                {gi === 0 && revelContext ? (
-                  <li className="flex justify-center" data-testid="revel-context-item">
-                    <RevelContextCard context={revelContext} />
-                  </li>
-                ) : null}
-                {group.items.map((m) => {
-                  const revel = revelTimelineFromMessage(m);
-                  const gcal = parseGcalTimeline(m.content);
-                  if (revel) {
-                    return (
-                      <li key={m.id} className="flex justify-center" data-testid="revel-timeline-item">
-                        <RevelDisplayEvent event={revel} timestamp={m.createdAt} />
-                      </li>
-                    );
-                  }
-                  if (isSystemChat(m.chatType) || gcal) {
-                    const when = shortTime(gcal?.occurrenceStart || m.createdAt);
-                    const spoken = (gcal?.spokenText || m.content || "").trim();
-                    return (
-                      <li key={m.id} className="flex justify-center">
-                        <div className="w-full max-w-[min(100%,28rem)] border border-dashed border-slate-line bg-bone-soft/70 rounded-card px-3.5 py-2.5">
-                          <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-muted">
-                            <Calendar size={12} className="shrink-0 text-slate-muted" aria-hidden />
-                            <span>Calendar reminder{when ? ` · ${when}` : ""}</span>
-                          </div>
-                          {spoken ? (
-                            <div className="mt-1.5 text-[13.5px] leading-relaxed text-slate-deep whitespace-pre-wrap">
-                              {spoken}
-                            </div>
-                          ) : null}
-                        </div>
-                      </li>
-                    );
-                  }
-                  const fromCaregiver = m.chatType === 2;
-                  return (
-                    <li key={m.id}
-                        className={classNames(
-                          "flex",
-                          fromCaregiver ? "justify-end" : "justify-start",
-                        )}>
-                      <div className={classNames(
-                        "max-w-[min(100%,22rem)] sm:max-w-[70%] flex flex-col gap-1",
-                        fromCaregiver ? "items-end" : "items-start",
-                      )}>
-                        <div className={classNames(
-                          "px-3.5 py-2 rounded-2xl text-[14px] leading-[1.45]",
-                          fromCaregiver
-                            ? "bg-teal-tint border border-teal/15 text-slate-deep rounded-tr-sm"
-                            : "bg-bone-soft border border-slate-line/70 text-slate-deep rounded-tl-sm",
-                        )}>
-                          {(() => {
-                            const ph = m.content.match(/^\s*\[\[photo:([^\]]+)\]\]\s*([\s\S]*)$/);
-                            if (ph) {
-                              return (
-                                <>
-                                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                                  <img
-                                    src={ph[1]}
-                                    alt="Captured by the Watcher camera"
-                                    className="rounded-lg mb-1.5 max-h-56 w-auto border border-slate-line/60"
-                                  />
-                                  {ph[2] ? <div>{ph[2]}</div> : null}
-                                </>
-                              );
-                            }
-                            return m.content;
-                          })()}
-                        </div>
-                        <div className={classNames(
-                          "text-[10px] uppercase tracking-[0.12em] text-slate-muted px-1",
-                          fromCaregiver ? "text-right" : "text-left",
-                        )}>
-                          {fromCaregiver ? "caregiver" : "client"} · {shortTime(m.createdAt)}
-                        </div>
-                      </div>
-                    </li>
-                  );
-                })}
+              {group.day ? (
+                <div className="flex items-center gap-3 mb-3.5">
+                  <div className="kicker">{group.day}</div>
+                  <div className="flex-1 h-px grid-rule" />
+                </div>
+              ) : null}
+              <ol className="space-y-4" data-testid="conversation-timeline">
+                {group.items.map((item) => (
+                  <TimelineRow key={item.key} item={item} />
+                ))}
               </ol>
             </div>
           ))}
+
         </div>
 
         {/* Right: current assessment */}

@@ -111,8 +111,10 @@ test("parent-owned live status {tag:care_overview, autoTrigger:true, device:null
   );
   assert.equal(card.rows.some((row) => row.label === "Display"), false);
 
-  assert.match(detail, /RevelContextCard context=\{revelContext\}/);
+  assert.match(detail, /RevelContextCard context=\{item\.context\}/);
   assert.match(detail, /data-testid="revel-context-item"/);
+  assert.match(detail, /data-testid="conversation-timeline"/);
+  assert.doesNotMatch(detail, /gi === 0 && revelContext/);
   assert.match(contextCard, /revelContextCardModel\(context\)/);
   assert.match(contextCard, /\{card\.title\}/);
   assert.match(contextCard, /card\.rows\.map/);
