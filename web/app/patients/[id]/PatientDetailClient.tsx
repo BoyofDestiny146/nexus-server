@@ -196,7 +196,6 @@ function PatientDetailView({ id }: { id: string }) {
   const [loadingMsgs, setLoadingMsgs] = useState(false);
 
   const [latest, setLatest] = useState<MedicalAssessment | null>(null);
-  const [history, setHistory] = useState<MedicalAssessment[]>([]);
   const [regenBusy, setRegenBusy] = useState(false);
 
   const [devices, setDevices] = useState<DeviceRow[]>([]);
@@ -228,16 +227,15 @@ function PatientDetailView({ id }: { id: string }) {
     } catch { /* ignore */ }
   }
 
-  // Initial load: agent details + sessions + latest assessment + history + devices
+  // Initial load: agent details + sessions + latest assessment + devices
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const [a, s, l, h, d] = await Promise.allSettled([
+        const [a, s, l, d] = await Promise.allSettled([
           apiGet<AgentDetail>(`/agent/${id}`),
           apiGet<ChatSession[] | { list: ChatSession[] }>(`/agent/${id}/sessions`),
           apiGet<MedicalAssessment | null>(`/agent/${id}/assessment/latest`),
-          apiGet<MedicalAssessment[]>(`/agent/${id}/assessment/history?days=14`),
           apiGet<DeviceRow[]>(`/device/bind/${id}`),
         ]);
         if (cancelled) return;
@@ -249,7 +247,6 @@ function PatientDetailView({ id }: { id: string }) {
           if (arr && arr[0]) setActiveSession(arr[0].sessionId);
         }
         if (l.status === "fulfilled") setLatest(l.value);
-        if (h.status === "fulfilled") setHistory(h.value ?? []);
         if (d.status === "fulfilled") setDevices(d.value ?? []);
       } catch {
         /* per-call errors handled above */
@@ -386,12 +383,6 @@ function PatientDetailView({ id }: { id: string }) {
   useEffect(() => {
     if (live.liveAssessment) {
       setLatest(live.liveAssessment);
-      setHistory((prev) => {
-        const without = prev.filter((a) => a.id !== live.liveAssessment!.id);
-        return [...without, live.liveAssessment!].sort(
-          (a, b) => new Date(a.forDate).getTime() - new Date(b.forDate).getTime(),
-        );
-      });
     }
   }, [live.assessmentTick, live.liveAssessment]);
 
@@ -408,8 +399,6 @@ function PatientDetailView({ id }: { id: string }) {
     try {
       const next = await apiPost<MedicalAssessment>(`/agent/${id}/assessment/regenerate`);
       setLatest(next);
-      setHistory((prev) => [...prev.filter((p) => p.id !== next.id), next]
-        .sort((a, b) => new Date(a.forDate).getTime() - new Date(b.forDate).getTime()));
     } catch (e) {
       // surface failure but don't crash
       console.error("regenerate failed:", e);
@@ -664,7 +653,6 @@ function PatientDetailView({ id }: { id: string }) {
           agentId={id}
           initialProfile={agent.assessmentProfile}
           latest={latest}
-          history={history}
           isRoot={isRoot}
           regenBusy={regenBusy}
           onRegenerate={regenerate}

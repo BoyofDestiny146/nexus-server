@@ -3,29 +3,21 @@
 import { Loader2, RefreshCw } from "lucide-react";
 import type { MedicalAssessment, RiskLevel } from "@/lib/types";
 import { relativeTime } from "@/lib/format";
-import { Sparkline } from "@/components/Sparkline";
 
 export function CareWellnessPanel({
   latest,
-  history,
   isRoot,
   regenBusy,
   onRegenerate,
 }: {
   latest: MedicalAssessment | null;
-  history: MedicalAssessment[];
   isRoot: boolean;
   regenBusy: boolean;
   onRegenerate: () => void;
 }) {
   return (
     <div data-testid="care-wellness-panel">
-      <div className="kicker mb-2">14-day risk</div>
-      <div className="w-full overflow-hidden">
-        <Sparkline data={history} width={280} height={48} />
-      </div>
-
-      <div className="mt-6" data-testid="latest-assessment">
+      <div data-testid="latest-assessment">
         <div className="kicker mb-3">Latest assessment</div>
         {latest ? (
           <>

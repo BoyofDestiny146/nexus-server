@@ -25,7 +25,6 @@ export function AssessmentEngineRail({
   agentId,
   initialProfile,
   latest,
-  history,
   isRoot,
   regenBusy,
   onRegenerate,
@@ -34,7 +33,6 @@ export function AssessmentEngineRail({
   agentId: string;
   initialProfile?: AssessmentProfileDefinition | null;
   latest: MedicalAssessment | null;
-  history: MedicalAssessment[];
   isRoot: boolean;
   regenBusy: boolean;
   onRegenerate: () => void;
@@ -116,7 +114,6 @@ export function AssessmentEngineRail({
         {showCareWellness ? (
           <CareWellnessPanel
             latest={latest}
-            history={history}
             isRoot={isRoot}
             regenBusy={regenBusy}
             onRegenerate={onRegenerate}

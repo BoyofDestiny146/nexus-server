@@ -67,15 +67,25 @@ test("right rail is Nexus Assessment Engine with selector then Care & Wellness",
 });
 
 test("right panel still renders existing Care & Wellness data", () => {
-  assert.match(care, /14-day risk/);
   assert.match(care, /Latest assessment/);
   assert.match(care, /latest\.riskLevel/);
   assert.match(care, /latest\.confidence/);
   assert.match(care, /latest\.concerns/);
   assert.match(care, /latest\.recommendations/);
   assert.match(care, /Regenerate/);
-  assert.match(care, /Sparkline/);
   assert.match(care, /No current observations/);
+  assert.doesNotMatch(care, /14-day risk/);
+  assert.doesNotMatch(care, /Sparkline/);
+});
+
+test("assessment history API remains for future longitudinal analysis", () => {
+  const assessmentRouter = readFileSync(
+    join(here, "../../api/careconnect_api/routers/assessment.py"),
+    "utf8",
+  );
+  assert.match(assessmentRouter, /\/agent\/\{agent_id\}\/assessment\/history/);
+  assert.doesNotMatch(detail, /assessment\/history/);
+  assert.doesNotMatch(rail, /Sparkline/);
 });
 
 test("decorative graphic and red mockup divider are absent", () => {
