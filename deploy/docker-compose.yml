@@ -138,7 +138,8 @@ services:
       CC_TTS_URL: "http://piper-tts:5500"
       CC_VOICE_CONFIG_PATH: "/data/voice_config.json"
       # Empty = no outbound CareConnect HTTP. Set only to a *separate* receiver;
-      # same-host URLs (care.nexus.warehouse-13.biz) are skipped.
+      # same-host URLs are skipped (nexus.warehouse-13.biz canonical,
+      # care.nexus.warehouse-13.biz legacy alias).
       CC_CARECONNECT_INGEST_URL: "${CC_CARECONNECT_INGEST_URL:-}"
       # Knowledge retrieval sidecar (extract/embed/Qdrant). Empty disables indexing.
       CC_KNOWLEDGE_SERVICE_URL: "http://knowledge-service:8090"

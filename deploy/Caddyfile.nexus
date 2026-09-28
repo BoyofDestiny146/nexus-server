@@ -1,57 +1,65 @@
 {
-    auto_https disable_redirects
+	auto_https disable_redirects
+}
+
+http://nexus.warehouse-13.biz {
+	redir https://nexus.warehouse-13.biz{uri} 308
 }
 
 http://care.nexus.warehouse-13.biz {
-    redir https://care.nexus.warehouse-13.biz{uri} 308
+	redir https://nexus.warehouse-13.biz{uri} 308
 }
 
 care.nexus.warehouse-13.biz {
-    @root path /
-    redir @root /careconnect/login 302
+	redir https://nexus.warehouse-13.biz{uri} 308
+}
 
-    handle /api/v1/* {
-        reverse_proxy api:8080
-    }
+nexus.warehouse-13.biz {
+	@root path /
+	redir @root /careconnect/login 302
 
-    handle /api/* {
-        reverse_proxy api:8080
-    }
+	handle /api/v1/* {
+		reverse_proxy api:8080
+	}
 
-    handle /ws/* {
-        reverse_proxy api:8080 {
-            transport http {
-                versions 1.1
-            }
-        }
-    }
+	handle /api/* {
+		reverse_proxy api:8080
+	}
 
-    handle /photos/* {
-        root * /srv
-        file_server
-    }
+	handle /ws/* {
+		reverse_proxy api:8080 {
+			transport http {
+				versions 1.1
+			}
+		}
+	}
 
-    # Dynamic Knowledge URLs use the same dummy-id export as Client detail.
-    handle /careconnect/knowledge/* {
-        root * /srv/web
-        try_files {path} {path}/index.html /knowledge/_/index.html
-        file_server
-    }
-    handle /* {
-        root * /srv/web
-        try_files {path} {path}/index.html /patients/_/index.html
-        file_server
-    }
+	handle /photos/* {
+		root * /srv
+		file_server
+	}
+
+	# Dynamic Knowledge URLs use the same dummy-id export as Client detail.
+	handle /careconnect/knowledge/* {
+		root * /srv/web
+		try_files {path} {path}/index.html /knowledge/_/index.html
+		file_server
+	}
+	handle /* {
+		root * /srv/web
+		try_files {path} {path}/index.html /patients/_/index.html
+		file_server
+	}
 }
 
 ota.nexus.warehouse-13.biz {
-    reverse_proxy xiaozhi-server:8003
+	reverse_proxy xiaozhi-server:8003
 }
 
 ws.nexus.warehouse-13.biz {
-    reverse_proxy xiaozhi-server:8000 {
-        transport http {
-            versions 1.1
-        }
-    }
+	reverse_proxy xiaozhi-server:8000 {
+		transport http {
+			versions 1.1
+		}
+	}
 }

@@ -71,7 +71,7 @@ interface Props {
 type Panel = "careconnect" | "revel" | "google_calendar" | "knowledge" | null;
 type Copied = "credentials" | "endpoint" | null;
 
-const DEFAULT_PORTAL = "https://care.nexus.warehouse-13.biz";
+const DEFAULT_PORTAL = "https://nexus.warehouse-13.biz";
 const DEFAULT_ASSESSMENT_PATH = "/api/v1/integrations/careconnect/assessment";
 
 function portalOf(row: ClientIntegration | undefined): string {

@@ -22,7 +22,7 @@ from careconnect_api.partner_payload import (
 
 
 _ASSESSMENT_PATH = "/api/v1/integrations/careconnect/assessment"
-_PORTAL = "https://care.nexus.warehouse-13.biz"
+_PORTAL = "https://nexus.warehouse-13.biz"
 _ENDPOINT = f"{_PORTAL}{_ASSESSMENT_PATH}"
 _API_KEY = "test-api-key-abc123"
 _ASSESSMENT_PK = 8000

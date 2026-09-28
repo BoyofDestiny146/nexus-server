@@ -25,11 +25,14 @@ log = logging.getLogger("partner_push")
 PROVIDER_CARECONNECT = "careconnect"
 
 # Hosts that are this deployment, never an external CareConnect receiver.
+# nexus.warehouse-13.biz is canonical; care.nexus.warehouse-13.biz is the
+# legacy portal alias. Both must skip outbound push to avoid a loop.
 _SELF_HOSTS = {
     "localhost",
     "127.0.0.1",
     "::1",
     "api",
+    "nexus.warehouse-13.biz",
     "care.nexus.warehouse-13.biz",
 }
 

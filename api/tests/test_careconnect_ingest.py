@@ -24,7 +24,9 @@ from careconnect_api.settings import settings
 _INGEST = "/api/v1/integrations/careconnect/ingest"
 _ASSESSMENT = "/api/v1/integrations/careconnect/assessment"
 _ASSESSMENT_PK = 9100
-_LOCAL_INGEST = "https://care.nexus.warehouse-13.biz/api/v1/integrations/careconnect/ingest"
+_CANONICAL_INGEST = "https://nexus.warehouse-13.biz/api/v1/integrations/careconnect/ingest"
+_LEGACY_INGEST = "https://care.nexus.warehouse-13.biz/api/v1/integrations/careconnect/ingest"
+_LOCAL_INGEST = _CANONICAL_INGEST
 _EXTERNAL_INGEST = "https://careconnect.example.org/api/v1/integrations/careconnect/ingest"
 
 
@@ -141,16 +143,21 @@ class _CaptureClient:
 
 
 def test_self_push_url_detects_local_careconnect_host():
-    assert is_self_push_url(_LOCAL_INGEST)
+    assert is_self_push_url(_CANONICAL_INGEST)
+    assert is_self_push_url(_LEGACY_INGEST)
     assert is_self_push_url("http://127.0.0.1:8080/api/v1/integrations/careconnect/ingest")
     assert is_self_push_url("http://api:8080/api/v1/integrations/careconnect/ingest")
     assert is_self_push_url(
-        "https://care.nexus.warehouse-13.biz/api/v1/integrations/careconnect/ingest",
-        portal_base="https://care.nexus.warehouse-13.biz",
+        _CANONICAL_INGEST,
+        portal_base="https://nexus.warehouse-13.biz",
+    )
+    assert is_self_push_url(
+        _LEGACY_INGEST,
+        portal_base="https://nexus.warehouse-13.biz",
     )
     assert not is_self_push_url(_EXTERNAL_INGEST)
     assert not is_self_push_url(
-        _EXTERNAL_INGEST, portal_base="https://care.nexus.warehouse-13.biz"
+        _EXTERNAL_INGEST, portal_base="https://nexus.warehouse-13.biz"
     )
 
 
@@ -261,6 +268,27 @@ async def test_same_host_url_self_push_skipped(
     row = await _seed_assessment(db_session, agent_id)
     captured: dict = {"calls": 0}
     monkeypatch.setattr(settings, "careconnect_ingest_url", _LOCAL_INGEST)
+    monkeypatch.setattr(
+        "careconnect_api.partner_push.httpx.AsyncClient", _CaptureClient(captured)
+    )
+    caplog.set_level(logging.INFO)
+    ok = await push_assessment_best_effort(db_session, agent_id, row)
+    assert ok is False
+    assert captured.get("calls", 0) == 0
+    assert "self-push skipped" in caplog.text
+    assert public_id in caplog.text
+    assert secret not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_legacy_care_nexus_host_self_push_skipped(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch, caplog
+):
+    agent_id = await _onboard(client, admin_token, "Push Legacy")
+    public_id, secret = await _connect_cc(client, admin_token, agent_id)
+    row = await _seed_assessment(db_session, agent_id)
+    captured: dict = {"calls": 0}
+    monkeypatch.setattr(settings, "careconnect_ingest_url", _LEGACY_INGEST)
     monkeypatch.setattr(
         "careconnect_api.partner_push.httpx.AsyncClient", _CaptureClient(captured)
     )

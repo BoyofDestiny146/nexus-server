@@ -127,8 +127,9 @@ class Settings(BaseSettings):
     # (outbound push only). GET/dashboard CareConnect auth uses bcrypt hash.
     integration_secret_key_file: Path = CFG_DIR / "integration-secret-key"
 
-    # Public CareConnect portal (connection package + partner GET base).
-    portal_base_url: str = "https://care.nexus.warehouse-13.biz"
+    # Public Nexus portal (connection package + partner GET base).
+    # Canonical host. care.nexus.warehouse-13.biz is a legacy Caddy 308 alias.
+    portal_base_url: str = "https://nexus.warehouse-13.biz"
     # Used when serializing partner assessment timestamps. Matches compose TZ.
     tz: str = "America/Chicago"
     # Outbound push destination. Empty (default) = no outbound HTTP.
