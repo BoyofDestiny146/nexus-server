@@ -227,6 +227,8 @@ async def test_other_client_attach_without_force_returns_409(
 
     conflict = await _attach(client, admin_token, agent_b, _STRIPPED_MAC, alias="bob-watch")
     assert conflict["code"] == 409, conflict
+    assert conflict["msg"] == "watcher_already_bound"
+    assert conflict["data"]["conflict"] == "watcher_already_bound"
     assert conflict["data"]["existingAgentId"] == agent_a
     assert conflict["data"]["deviceId"] == _CANONICAL_ID
 
@@ -250,4 +252,166 @@ async def test_other_client_attach_without_force_returns_409(
     assert rebound.alias == "bob-watch"
     assert rebound.mac_address == _COLON_MAC
     assert rebound.battery == 77
+    assert await _watcher_row_count(db_session) == 1
+
+
+_OTHER_COLON_MAC = "44:1B:F6:81:A6:EC"
+_OTHER_CANONICAL_ID = "watcher-441bf681a6ec"
+
+
+async def _auto_register_watcher(client: AsyncClient, mac: str) -> None:
+    resp = await client.post(
+        "/api/v1/watcher/heartbeat",
+        json={"mac": mac, "battery": 80, "fw": "1.9.0", "rssi": -40},
+        headers=_HEADERS_KEY,
+    )
+    body = resp.json()
+    assert body["code"] == 0, body
+
+
+@pytest.mark.asyncio
+async def test_unbound_list_requires_auth(client: AsyncClient):
+    resp = await client.get("/api/device/unbound")
+    assert resp.json()["code"] == 401
+
+
+@pytest.mark.asyncio
+async def test_unbound_watchers_appear_and_bound_do_not(
+    client: AsyncClient, admin_token: str
+):
+    agent_id = await _onboard_client(client, admin_token, name="Alice")
+    await _auto_register_colon_watcher(client)
+    await _auto_register_watcher(client, _OTHER_COLON_MAC)
+
+    listed = await client.get("/api/device/unbound", headers=_auth(admin_token))
+    body = listed.json()
+    assert body["code"] == 0, body
+    macs = {row["macAddress"] for row in body["data"]}
+    ids = {row["id"] for row in body["data"]}
+    assert _COLON_MAC in macs
+    assert _OTHER_COLON_MAC in macs
+    assert _CANONICAL_ID in ids
+    assert _OTHER_CANONICAL_ID in ids
+    assert all(row["agentId"] is None for row in body["data"])
+
+    bound = await _attach(client, admin_token, agent_id, _COLON_MAC, alias="alice-watch")
+    assert bound["code"] == 0, bound
+
+    after = await client.get("/api/device/unbound", headers=_auth(admin_token))
+    after_body = after.json()
+    assert after_body["code"] == 0, after_body
+    after_macs = {row["macAddress"] for row in after_body["data"]}
+    assert _COLON_MAC not in after_macs
+    assert _OTHER_COLON_MAC in after_macs
+    assert all(row["agentId"] is None for row in after_body["data"])
+
+
+@pytest.mark.asyncio
+async def test_unbound_list_empty_when_no_watchers(
+    client: AsyncClient, admin_token: str
+):
+    listed = await client.get("/api/device/unbound", headers=_auth(admin_token))
+    body = listed.json()
+    assert body["code"] == 0, body
+    assert body["data"] == []
+
+
+@pytest.mark.asyncio
+async def test_stale_unbound_selection_rejected_without_stealing(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession
+):
+    """Dropdown loaded an unbound Watcher that another client bound before submit."""
+    agent_a = await _onboard_client(client, admin_token, name="Alice")
+    agent_b = await _onboard_client(client, admin_token, name="Bob")
+    await _auto_register_colon_watcher(client)
+
+    preview = await client.get("/api/device/unbound", headers=_auth(admin_token))
+    assert {row["macAddress"] for row in preview.json()["data"]} == {_COLON_MAC}
+
+    first = await _attach(client, admin_token, agent_a, _COLON_MAC, alias="alice-watch")
+    assert first["code"] == 0, first
+    assert first["data"]["deviceId"] == _CANONICAL_ID
+    assert first["data"]["agentId"] == agent_a
+
+    stale = await _attach(
+        client, admin_token, agent_b, _COLON_MAC, alias="bob-watch", force=False
+    )
+    assert stale["code"] == 409, stale
+    assert stale["msg"] == "watcher_already_bound"
+    assert stale["data"]["conflict"] == "watcher_already_bound"
+    assert stale["data"]["existingAgentId"] == agent_a
+    assert stale["data"]["deviceId"] == _CANONICAL_ID
+
+    after = await _reload(db_session)
+    assert after.agent_id == agent_a
+    assert after.alias == "alice-watch"
+    assert after.mac_address == _COLON_MAC
+
+
+@pytest.mark.asyncio
+async def test_admin_device_all_still_lists_bound_and_unbound(
+    client: AsyncClient, admin_token: str
+):
+    agent_id = await _onboard_client(client, admin_token, name="Alice")
+    await _auto_register_colon_watcher(client)
+    await _auto_register_watcher(client, _OTHER_COLON_MAC)
+    bound = await _attach(client, admin_token, agent_id, _COLON_MAC, alias="alice-watch")
+    assert bound["code"] == 0, bound
+
+    resp = await client.get(
+        "/api/admin/device/all?page=1&limit=20", headers=_auth(admin_token)
+    )
+    body = resp.json()
+    assert body["code"] == 0, body
+    rows = body["data"]["list"]
+    by_mac = {row["macAddress"]: row for row in rows}
+    assert _COLON_MAC in by_mac
+    assert _OTHER_COLON_MAC in by_mac
+    assert by_mac[_COLON_MAC]["agentId"] == agent_id
+    assert by_mac[_OTHER_COLON_MAC]["agentId"] is None
+    assert body["data"]["total"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_attach_from_unbound_dropdown_creates_same_binding_record(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession
+):
+    """Selecting a Watcher still POSTs /device/attach and keeps id/MAC/telemetry."""
+    agent_id = await _onboard_client(client, admin_token)
+    await _auto_register_colon_watcher(client)
+
+    listed = await client.get("/api/device/unbound", headers=_auth(admin_token))
+    assert listed.json()["code"] == 0
+    picked = listed.json()["data"][0]
+    assert picked["id"] == _CANONICAL_ID
+    assert picked["macAddress"] == _COLON_MAC
+    assert picked["agentId"] is None
+
+    # Same payload the dropdown builds: eui from the inventory row, no force.
+    resp = await client.post(
+        "/api/device/attach",
+        json={
+            "agentId": agent_id,
+            "eui": picked["macAddress"],
+            "alias": "george",
+            "deviceType": "W1-A",
+            "firmwareType": "xiaozhi",
+        },
+        headers=_auth(admin_token),
+    )
+    body = resp.json()
+    assert body["code"] == 0, body
+    assert body["data"]["deviceId"] == _CANONICAL_ID
+    assert body["data"]["agentId"] == agent_id
+    assert body["data"]["eui"] == _COLON_MAC
+    assert body["data"]["alias"] == "george"
+
+    after = await _reload(db_session)
+    assert after.id == _CANONICAL_ID
+    assert after.mac_address == _COLON_MAC
+    assert after.agent_id == agent_id
+    assert after.alias == "george"
+    assert after.battery == 77
+    assert after.fw == "1.9.0"
+    assert after.rssi == -50
     assert await _watcher_row_count(db_session) == 1

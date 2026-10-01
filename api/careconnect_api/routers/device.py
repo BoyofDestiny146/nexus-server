@@ -196,6 +196,33 @@ async def set_device_client_id(
     return _device_row(dev)
 
 
+# ---------- 1d. GET /device/unbound — Watchers not bound to any client ----------
+
+@router.get("/device/unbound", response_model=None)
+async def list_unbound_devices(
+    _user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Return Watchers whose ``agent_id`` is NULL.
+
+    The server applies this filter — callers must not assume the UI already
+    dropped bound devices. Used by the client "Attach a Watcher" dropdown.
+    The Devices page continues to list every Watcher via ``/admin/device/all``.
+    """
+    rows = (
+        await db.execute(
+            select(AiDevice, _LAST_CHAT_AT)
+            .where(AiDevice.agent_id.is_(None))
+            .order_by(
+                AiDevice.last_connected_at.is_(None),
+                AiDevice.last_connected_at.desc(),
+            )
+            .limit(200)
+        )
+    ).all()
+    return [_device_row(d, last_chat_at=chat_at) for (d, chat_at) in rows]
+
+
 # ---------- 2. GET /admin/device/all — root-only paged list ----------
 
 @router.get("/admin/device/all", response_model=None)

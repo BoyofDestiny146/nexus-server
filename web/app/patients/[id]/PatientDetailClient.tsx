@@ -4,14 +4,23 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  Calendar, ChevronLeft, MessageCircle, Cpu, Loader2, Trash2, AlertTriangle, Copy,
+  Calendar, ChevronLeft, MessageCircle, Cpu, Loader2, Trash2, AlertTriangle,
   Pencil, Check, X, Plus, type LucideIcon,
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete, ApiError, getCurrentUser } from "@/lib/api";
 import type {
   AgentDetail, ChatSession, ChatMessage, MedicalAssessment, DeviceRow,
 } from "@/lib/types";
-import { deviceSetupUrl } from "@/lib/serverConfig";
+import {
+  ATTACH_DEVICE_PATH,
+  EMPTY_UNBOUND_WATCHERS,
+  UNBOUND_WATCHERS_PATH,
+  attachWatcherErrorMessage,
+  attachWatcherPayload,
+  canAttachWatcher,
+  formatWatcherOption,
+  watcherAliasPrefill,
+} from "@/lib/attachWatcher";
 import { classNames, dayLabel, relativeTime, shortTime } from "@/lib/format";
 import { parseGcalTimeline } from "@/lib/calendarTimeline";
 import {
@@ -802,14 +811,6 @@ function DeviceIdEditor({
   );
 }
 
-function normalizeEui(raw: string): string {
-  return raw.replace(/[\s:\-]/g, "").toUpperCase();
-}
-function isValidEui(raw: string): boolean {
-  const n = normalizeEui(raw);
-  return /^[0-9A-F]{12}$|^[0-9A-F]{16}$/.test(n);
-}
-
 interface AttachResponse {
   deviceId: string;
   eui: string;
@@ -828,49 +829,62 @@ function AttachDeviceModal({
   agentId: string;
   onAttached: (res: AttachResponse) => void;
 }) {
-  const [euiText, setEuiText] = useState("");
+  const [unbound, setUnbound] = useState<DeviceRow[] | null>(null);
+  const [selectedId, setSelectedId] = useState("");
   const [alias, setAlias] = useState("");
-  const [force, setForce] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (open) {
-      setEuiText(""); setAlias(""); setForce(false);
-      setCopied(false); setErr(null); setBusy(false);
-    }
+    if (!open) return;
+    setSelectedId("");
+    setAlias("");
+    setBusy(false);
+    setErr(null);
+    setLoadErr(null);
+    setUnbound(null);
+    let cancelled = false;
+    apiGet<DeviceRow[]>(UNBOUND_WATCHERS_PATH)
+      .then((list) => {
+        if (!cancelled) setUnbound(list);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setLoadErr(e instanceof ApiError ? e.message : "Could not load unbound Watchers.");
+        setUnbound([]);
+      });
+    return () => { cancelled = true; };
   }, [open]);
 
-  const valid = isValidEui(euiText);
-  const setupUrl = deviceSetupUrl();
+  const selected = unbound?.find((d) => d.id === selectedId) ?? null;
+  const loading = unbound === null;
+  const empty = unbound !== null && unbound.length === 0 && !loadErr;
+  const canSubmit = canAttachWatcher({
+    selectedId,
+    unboundCount: unbound?.length ?? 0,
+    busy,
+    loading,
+  });
 
-  async function submit() {
-    if (busy || !valid) return;
-    setBusy(true); setErr(null);
-    try {
-      const res = await apiPost<AttachResponse>("/device/attach", {
-        agentId,
-        eui: normalizeEui(euiText),
-        alias: alias.trim() || undefined,
-        force,
-        deviceType: "W1-A",
-        firmwareType: "xiaozhi",
-      });
-      onAttached(res);
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Could not attach device.");
-      setBusy(false);
-    }
+  function onSelectWatcher(id: string) {
+    setSelectedId(id);
+    const next = unbound?.find((d) => d.id === id) ?? null;
+    setAlias(watcherAliasPrefill(next));
   }
 
-  async function copyUrl() {
+  async function submit() {
+    if (!canSubmit || !selected) return;
+    setBusy(true); setErr(null);
     try {
-      await navigator.clipboard.writeText(setupUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard might be unavailable in older browsers — silent */
+      const res = await apiPost<AttachResponse>(
+        ATTACH_DEVICE_PATH,
+        attachWatcherPayload(agentId, selected, alias),
+      );
+      onAttached(res);
+    } catch (e) {
+      setErr(attachWatcherErrorMessage(e));
+      setBusy(false);
     }
   }
 
@@ -880,7 +894,12 @@ function AttachDeviceModal({
       footer={
         <>
           <button onClick={onClose} className="btn-secondary">Cancel</button>
-          <button onClick={submit} disabled={!valid || busy} className="btn-primary">
+          <button
+            onClick={submit}
+            disabled={!canSubmit}
+            className="btn-primary"
+            data-testid="attach-device-submit"
+          >
             {busy && <Loader2 size={14} className="animate-spin" />}
             <Cpu size={14} /> Attach device
           </button>
@@ -888,50 +907,53 @@ function AttachDeviceModal({
       }
     >
       <div className="space-y-5">
-        <div>
-          <label htmlFor="attach-eui" className="label">EUI or MAC</label>
-          <input
-            id="attach-eui" className="input font-mono"
-            placeholder="e.g. D0:CF:13:26:E9:34 or D0CF1326E934"
-            value={euiText}
-            onChange={(e) => setEuiText(e.target.value.toUpperCase())}
-            autoFocus
-          />
-          <div className="helper">12 hex chars = MAC, 16 hex chars = full EUI-64. Colons, dashes, and spaces are ignored.</div>
-        </div>
-        <div>
-          <label htmlFor="attach-alias" className="label">Device alias (optional)</label>
-          <input
-            id="attach-alias" className="input"
-            placeholder="e.g. Client A — room 204"
-            value={alias}
-            onChange={(e) => setAlias(e.target.value)}
-          />
-        </div>
-        <div className="card p-4 bg-teal-tint/40 border-teal/30">
-          <div className="kicker mb-2">Point your Watcher at this URL</div>
-          <code className="font-mono text-[13px] block break-all">{setupUrl}</code>
-          <button onClick={copyUrl} className="btn-ghost text-[12px] mt-2 inline-flex items-center gap-1.5">
-            <Copy size={12} /> {copied ? "Copied" : "Copy"}
-          </button>
-          <p className="text-[12px] text-slate-muted mt-2">
-            Open the XiaoZhi mobile app, go to Device Settings → OTA URL, and paste this URL.
-          </p>
-        </div>
-        <label className="flex items-start gap-3 text-[13.5px] text-slate-deep cursor-pointer">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={force}
-            onChange={(e) => setForce(e.target.checked)}
-          />
-          <span>
-            <span className="block">Force re-bind from another client</span>
-            <span className="block text-[12px] text-slate-muted leading-relaxed">
-              If this device is currently bound to someone else, unbind it first instead of failing.
-            </span>
-          </span>
-        </label>
+        {loading && (
+          <div className="text-[13px] text-slate-muted">Loading unbound Watchers…</div>
+        )}
+        {loadErr && (
+          <div className="text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">
+            {loadErr}
+          </div>
+        )}
+        {empty && (
+          <div
+            className="text-[13.5px] text-slate-deep leading-relaxed border border-slate-line/80 bg-bone-soft/60 rounded-card px-3 py-3"
+            data-testid="attach-unbound-empty"
+          >
+            {EMPTY_UNBOUND_WATCHERS}
+          </div>
+        )}
+        {unbound && unbound.length > 0 && (
+          <div>
+            <label htmlFor="attach-watcher-select" className="label">Select Watcher</label>
+            <select
+              id="attach-watcher-select"
+              className="input"
+              value={selectedId}
+              onChange={(e) => onSelectWatcher(e.target.value)}
+              autoFocus
+              data-testid="attach-watcher-select"
+            >
+              <option value="">Select a Watcher</option>
+              {unbound.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {formatWatcherOption(d)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {unbound && unbound.length > 0 && (
+          <div>
+            <label htmlFor="attach-alias" className="label">Device alias (optional)</label>
+            <input
+              id="attach-alias" className="input"
+              placeholder="e.g. Client A — room 204"
+              value={alias}
+              onChange={(e) => setAlias(e.target.value)}
+            />
+          </div>
+        )}
         {err && (
           <div className="text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">
             {err}

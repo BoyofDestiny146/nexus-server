@@ -11,8 +11,10 @@ Endpoints
 * ``POST /api/agent/onboard``  — wizard "Create Client" submit. All-or-nothing
   insert of ai_agent (+ optional ai_device + cc_admin_client_access).
 * ``POST /api/device/attach``  — standalone Watcher attach for an existing
-  client. Idempotent if the EUI is already bound to the same agent;
-  ``force=true`` allows re-binding from another client.
+  client. Idempotent if the EUI is already bound to the same agent.
+  A Watcher bound to a different client is rejected with
+  ``watcher_already_bound`` unless ``force=true``. The dashboard attach
+  modal never sends force — it only offers unbound Watchers.
 * ``POST /api/device/{deviceId}/unbind`` — return a Watcher to the unbound
   pool. Preserves the ``ai_device`` row, client/person, chat, assessments,
   and reminders. Clears voice config + per-device Chroma and best-effort
@@ -414,8 +416,10 @@ async def attach_device(
     """Bind a Watcher EUI to an existing client.
 
     Idempotent: re-attaching the same EUI to the same agent updates the
-    alias (if provided) and returns the existing row. ``force=true`` is
-    required to re-bind from a different agent.
+    alias (if provided) and returns the existing row. A Watcher that is
+    already bound to a different client is rejected with conflict
+    ``watcher_already_bound`` unless ``force=true``. The dashboard never
+    sends force, so a stale dropdown selection cannot steal the device.
     """
     await assert_can_access_agent(db, user, payload.agentId)
 
@@ -445,15 +449,18 @@ async def attach_device(
                 return _device_response(existing)
 
             # Bound to a different agent. Unbound (agent_id NULL) auto-registered
-            # Watchers are attachable without force. force=true is required to
-            # yank a Watcher from another client. RBAC: also confirm the user
-            # can act on the currently-bound agent.
+            # Watchers are attachable without force. The dashboard dropdown only
+            # lists unbound devices, but another caller may have bound this
+            # Watcher after the list loaded — never silently steal it.
             if existing.agent_id and not payload.force:
                 raise APIException(
                     409,
-                    f"eui {eui} is already bound to agent {existing.agent_id}; "
-                    "pass force=true to re-bind",
-                    data={"existingAgentId": existing.agent_id, "deviceId": existing.id},
+                    "watcher_already_bound",
+                    data={
+                        "conflict": "watcher_already_bound",
+                        "existingAgentId": existing.agent_id,
+                        "deviceId": existing.id,
+                    },
                 )
             if existing.agent_id:
                 await assert_can_access_agent(db, user, existing.agent_id)
