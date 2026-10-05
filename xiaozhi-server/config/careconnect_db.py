@@ -266,6 +266,56 @@ def notify_chat_turn(
         log.debug("careconnect_db.notify_chat_turn failed (non-fatal): %s", e)
 
 
+def update_device_board(mac_address: str, board_type: str) -> bool:
+    """Persist firmware ``board.type`` / ``board.name`` onto ``ai_device.board``.
+
+    Called from the OTA CheckVersion handler so CareConnect's Devices Board
+    column tracks the live SKU (e.g. ``m5stack-core-s3``) instead of the
+    registration default ``sensecap_watcher``. Returns True when a row was
+    updated. Best-effort: never raises to the OTA path.
+    """
+    if not mac_address or not board_type:
+        return False
+    board = str(board_type).strip()
+    if not board or len(board) > 50:
+        return False
+    candidates = [mac_address, _normalize_mac(mac_address)]
+    candidates = list(dict.fromkeys(c for c in candidates if c))
+    try:
+        conn = _connect()
+        try:
+            with conn.cursor() as cur:
+                for cand in candidates:
+                    cur.execute(
+                        """
+                        UPDATE ai_device
+                           SET board = %s,
+                               update_date = NOW()
+                         WHERE mac_address = %s
+                           AND (board IS NULL OR board <> %s)
+                        """,
+                        (board, cand, board),
+                    )
+                    if cur.rowcount:
+                        log.info(
+                            "careconnect_db.update_device_board mac=%s board=%s",
+                            cand,
+                            board,
+                        )
+                        return True
+                return False
+        finally:
+            conn.close()
+    except Exception as e:
+        log.error(
+            "careconnect_db.update_device_board mac=%s board=%s failed: %s",
+            mac_address,
+            board,
+            e,
+        )
+        return False
+
+
 def report(
     mac_address: str,
     session_id: str,

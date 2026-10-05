@@ -20,6 +20,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import CurrentUser, get_current_user, require_root
+from ..board_display import friendly_board_name
 from ..db import get_db
 from ..envelope import APIException
 from ..models import AiAgent, AiAgentChatHistory, AiDevice
@@ -64,7 +65,9 @@ def _device_row(
         "clientDeviceId": dev.client_device_id,
         "agentId": dev.agent_id,
         "alias": dev.alias,
-        "board": dev.board,
+        # Display label only — DB may still hold the firmware slug
+        # (e.g. m5stack-core-s3 → Cube V1.0). See board_display.py.
+        "board": friendly_board_name(dev.board),
         "deviceType": dev.device_type,
         "firmwareType": dev.firmware_type,
         "lastConnectedAt": effective,

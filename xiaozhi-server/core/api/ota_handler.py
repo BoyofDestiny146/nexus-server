@@ -169,6 +169,25 @@ class OTAHandler(BaseHandler):
 
             data_json = json.loads(data)
 
+            # Best-effort: refresh ai_device.board from firmware board.type/name
+            # so CareConnect can map m5stack-core-s3 → Cube V1.0 after reconnect.
+            # Never fail the OTA response if MariaDB is unreachable.
+            try:
+                board_obj = data_json.get("board") or {}
+                board_slug = (
+                    (board_obj.get("type") if isinstance(board_obj, dict) else None)
+                    or (board_obj.get("name") if isinstance(board_obj, dict) else None)
+                    or ""
+                )
+                if board_slug:
+                    from config.careconnect_db import update_device_board
+
+                    update_device_board(device_id, str(board_slug))
+            except Exception as board_exc:
+                self.logger.bind(tag=TAG).debug(
+                    f"OTA board persist skipped: {board_exc}"
+                )
+
             server_config = self.config["server"]
             port = int(server_config.get("port", 8000))
             local_ip = get_local_ip()
