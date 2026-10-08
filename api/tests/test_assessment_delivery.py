@@ -475,6 +475,7 @@ async def test_tick_recovers_due_job(
     job = await enqueue_careconnect_delivery_safe(db_session, agent_id, row)
     await db_session.commit()
     assert job is not None
+    job_id = int(job.id)
     job.next_retry_at = datetime.now() - timedelta(seconds=1)
     await db_session.commit()
     captured: dict = {"calls": 0}
@@ -487,6 +488,7 @@ async def test_tick_recovers_due_job(
     assert captured["calls"] == 1
     assert captured["headers"]["X-Client-Secret"] == secret
     db_session.expire_all()
-    reloaded = await db_session.get(CcAssessmentDeliveryJob, job.id)
+    reloaded = await db_session.get(CcAssessmentDeliveryJob, job_id)
+    assert reloaded is not None
     assert reloaded.status == STATUS_DELIVERED
     assert reloaded.public_client_id == public_id
