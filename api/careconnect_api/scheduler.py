@@ -5,7 +5,8 @@ Currently runs:
 * per-client Care & Wellness due-check every ``settings.assessment_due_check_seconds``
   (default 300s). Sales is not on this job.
 * outbound CareConnect delivery worker every
-  ``settings.assessment_delivery_tick_seconds`` (default 15s)
+  ``settings.assessment_delivery_tick_seconds`` (default 15s). Inactive
+  (catalog check only) until migration 027 tables exist.
 * Google Calendar read-only reminder poll every ``settings.gcal_poll_seconds``
   (default 60s)
 

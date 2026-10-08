@@ -569,6 +569,8 @@ def test_delivery_defaults_to_careconnect_and_does_not_gate_portal_persist():
         Path(__file__).resolve().parents[1] / "careconnect_api" / "assessment_engine" / "sales_runner.py"
     ).read_text()
     assert "push_assessment_best_effort" in runner
+    assert "enqueue_careconnect_delivery" in runner
+    assert "DeliveryEnqueueError" in runner
     assert "assessOnEscalationPhrases" not in runner
     assert "assessmentDelivery" not in runner
     assert "assessOnEscalationPhrases" not in sales_runner

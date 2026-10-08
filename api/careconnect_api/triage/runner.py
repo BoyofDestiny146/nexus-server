@@ -333,13 +333,30 @@ async def run_for_agent(
     db.add(row)
     await db.flush()
     await db.refresh(row)
-    try:
-        from ..assessment_delivery import enqueue_careconnect_delivery_safe
+    # Persist + optional enqueue in this transaction. HTTP is after commit.
+    # Enqueue failure rolls back so a required job is never silently dropped.
+    # Chat in this window is kept; re-run after the queue is healthy.
+    from ..assessment_delivery import DeliveryEnqueueError, enqueue_careconnect_delivery
 
-        await enqueue_careconnect_delivery_safe(db, agent_id, row)
+    try:
+        await enqueue_careconnect_delivery(db, agent_id, row)
+        await db.commit()
+    except DeliveryEnqueueError:
+        await db.rollback()
+        log.error(
+            "triage: delivery enqueue failed; assessment rolled back agent=%s "
+            "(input chat preserved; re-run scheduled/manual/escalation after queue is healthy)",
+            agent_id,
+        )
+        raise
     except Exception:
-        log.warning("careconnect delivery enqueue raised before persist commit")
-    await db.commit()
+        await db.rollback()
+        log.error(
+            "triage: persist/enqueue failed; assessment rolled back agent=%s "
+            "(input chat preserved; re-run after the failure is corrected)",
+            agent_id,
+        )
+        raise
     await db.refresh(row)
     try:
         from ..partner_push import push_assessment_best_effort

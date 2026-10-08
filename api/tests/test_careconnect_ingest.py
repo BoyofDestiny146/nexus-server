@@ -16,8 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from careconnect_api.auth import ROLE_ROOT, hash_password, issue_token
 from careconnect_api.models import AiMedicalAssessment, ClientIntegration, SysUser
 from careconnect_api.partner_auth import AUTH_FAIL_MSG
+from careconnect_api.assessment_delivery import (
+    enqueue_careconnect_delivery,
+    kick_assessment_delivery,
+)
 from careconnect_api.partner_payload import serialize_client_assessment_payload
-from careconnect_api.partner_push import is_self_push_url, push_assessment_best_effort
+from careconnect_api.partner_push import is_self_push_url
 from careconnect_api.settings import settings
 
 
@@ -108,6 +112,14 @@ def _v1_payload(public_id: str, assessment: AiMedicalAssessment) -> dict:
         assessment=assessment,
         tz_name="America/Chicago",
     )
+
+
+async def _enqueue_then_kick(db: AsyncSession, agent_id: str, row: AiMedicalAssessment) -> bool:
+    job = await enqueue_careconnect_delivery(db, agent_id, row)
+    await db.commit()
+    if job is None:
+        return False
+    return await kick_assessment_delivery(db, int(row.id))
 
 
 class _CaptureClient:
@@ -248,7 +260,7 @@ async def test_env_unset_makes_no_outbound_http_call(
     monkeypatch.setattr(
         "careconnect_api.partner_push.httpx.AsyncClient", _CaptureClient(captured)
     )
-    ok = await push_assessment_best_effort(db_session, agent_id, row)
+    ok = await _enqueue_then_kick(db_session, agent_id, row)
     assert ok is False
     assert captured.get("calls", 0) == 0
     still = (
@@ -272,7 +284,7 @@ async def test_same_host_url_self_push_skipped(
         "careconnect_api.partner_push.httpx.AsyncClient", _CaptureClient(captured)
     )
     caplog.set_level(logging.INFO)
-    ok = await push_assessment_best_effort(db_session, agent_id, row)
+    ok = await _enqueue_then_kick(db_session, agent_id, row)
     assert ok is False
     assert captured.get("calls", 0) == 0
     assert "self-push skipped" in caplog.text
@@ -293,7 +305,7 @@ async def test_legacy_care_nexus_host_self_push_skipped(
         "careconnect_api.partner_push.httpx.AsyncClient", _CaptureClient(captured)
     )
     caplog.set_level(logging.INFO)
-    ok = await push_assessment_best_effort(db_session, agent_id, row)
+    ok = await _enqueue_then_kick(db_session, agent_id, row)
     assert ok is False
     assert captured.get("calls", 0) == 0
     assert "self-push skipped" in caplog.text
@@ -315,7 +327,7 @@ async def test_external_host_posts_v1_payload_without_logging_secret(
     )
     caplog.set_level(logging.INFO)
 
-    ok = await push_assessment_best_effort(db_session, agent_id, row)
+    ok = await _enqueue_then_kick(db_session, agent_id, row)
     assert ok is True
     assert captured["calls"] == 1
     assert captured["url"] == _EXTERNAL_INGEST
@@ -347,7 +359,7 @@ async def test_failed_external_push_keeps_committed_assessment(
     )
     caplog.set_level(logging.INFO)
 
-    ok = await push_assessment_best_effort(db_session, agent_id, row)
+    ok = await _enqueue_then_kick(db_session, agent_id, row)
     assert ok is False
     assert captured["calls"] == 1
     assert secret not in caplog.text

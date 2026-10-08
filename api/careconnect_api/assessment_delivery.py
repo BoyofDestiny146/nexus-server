@@ -1,9 +1,29 @@
 """Durable CareConnect assessment delivery queue, worker, and audit.
 
-Portal persist is independent: this module only enqueues and POSTs after a
-Care & Wellness row is already on ``ai_medical_assessment``. Sales results
-never enter the queue. API secrets are read at send time, never stored.
-Never log API secrets or sensitive assessment payloads.
+Transaction boundary
+--------------------
+``enqueue_careconnect_delivery`` inserts the job in the **caller's**
+transaction and does not commit or POST. ``triage.runner.run_for_agent``
+flushes ``ai_medical_assessment``, enqueues when outbound delivery is
+required, then commits once. HTTP runs only after that commit.
+
+When outbound delivery is required (eligible Care row, CareConnect
+selected, connected integration, external ingest URL) a queue insert
+failure raises ``DeliveryEnqueueError``. The runner rolls back, so the
+assessment row is not kept without its job.
+
+When delivery is disabled, disconnected, self-host, or otherwise not
+configured, enqueue returns None and local persist commits normally.
+
+Recovery after enqueue failure
+------------------------------
+Chat / input data is not deleted. Re-run the same Care window
+(scheduled, manual, or escalation) after the queue is healthy; the LLM
+result is recomputed and persist+enqueue is retried as one transaction.
+
+Never log API secrets or sensitive assessment payloads. Secrets are read
+at send time, never stored on queue rows. Sales results never enter the
+queue.
 """
 from __future__ import annotations
 
@@ -14,8 +34,8 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, inspect as sa_inspect, or_, select, update
+from sqlalchemy.exc import IntegrityError, ProgrammingError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .assessment_engine.delivery import (
@@ -44,6 +64,9 @@ log = logging.getLogger("assessment_delivery")
 
 _job_guard = asyncio.Lock()
 _jobs_held: set[int] = set()
+_schema_ready: bool | None = None
+_schema_next_check: datetime | None = None
+_schema_missing_logged = False
 
 STATUS_PENDING = "pending"
 STATUS_IN_PROGRESS = "in_progress"
@@ -54,6 +77,7 @@ STATUS_DEAD_LETTER = "dead_letter"
 ERROR_TIMEOUT = "timeout"
 ERROR_NETWORK = "network"
 ERROR_HTTP_4XX = "http_4xx"
+ERROR_HTTP_429 = "http_429"
 ERROR_HTTP_5XX = "http_5xx"
 ERROR_AUTH = "auth"
 ERROR_SELF_HOST = "self_host"
@@ -63,14 +87,32 @@ ERROR_NO_SECRET = "no_secret"
 ERROR_DESTINATION = "destination_disabled"
 ERROR_INELIGIBLE = "ineligible"
 ERROR_ENVELOPE = "envelope_error"
+ERROR_CONFLICT = "conflict"
+ERROR_CLIENT_MISMATCH = "client_id_mismatch"
+ERROR_SCHEMA = "schema_unavailable"
 
 PARSE_ERROR_TOKEN = "parse_error"
 IDEMPOTENCY_PREFIX = "cc-assess-"
 JOB_LOCK_PREFIX = "cc:delivery:job:"
+DELIVERY_JOB_TABLE = "cc_assessment_delivery_job"
+DELIVERY_ATTEMPT_TABLE = "cc_assessment_delivery_attempt"
+
+
+class DeliveryEnqueueError(Exception):
+    """Queue insert was required and failed. Caller must roll back persist."""
 
 
 def idempotency_key_for(assessment_id: int) -> str:
     return f"{IDEMPOTENCY_PREFIX}{int(assessment_id)}"
+
+
+def reset_delivery_runtime_for_tests() -> None:
+    """Clear schema cache and in-process locks (unit tests only)."""
+    global _schema_ready, _schema_next_check, _schema_missing_logged
+    _schema_ready = None
+    _schema_next_check = None
+    _schema_missing_logged = False
+    _jobs_held.clear()
 
 
 def _concerns_list(raw: str | None) -> list[str]:
@@ -107,6 +149,10 @@ def _ingest_dest() -> str:
     return (settings.careconnect_ingest_url or "").strip().rstrip("/")
 
 
+def _schema_retry_s() -> int:
+    return max(15, int(getattr(settings, "assessment_delivery_schema_retry_s", 60)))
+
+
 async def _sqlite_next_id(db: AsyncSession, model: type) -> int | None:
     conn = await db.connection()
     if conn.dialect.name != "sqlite":
@@ -115,15 +161,71 @@ async def _sqlite_next_id(db: AsyncSession, model: type) -> int | None:
     return int(nxt or 0) + 1
 
 
+async def delivery_tables_present(db: AsyncSession) -> bool:
+    """True when migration 027 tables exist. Uses catalog lookup, not SELECT *."""
+    conn = await db.connection()
+
+    def _check(sync_conn) -> bool:
+        insp = sa_inspect(sync_conn)
+        return insp.has_table(DELIVERY_JOB_TABLE) and insp.has_table(DELIVERY_ATTEMPT_TABLE)
+
+    return bool(await conn.run_sync(_check))
+
+
+async def delivery_schema_is_ready(
+    session_factory: Callable[[], Any] | None = None,
+    db: AsyncSession | None = None,
+) -> bool:
+    """Cached migration-readiness. Re-probes after retry interval without a process restart."""
+    global _schema_ready, _schema_next_check, _schema_missing_logged
+    now = datetime.now()
+    if _schema_ready is True:
+        return True
+    if (
+        _schema_ready is False
+        and _schema_next_check is not None
+        and now < _schema_next_check
+    ):
+        return False
+
+    present = False
+    if db is not None:
+        present = await delivery_tables_present(db)
+    else:
+        factory = session_factory or async_session_factory
+        async with factory() as session:
+            present = await delivery_tables_present(session)
+
+    if present:
+        if _schema_ready is False:
+            log.info("assessment delivery schema ready; worker resuming")
+        _schema_ready = True
+        _schema_next_check = None
+        _schema_missing_logged = False
+        return True
+
+    _schema_ready = False
+    _schema_next_check = now + timedelta(seconds=_schema_retry_s())
+    if not _schema_missing_logged:
+        log.warning(
+            "assessment delivery inactive: apply api/migrations/027_cc_assessment_delivery.sql"
+        )
+        _schema_missing_logged = True
+    return False
+
+
 async def enqueue_careconnect_delivery(
     db: AsyncSession,
     agent_id: str,
     assessment: AiMedicalAssessment,
 ) -> CcAssessmentDeliveryJob | None:
-    """Insert a pending job in the caller's transaction. Idempotent per assessment.
+    """Insert a pending job in the caller's transaction. Does not commit or POST.
 
-    Returns the job when outbound delivery is required and stored. Returns
-    None when policy says do not transmit. Does not POST.
+    Returns the job when outbound delivery is required and stored.
+    Returns None when policy says do not transmit (ineligible, destination
+    off, disconnected, missing ingest URL, self-host).
+    Raises DeliveryEnqueueError when a job was required and could not be stored.
+    Duplicate assessment_id is success (returns the existing row).
     """
     if not assessment_eligible_for_delivery(assessment):
         log.info("delivery skip assessment=%s reason=ineligible", getattr(assessment, "id", None))
@@ -148,6 +250,11 @@ async def enqueue_careconnect_delivery(
     if is_self_push_url(dest):
         log.info("careconnect self-push skipped public_id=%s", row.public_id)
         return None
+
+    if not await delivery_tables_present(db):
+        raise DeliveryEnqueueError(
+            "delivery schema unavailable; apply migration 027 before CareConnect enqueue"
+        )
 
     existing = (
         await db.execute(
@@ -182,41 +289,11 @@ async def enqueue_careconnect_delivery(
     if sqlite_id is not None:
         fields["id"] = sqlite_id
     job = CcAssessmentDeliveryJob(**fields)
-    db.add(job)
-    await db.flush()
-    await db.refresh(job)
-    log.info(
-        "delivery enqueued assessment=%s job=%s dest_host=%s",
-        assessment.id,
-        job.id,
-        job.dest_host,
-    )
-    return job
-
-
-async def enqueue_careconnect_delivery_safe(
-    db: AsyncSession,
-    agent_id: str,
-    assessment: AiMedicalAssessment,
-) -> CcAssessmentDeliveryJob | None:
-    """Enqueue without aborting the assessment transaction on duplicate jobs.
-
-    Uses a SAVEPOINT so a unique-constraint collision cannot poison the
-    caller's assessment persist. Interactive-log cleanup must wait until
-    this returns a job whenever outbound delivery is required.
-    """
-    existing = (
-        await db.execute(
-            select(CcAssessmentDeliveryJob).where(
-                CcAssessmentDeliveryJob.assessment_id == assessment.id
-            )
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        return existing
     try:
         async with db.begin_nested():
-            return await enqueue_careconnect_delivery(db, agent_id, assessment)
+            db.add(job)
+            await db.flush()
+            await db.refresh(job)
     except IntegrityError:
         found = (
             await db.execute(
@@ -227,11 +304,20 @@ async def enqueue_careconnect_delivery_safe(
         ).scalar_one_or_none()
         if found is not None:
             return found
-        log.warning("delivery enqueue conflict assessment=%s", assessment.id)
-        return None
-    except Exception:
-        log.warning("delivery enqueue failed assessment=%s", assessment.id)
-        return None
+        raise DeliveryEnqueueError(
+            f"delivery enqueue conflict assessment={assessment.id}"
+        ) from None
+    except (ProgrammingError, OperationalError) as exc:
+        raise DeliveryEnqueueError(
+            f"delivery enqueue failed assessment={assessment.id}"
+        ) from exc
+    log.info(
+        "delivery enqueued assessment=%s job=%s dest_host=%s",
+        assessment.id,
+        job.id,
+        job.dest_host,
+    )
+    return job
 
 
 def _backoff_seconds(attempt_count: int) -> float:
@@ -243,21 +329,28 @@ def _backoff_seconds(attempt_count: int) -> float:
 def _classify_http(status: int | None, envelope_code: Any) -> tuple[bool, str, bool]:
     """Return (success, error_category, retryable).
 
-    A timeout is classified elsewhere. 2xx + envelope code 0 is success.
-    409 is treated as idempotent success (receiver already has the job).
+    Success is only a 2xx HTTP status with envelope code 0 or no envelope
+    (plain 200/201/202 from a receiver that does not use {code,msg,data}).
+    HTTP 409 and envelope code 409 are conflicts for investigation, not
+    success and not retried. 429/5xx/timeout remain retryable. The in-tree
+    CareConnect ingest API has no documented duplicate-409 contract.
     """
     if status is None:
         return False, ERROR_NETWORK, True
     if status == 409:
-        return True, "", False
-    if 200 <= status < 300:
-        if envelope_code == 0 or envelope_code is None:
-            return True, "", False
-        return False, ERROR_ENVELOPE, True
+        return False, ERROR_CONFLICT, False
+    if status == 429:
+        return False, ERROR_HTTP_429, True
     if status in (401, 403):
         return False, ERROR_AUTH, True
-    if status == 408 or status == 429:
-        return False, ERROR_HTTP_5XX if status == 429 else ERROR_TIMEOUT, True
+    if status == 408:
+        return False, ERROR_TIMEOUT, True
+    if 200 <= status < 300:
+        if envelope_code in (0, None):
+            return True, "", False
+        if envelope_code == 409:
+            return False, ERROR_CONFLICT, False
+        return False, ERROR_ENVELOPE, True
     if 400 <= status < 500:
         return False, ERROR_HTTP_4XX, False
     if status >= 500:
@@ -460,6 +553,13 @@ async def deliver_job(db: AsyncSession, job_id: int) -> bool:
             or not integration.public_id
         ):
             return await _fail(ERROR_NOT_CONNECTED, retryable=True)
+        if integration.public_id != job.public_client_id:
+            log.warning(
+                "delivery client mismatch job=%s assessment=%s",
+                job.id,
+                job.assessment_id,
+            )
+            return await _fail(ERROR_CLIENT_MISMATCH, retryable=False)
         secret = _secret_for_push(integration)
         if not secret:
             return await _fail(ERROR_NO_SECRET, retryable=True)
@@ -483,7 +583,6 @@ async def deliver_job(db: AsyncSession, job_id: int) -> bool:
         except Exception as exc:
             name = type(exc).__name__
             category = ERROR_TIMEOUT if "timeout" in name.lower() or "Timeout" in name else ERROR_NETWORK
-            # Timeout is retryable: the receiver may already have the body.
             return await _fail(category, retryable=True)
 
         success, category, retryable = _classify_http(result.status_code, result.envelope_code)
@@ -521,12 +620,14 @@ async def tick_assessment_deliveries(
     limit: int = 10,
     session_factory: Callable[[], Any] | None = None,
 ) -> dict[str, int]:
-    """Bounded worker tick. Recovers expired leases. One attempt per due job."""
+    """Bounded worker tick. Inactive until migration 027 tables exist."""
     factory = session_factory or async_session_factory
+    if not await delivery_schema_is_ready(session_factory=factory):
+        return {"due": 0, "delivered": 0, "failed": 0, "inactive": 1}
+
     now = datetime.now()
     delivered = 0
     failed = 0
-    skipped = 0
     async with factory() as session:
         await session.execute(
             update(CcAssessmentDeliveryJob)
@@ -565,30 +666,29 @@ async def tick_assessment_deliveries(
             failed += 1
             log.warning("delivery tick job=%s err=%s", job_id, type(exc).__name__)
 
-    if not due:
-        skipped = 0
     log.info(
-        "assessment delivery tick due=%d delivered=%d failed=%d skipped=%d",
+        "assessment delivery tick due=%d delivered=%d failed=%d",
         len(due),
         delivered,
         failed,
-        skipped,
     )
-    return {"due": len(due), "delivered": delivered, "failed": failed}
+    return {"due": len(due), "delivered": delivered, "failed": failed, "inactive": 0}
 
 
 async def kick_assessment_delivery(db: AsyncSession, assessment_id: int) -> bool:
-    """Best-effort immediate attempt after persist. Never raises."""
-    job = (
-        await db.execute(
-            select(CcAssessmentDeliveryJob).where(
-                CcAssessmentDeliveryJob.assessment_id == assessment_id
-            )
-        )
-    ).scalar_one_or_none()
-    if job is None or job.status != STATUS_PENDING:
-        return False
+    """Best-effort immediate HTTP attempt after persist commit. Never raises."""
     try:
+        if not await delivery_tables_present(db):
+            return False
+        job = (
+            await db.execute(
+                select(CcAssessmentDeliveryJob).where(
+                    CcAssessmentDeliveryJob.assessment_id == assessment_id
+                )
+            )
+        ).scalar_one_or_none()
+        if job is None or job.status != STATUS_PENDING:
+            return False
         return await deliver_job(db, job.id)
     except Exception:
         log.warning("delivery kick raised assessment=%s", assessment_id)

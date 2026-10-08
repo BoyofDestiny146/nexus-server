@@ -124,24 +124,17 @@ async def push_assessment_best_effort(
     agent_id: str,
     assessment: AiMedicalAssessment,
 ) -> bool:
-    """Enqueue (idempotent) then attempt one delivery. Never raises.
+    """HTTP-only kick after persist. Never enqueues. Never raises.
 
-    Portal persist is the caller's responsibility. This no longer POSTs
-    without a durable queue row when transmission is required.
+    The delivery job must already be committed with the assessment. This
+    does not open a second enqueue after commit.
     """
+    _ = agent_id
     try:
-        from .assessment_delivery import (
-            enqueue_careconnect_delivery_safe,
-            kick_assessment_delivery,
-        )
+        from .assessment_delivery import kick_assessment_delivery
 
-        job = await enqueue_careconnect_delivery_safe(db, agent_id, assessment)
-        if job is None:
+        if assessment.id is None:
             return False
-        try:
-            await db.commit()
-        except Exception:
-            pass
         return await kick_assessment_delivery(db, int(assessment.id))
     except Exception:
         log.warning("careconnect push raised after persist")

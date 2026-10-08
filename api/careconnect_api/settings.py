@@ -140,6 +140,7 @@ class Settings(BaseSettings):
     assessment_delivery_max_attempts: int = 8
     assessment_delivery_backoff_base_s: float = 30.0
     assessment_delivery_lease_s: int = 90
+    assessment_delivery_schema_retry_s: int = 60
 
     # Google Calendar (read-only iCal). Poller speaks timed occurrences only.
     gcal_poll_seconds: int = 60
