@@ -139,6 +139,17 @@ Care & Wellness defaults to every 24 hours with `onlyIfNewData=true`;
 Sales stays manual. Verify with
 `api/migrations/026_assessment_trigger_metadata.verify.sql`.
 
+Apply `api/migrations/027_cc_assessment_delivery.sql` for the durable
+outbound CareConnect delivery queue (`cc_assessment_delivery_job`) and
+attempt audit (`cc_assessment_delivery_attempt`). Additive only — it does
+not alter `ai_medical_assessment`, `cc_assessment_result`, chat history,
+or CareConnect credential columns. One job per medical assessment. Payload
+snapshots are partner JSON; API secrets are never stored on queue rows.
+`assessmentDelivery` on `ai_agent.profile_json` gates outbound POST
+(CareConnect selected + connected integration + external ingest URL).
+Local assessment persist always continues. Verify with
+`api/migrations/027_cc_assessment_delivery.verify.sql`.
+
 Apply `api/migrations/023_cc_agent_personality.sql` for the Agent Personality
 library (`cc_agent_personality`). Clients store a `personalityId` on
 `ai_agent.profile_json`; canonical prompt text lives in the library.
@@ -247,6 +258,14 @@ docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
 docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
   'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
   < api/migrations/024_cc_organization.verify.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/027_cc_assessment_delivery.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/027_cc_assessment_delivery.verify.sql
 ```
 
 ### Operator-selected test player (do not auto-bind)

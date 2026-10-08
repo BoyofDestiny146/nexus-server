@@ -4,6 +4,8 @@ Currently runs:
 
 * per-client Care & Wellness due-check every ``settings.assessment_due_check_seconds``
   (default 300s). Sales is not on this job.
+* outbound CareConnect delivery worker every
+  ``settings.assessment_delivery_tick_seconds`` (default 15s)
 * Google Calendar read-only reminder poll every ``settings.gcal_poll_seconds``
   (default 60s)
 
@@ -21,6 +23,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+from .assessment_delivery import tick_assessment_deliveries
 from .assessment_scheduler import tick_due_assessments
 from .calendar_poller import poll_google_calendars
 from .settings import settings
@@ -51,11 +54,21 @@ def start_scheduler() -> None:
         misfire_grace_time=55,
         replace_existing=True,
     )
+    scheduler.add_job(
+        tick_assessment_deliveries,
+        IntervalTrigger(seconds=max(5, int(settings.assessment_delivery_tick_seconds))),
+        id="assessment_delivery",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=25,
+        replace_existing=True,
+    )
     scheduler.start()
     log.info(
-        "scheduler started (assessment_due_check every %ss, google_calendar_poll every %ss)",
+        "scheduler started (assessment_due_check every %ss, google_calendar_poll every %ss, assessment_delivery every %ss)",
         settings.assessment_due_check_seconds,
         settings.gcal_poll_seconds,
+        settings.assessment_delivery_tick_seconds,
     )
 
 

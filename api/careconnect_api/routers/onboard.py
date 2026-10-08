@@ -68,6 +68,8 @@ from ..models import (
     AiAgentChatHistory,
     AiDevice,
     AiMedicalAssessment,
+    CcAssessmentDeliveryAttempt,
+    CcAssessmentDeliveryJob,
     ClientIntegration,
     RevelPlayerMap,
 )
@@ -620,6 +622,7 @@ async def delete_agent(
       • cc_admin_client_access  — removes RBAC grants pointing at this agent
       • cc_revel_player_map      — removes stored Revel device-id mappings
       • cc_client_integration    — removes partner credentials (not Watchers)
+      • cc_assessment_delivery_attempt / cc_assessment_delivery_job
       • ai_medical_assessment    — removes triage rows
       • ai_agent_chat_history    — removes conversation rows
       • ai_device                — UNBINDS (sets agent_id=NULL) so the
@@ -668,6 +671,33 @@ async def delete_agent(
         )
         await db.execute(
             delete(ClientIntegration).where(ClientIntegration.agent_id == agent_id)
+        )
+        job_ids = (
+            await db.execute(
+                select(CcAssessmentDeliveryJob.id).where(
+                    CcAssessmentDeliveryJob.agent_id == agent_id
+                )
+            )
+        ).scalars().all()
+        if job_ids:
+            await db.execute(
+                delete(CcAssessmentDeliveryAttempt).where(
+                    CcAssessmentDeliveryAttempt.job_id.in_(job_ids)
+                )
+            )
+        await db.execute(
+            delete(CcAssessmentDeliveryAttempt).where(
+                CcAssessmentDeliveryAttempt.assessment_id.in_(
+                    select(AiMedicalAssessment.id).where(
+                        AiMedicalAssessment.agent_id == agent_id
+                    )
+                )
+            )
+        )
+        await db.execute(
+            delete(CcAssessmentDeliveryJob).where(
+                CcAssessmentDeliveryJob.agent_id == agent_id
+            )
         )
         await db.execute(
             delete(AiMedicalAssessment).where(AiMedicalAssessment.agent_id == agent_id)

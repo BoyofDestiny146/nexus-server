@@ -1,12 +1,14 @@
-"""Best-effort outbound CareConnect ingest push.
+"""Best-effort outbound CareConnect ingest POST.
 
-Outbound HTTP runs only when ``CC_CARECONNECT_INGEST_URL`` is set to a host
-that is not this Nexus/CareConnect stack. Redis is pub/sub only; there is no
-retry queue. ``ai_medical_assessment`` remains the source of truth.
+HTTP runs only when ``CC_CARECONNECT_INGEST_URL`` is an external host.
+Queueing, retries, and audit live in ``assessment_delivery``. Redis is
+pub/sub + job locks only. ``ai_medical_assessment`` remains the source of
+truth for portal persist. Secrets are passed at POST time, never logged.
 """
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
@@ -16,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .integration_crypto import decrypt_secret
 from .models import AiMedicalAssessment, ClientIntegration
-from .partner_payload import serialize_client_assessment_payload
 from .settings import settings
 
 
@@ -78,64 +79,70 @@ async def _careconnect_row(db: AsyncSession, agent_id: str) -> ClientIntegration
     ).scalar_one_or_none()
 
 
+@dataclass
+class IngestPostResult:
+    status_code: int
+    envelope_code: Any = None
+
+
+async def post_careconnect_ingest(
+    dest: str,
+    *,
+    payload: dict[str, Any],
+    public_id: str,
+    secret: str,
+    idempotency_key: str | None = None,
+) -> IngestPostResult:
+    """POST the existing partner JSON with existing X-Client-* auth.
+
+    Does not log the secret or payload. Caller classifies success/retry.
+    """
+    timeout = httpx.Timeout(settings.careconnect_push_timeout_s)
+    headers = {
+        "X-Client-Id": public_id,
+        "X-Client-Secret": secret,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
+        headers["X-Idempotency-Key"] = idempotency_key
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(dest, json=payload, headers=headers)
+    envelope_code: Any = None
+    try:
+        body = resp.json()
+        if isinstance(body, dict):
+            envelope_code = body.get("code")
+    except Exception:
+        envelope_code = None
+    return IngestPostResult(status_code=resp.status_code, envelope_code=envelope_code)
+
+
 async def push_assessment_best_effort(
     db: AsyncSession,
     agent_id: str,
     assessment: AiMedicalAssessment,
 ) -> bool:
-    """POST the v1 payload to an external receiver only. Never raises."""
-    dest = (settings.careconnect_ingest_url or "").strip().rstrip("/")
-    if not dest:
-        return False
-    public_id = "-"
+    """Enqueue (idempotent) then attempt one delivery. Never raises.
+
+    Portal persist is the caller's responsibility. This no longer POSTs
+    without a durable queue row when transmission is required.
+    """
     try:
-        row = await _careconnect_row(db, agent_id)
-        if row is None or (row.status or "connected") != "connected" or not row.public_id:
-            return False
-        public_id = row.public_id
-        if is_self_push_url(dest):
-            log.info("careconnect self-push skipped public_id=%s", public_id)
-            return False
-        secret = _secret_for_push(row)
-        if not secret:
-            log.info("careconnect push skipped public_id=%s reason=no-secret", public_id)
-            return False
-        payload: dict[str, Any] = serialize_client_assessment_payload(
-            public_client_id=public_id,
-            assessment=assessment,
+        from .assessment_delivery import (
+            enqueue_careconnect_delivery_safe,
+            kick_assessment_delivery,
         )
-        timeout = httpx.Timeout(settings.careconnect_push_timeout_s)
-        headers = {
-            "X-Client-Id": public_id,
-            "X-Client-Secret": secret,
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(dest, json=payload, headers=headers)
+
+        job = await enqueue_careconnect_delivery_safe(db, agent_id, assessment)
+        if job is None:
+            return False
         try:
-            body = resp.json()
+            await db.commit()
         except Exception:
-            body = None
-        ok = (
-            resp.status_code == 200
-            and isinstance(body, dict)
-            and body.get("code") == 0
-        )
-        if ok:
-            log.info("careconnect push ok public_id=%s", public_id)
-            return True
-        log.warning(
-            "careconnect push failed public_id=%s status=%s code=%s",
-            public_id,
-            resp.status_code,
-            body.get("code") if isinstance(body, dict) else None,
-        )
-        return False
-    except Exception as exc:
-        log.warning(
-            "careconnect push failed public_id=%s err=%s",
-            public_id,
-            type(exc).__name__,
-        )
+            pass
+        return await kick_assessment_delivery(db, int(assessment.id))
+    except Exception:
+        log.warning("careconnect push raised after persist")
         return False

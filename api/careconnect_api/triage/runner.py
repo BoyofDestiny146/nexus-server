@@ -331,6 +331,14 @@ async def run_for_agent(
         fields["id"] = sqlite_id
     row = AiMedicalAssessment(**fields)
     db.add(row)
+    await db.flush()
+    await db.refresh(row)
+    try:
+        from ..assessment_delivery import enqueue_careconnect_delivery_safe
+
+        await enqueue_careconnect_delivery_safe(db, agent_id, row)
+    except Exception:
+        log.warning("careconnect delivery enqueue raised before persist commit")
     await db.commit()
     await db.refresh(row)
     try:

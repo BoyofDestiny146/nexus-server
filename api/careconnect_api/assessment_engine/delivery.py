@@ -3,9 +3,10 @@
 v1 exposes only CareConnect. Canonical Nexus/CareConnect persistence always
 happens after a successful assessment and is not gated by this config.
 
-Existing optional outbound partner push (``push_assessment_best_effort``)
-remains independent in v1. Future destinations (partner_api, emr, webhook,
-none) can map onto outbound behavior without changing portal storage.
+Outbound CareConnect transmission is requested when the stored destination
+is CareConnect (the v1 default). An explicit non-CareConnect destination
+does not enqueue or POST. Connection validity, self-host skip, and
+eligibility are enforced by ``assessment_delivery``.
 """
 from __future__ import annotations
 
@@ -83,11 +84,29 @@ def portal_persist_enabled(_delivery: Mapping[str, Any] | None = None) -> bool:
     return True
 
 
-def outbound_partner_push_follows_existing_config(
-    _delivery: Mapping[str, Any] | None = None,
+def outbound_careconnect_requested(
+    delivery: Mapping[str, Any] | None = None,
+    *,
+    profile_json: Any = None,
 ) -> bool:
-    """v1 does not map destination onto partner push.
+    """True when outbound CareConnect delivery is requested.
 
-    ``push_assessment_best_effort`` keeps its existing ingest-URL / secret gating.
+    Missing/invalid stored config defaults to CareConnect (v1). An explicit
+    destination other than ``careconnect`` (including reserved ``none``) does
+    not transmit. Portal persist is unchanged.
     """
-    return True
+    raw: Any = delivery
+    if profile_json is not None:
+        loaded = load_profile(profile_json)
+        raw = loaded.get(DELIVERY_JSON_KEY)
+    if not isinstance(raw, dict) or raw.get("destination") in (None, ""):
+        return True
+    dest = str(raw.get("destination") or "").strip().lower()
+    return dest == DESTINATION_CARECONNECT
+
+
+def outbound_partner_push_follows_existing_config(
+    delivery: Mapping[str, Any] | None = None,
+) -> bool:
+    """True when the delivery setting asks for outbound CareConnect."""
+    return outbound_careconnect_requested(delivery)

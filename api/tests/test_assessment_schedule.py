@@ -539,6 +539,7 @@ async def test_schedule_get_put_round_trip(client, db_session: AsyncSession):
 def test_delivery_defaults_to_careconnect_and_does_not_gate_portal_persist():
     from careconnect_api.assessment_engine.delivery import (
         default_delivery,
+        outbound_careconnect_requested,
         outbound_partner_push_follows_existing_config,
         parse_delivery,
         parse_delivery_put,
@@ -556,6 +557,10 @@ def test_delivery_defaults_to_careconnect_and_does_not_gate_portal_persist():
         parse_delivery_put({"destination": "none"})
     assert portal_persist_enabled({"destination": "none"}) is True
     assert outbound_partner_push_follows_existing_config(None) is True
+    assert outbound_careconnect_requested(None) is True
+    assert outbound_careconnect_requested({"destination": "careconnect"}) is True
+    assert outbound_careconnect_requested({"destination": "none"}) is False
+    assert outbound_careconnect_requested({"destination": "webhook"}) is False
 
     runner = (
         Path(__file__).resolve().parents[1] / "careconnect_api" / "triage" / "runner.py"

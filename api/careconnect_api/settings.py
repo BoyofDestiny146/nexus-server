@@ -136,6 +136,10 @@ class Settings(BaseSettings):
     # Set only to a *separate* CareConnect receiver. Same-host URLs are skipped.
     careconnect_ingest_url: str = ""
     careconnect_push_timeout_s: float = 5.0
+    assessment_delivery_tick_seconds: int = 15
+    assessment_delivery_max_attempts: int = 8
+    assessment_delivery_backoff_base_s: float = 30.0
+    assessment_delivery_lease_s: int = 90
 
     # Google Calendar (read-only iCal). Poller speaks timed occurrences only.
     gcal_poll_seconds: int = 60
