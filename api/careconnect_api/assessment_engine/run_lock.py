@@ -73,6 +73,18 @@ async def claim_escalation_message(agent_id: str, message_id: int | str) -> bool
     return True
 
 
+async def release_escalation_message(agent_id: str, message_id: int | str) -> None:
+    """Allow the same chat row to trigger again after a failed persist."""
+    key = f"{agent_id}:{message_id}"
+    async with _guard:
+        _escalation_seen.discard(key)
+    try:
+        redis = await get_redis()
+        await redis.delete(_escalation_key(agent_id, message_id))
+    except Exception:
+        log.debug("escalation release skipped agent=%s message=%s", agent_id, message_id)
+
+
 def reset_locks_for_tests() -> None:
     _held.clear()
     _escalation_seen.clear()

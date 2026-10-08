@@ -150,6 +150,17 @@ snapshots are partner JSON; API secrets are never stored on queue rows.
 Local assessment persist always continues. Verify with
 `api/migrations/027_cc_assessment_delivery.verify.sql`.
 
+Apply `api/migrations/028_assessment_delivery_intent.sql` to add nullable
+`delivery_intent_json` on `ai_medical_assessment`. A generated Care &
+Wellness row snapshots outbound eligibility and the intended CareConnect
+`publicClientId` at generation time (no secrets). Existing rows stay NULL
+and are never retroactively queued. Local persist does not depend on the
+027 queue tables; when 027 is present, the worker reconciles eligible
+intent rows that still lack a job (idempotent on unique `assessment_id`).
+Send-time still refuses a live `public_id` that does not match the
+snapshot. Verify with
+`api/migrations/028_assessment_delivery_intent.verify.sql`.
+
 Apply `api/migrations/023_cc_agent_personality.sql` for the Agent Personality
 library (`cc_agent_personality`). Clients store a `personalityId` on
 `ai_agent.profile_json`; canonical prompt text lives in the library.
@@ -266,6 +277,14 @@ docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
 docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
   'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
   < api/migrations/027_cc_assessment_delivery.verify.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/028_assessment_delivery_intent.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/028_assessment_delivery_intent.verify.sql
 ```
 
 ### Operator-selected test player (do not auto-bind)

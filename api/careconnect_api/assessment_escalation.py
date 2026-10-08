@@ -23,6 +23,7 @@ from .assessment_engine.storage import resolved_definition
 from .assessment_engine.run_lock import (
     claim_escalation_message,
     release_agent_lock,
+    release_escalation_message,
     try_acquire_agent_lock,
 )
 from .assessment_engine.schedule import TRIGGER_ESCALATION, assess_on_escalation_phrases
@@ -57,6 +58,7 @@ def maybe_queue_escalation_assessment(
 
 async def _escalation_task(agent_id: str, content: str, message_id: int) -> None:
     locked = False
+    claimed = False
     try:
         locked = await try_acquire_agent_lock(agent_id)
         if not locked:
@@ -101,13 +103,25 @@ async def _escalation_task(agent_id: str, content: str, message_id: int) -> None
                 message_id,
                 len(hits),
             )
-            await run_for_agent(
+            row = await run_for_agent(
                 session,
                 agent_id,
                 trigger_type=TRIGGER_ESCALATION,
                 trigger_message_id=message_id,
             )
+            if row is None:
+                await release_escalation_message(agent_id, message_id)
+                claimed = False
     except Exception:
+        if claimed:
+            try:
+                await release_escalation_message(agent_id, message_id)
+            except Exception:
+                log.debug(
+                    "escalation claim release skipped agent=%s message=%s",
+                    agent_id,
+                    message_id,
+                )
         log.warning("escalation assessment failed agent=%s message=%s", agent_id, message_id)
     finally:
         if locked:

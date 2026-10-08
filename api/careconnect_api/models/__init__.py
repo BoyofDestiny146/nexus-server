@@ -147,6 +147,7 @@ class AiMedicalAssessment(Base):
     trigger_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     trigger_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     scheduled_due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    delivery_intent_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class CcAssessmentResult(Base):

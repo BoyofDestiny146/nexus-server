@@ -333,26 +333,34 @@ async def run_for_agent(
     db.add(row)
     await db.flush()
     await db.refresh(row)
-    # Persist + optional enqueue in this transaction. HTTP is after commit.
-    # Enqueue failure rolls back so a required job is never silently dropped.
-    # Chat in this window is kept; re-run after the queue is healthy.
-    from ..assessment_delivery import DeliveryEnqueueError, enqueue_careconnect_delivery
+    # Local persist is required even when the outbound queue is unavailable.
+    # Snapshot delivery intent on the assessment, then best-effort enqueue.
+    # HTTP is after commit. Enqueue failure must not roll back the row.
+    from ..assessment_delivery import (
+        DeliveryEnqueueError,
+        dump_delivery_intent,
+        enqueue_careconnect_delivery,
+        snapshot_delivery_intent,
+    )
 
     try:
-        await enqueue_careconnect_delivery(db, agent_id, row)
+        intent = await snapshot_delivery_intent(db, agent_id, row)
+        row.delivery_intent_json = dump_delivery_intent(intent)
+        await db.flush()
+        try:
+            await enqueue_careconnect_delivery(db, agent_id, row)
+        except DeliveryEnqueueError:
+            log.warning(
+                "triage: delivery enqueue deferred; assessment kept agent=%s "
+                "assessment=%s (reconcile when queue schema is healthy)",
+                agent_id,
+                row.id,
+            )
         await db.commit()
-    except DeliveryEnqueueError:
-        await db.rollback()
-        log.error(
-            "triage: delivery enqueue failed; assessment rolled back agent=%s "
-            "(input chat preserved; re-run scheduled/manual/escalation after queue is healthy)",
-            agent_id,
-        )
-        raise
     except Exception:
         await db.rollback()
         log.error(
-            "triage: persist/enqueue failed; assessment rolled back agent=%s "
+            "triage: persist failed; assessment rolled back agent=%s "
             "(input chat preserved; re-run after the failure is corrected)",
             agent_id,
         )

@@ -1,29 +1,21 @@
 """Durable CareConnect assessment delivery queue, worker, and audit.
 
-Transaction boundary
---------------------
-``enqueue_careconnect_delivery`` inserts the job in the **caller's**
-transaction and does not commit or POST. ``triage.runner.run_for_agent``
-flushes ``ai_medical_assessment``, enqueues when outbound delivery is
-required, then commits once. HTTP runs only after that commit.
+Local persist is the primary invariant: a generated Care & Wellness row is
+committed even when the 027 queue tables are missing or a job insert fails.
+Generation-time delivery intent is snapshotted on
+``ai_medical_assessment.delivery_intent_json`` (no secrets). HTTP runs only
+after persist commit.
 
-When outbound delivery is required (eligible Care row, CareConnect
-selected, connected integration, external ingest URL) a queue insert
-failure raises ``DeliveryEnqueueError``. The runner rolls back, so the
-assessment row is not kept without its job.
+When 027 exists, ``enqueue_careconnect_delivery`` stores a job in a SAVEPOINT
+inside the caller's transaction. Failure does not roll back the assessment.
+``reconcile_missing_delivery_jobs`` creates jobs for eligible intent rows
+that still lack a queue row (idempotent on unique ``assessment_id``).
 
-When delivery is disabled, disconnected, self-host, or otherwise not
-configured, enqueue returns None and local persist commits normally.
+Rows without an intent snapshot are never retroactively queued. Sales,
+parse-error, empty, destination-off, and self-host intents are not eligible.
+Send-time still refuses a live ``public_id`` that does not match the snapshot.
 
-Recovery after enqueue failure
-------------------------------
-Chat / input data is not deleted. Re-run the same Care window
-(scheduled, manual, or escalation) after the queue is healthy; the LLM
-result is recomputed and persist+enqueue is retried as one transaction.
-
-Never log API secrets or sensitive assessment payloads. Secrets are read
-at send time, never stored on queue rows. Sales results never enter the
-queue.
+Never log API secrets or sensitive assessment payloads.
 """
 from __future__ import annotations
 
@@ -96,10 +88,17 @@ IDEMPOTENCY_PREFIX = "cc-assess-"
 JOB_LOCK_PREFIX = "cc:delivery:job:"
 DELIVERY_JOB_TABLE = "cc_assessment_delivery_job"
 DELIVERY_ATTEMPT_TABLE = "cc_assessment_delivery_attempt"
+INTENT_VERSION = 1
+REASON_OK = "ok"
+REASON_INELIGIBLE = "ineligible"
+REASON_DESTINATION = "destination_disabled"
+REASON_NOT_CONNECTED = "not_connected"
+REASON_NO_INGEST_URL = "no_ingest_url"
+REASON_SELF_HOST = "self_host"
 
 
 class DeliveryEnqueueError(Exception):
-    """Queue insert was required and failed. Caller must roll back persist."""
+    """Queue insert failed. The assessment row must still be committed."""
 
 
 def idempotency_key_for(assessment_id: int) -> str:
@@ -125,6 +124,83 @@ def _concerns_list(raw: str | None) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if item is not None]
+
+
+def parse_delivery_intent(raw: str | None) -> dict[str, Any] | None:
+    if not raw or not str(raw).strip():
+        return None
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    return value
+
+
+def dump_delivery_intent(intent: dict[str, Any]) -> str:
+    return json.dumps(intent, ensure_ascii=False, separators=(",", ":"))
+
+
+def intent_requests_enqueue(intent: dict[str, Any] | None) -> bool:
+    if not intent:
+        return False
+    if not bool(intent.get("eligible")):
+        return False
+    public_id = str(intent.get("publicClientId") or "").strip()
+    destination = str(intent.get("destination") or "").strip().lower()
+    return bool(public_id) and destination == DESTINATION_CARECONNECT
+
+
+async def snapshot_delivery_intent(
+    db: AsyncSession,
+    agent_id: str,
+    assessment: AiMedicalAssessment,
+) -> dict[str, Any]:
+    """Record outbound eligibility and client identity. Never stores secrets."""
+    intent: dict[str, Any] = {
+        "version": INTENT_VERSION,
+        "destination": DESTINATION_CARECONNECT,
+        "publicClientId": None,
+        "eligible": False,
+        "reason": REASON_INELIGIBLE,
+    }
+    agent = await db.get(AiAgent, agent_id)
+    dest_requested = bool(
+        agent is not None and outbound_careconnect_requested(profile_json=agent.profile_json)
+    )
+    if not dest_requested:
+        intent["destination"] = "none"
+        intent["reason"] = REASON_DESTINATION
+        return intent
+
+    integration = await _careconnect_row(db, agent_id)
+    connected = (
+        integration is not None
+        and (integration.status or "connected") == "connected"
+        and bool(integration.public_id)
+    )
+    if connected:
+        intent["publicClientId"] = integration.public_id
+
+    if not assessment_eligible_for_delivery(assessment):
+        intent["reason"] = REASON_INELIGIBLE
+        return intent
+    if not connected:
+        intent["reason"] = REASON_NOT_CONNECTED
+        return intent
+
+    dest = _ingest_dest()
+    if not dest:
+        intent["reason"] = REASON_NO_INGEST_URL
+        return intent
+    if is_self_push_url(dest):
+        intent["reason"] = REASON_SELF_HOST
+        return intent
+
+    intent["eligible"] = True
+    intent["reason"] = REASON_OK
+    return intent
 
 
 def assessment_eligible_for_delivery(row: AiMedicalAssessment | None) -> bool:
@@ -214,19 +290,12 @@ async def delivery_schema_is_ready(
     return False
 
 
-async def enqueue_careconnect_delivery(
+async def _live_enqueue_public_id(
     db: AsyncSession,
     agent_id: str,
     assessment: AiMedicalAssessment,
-) -> CcAssessmentDeliveryJob | None:
-    """Insert a pending job in the caller's transaction. Does not commit or POST.
-
-    Returns the job when outbound delivery is required and stored.
-    Returns None when policy says do not transmit (ineligible, destination
-    off, disconnected, missing ingest URL, self-host).
-    Raises DeliveryEnqueueError when a job was required and could not be stored.
-    Duplicate assessment_id is success (returns the existing row).
-    """
+) -> str | None:
+    """Live policy for rows without a generation-time intent snapshot."""
     if not assessment_eligible_for_delivery(assessment):
         log.info("delivery skip assessment=%s reason=ineligible", getattr(assessment, "id", None))
         return None
@@ -250,11 +319,47 @@ async def enqueue_careconnect_delivery(
     if is_self_push_url(dest):
         log.info("careconnect self-push skipped public_id=%s", row.public_id)
         return None
+    return str(row.public_id)
+
+
+async def enqueue_careconnect_delivery(
+    db: AsyncSession,
+    agent_id: str,
+    assessment: AiMedicalAssessment,
+) -> CcAssessmentDeliveryJob | None:
+    """Insert a pending job in the caller's transaction. Does not commit or POST.
+
+    A generation-time intent on the assessment, when present, is authoritative:
+    ineligible snapshots are never queued; eligible snapshots freeze
+    ``publicClientId``. Callers without a snapshot use live policy.
+
+    Returns the job when outbound delivery is required and stored.
+    Returns None when policy says do not transmit, or when 027 tables are
+    missing (deferred to reconcile). Raises DeliveryEnqueueError when a job
+    was required and the insert failed; the assessment must still be committed.
+    Duplicate assessment_id is success (returns the existing row).
+    """
+    intent = parse_delivery_intent(getattr(assessment, "delivery_intent_json", None))
+    if intent is not None:
+        if not intent_requests_enqueue(intent):
+            log.info(
+                "delivery skip assessment=%s reason=%s",
+                getattr(assessment, "id", None),
+                intent.get("reason") or "intent",
+            )
+            return None
+        if not assessment_eligible_for_delivery(assessment):
+            log.info("delivery skip assessment=%s reason=ineligible", assessment.id)
+            return None
+        public_id = str(intent.get("publicClientId") or "").strip()
+    else:
+        public_id = await _live_enqueue_public_id(db, agent_id, assessment) or ""
+    if not public_id:
+        return None
 
     if not await delivery_tables_present(db):
-        raise DeliveryEnqueueError(
-            "delivery schema unavailable; apply migration 027 before CareConnect enqueue"
-        )
+        log.info("delivery defer assessment=%s reason=schema_unavailable", assessment.id)
+        return None
 
     existing = (
         await db.execute(
@@ -266,15 +371,16 @@ async def enqueue_careconnect_delivery(
     if existing is not None:
         return existing
 
+    dest = _ingest_dest()
     payload = serialize_client_assessment_payload(
-        public_client_id=row.public_id,
+        public_client_id=public_id,
         assessment=assessment,
     )
     now = datetime.now()
     fields: dict[str, Any] = {
         "assessment_id": assessment.id,
         "agent_id": agent_id,
-        "public_client_id": row.public_id,
+        "public_client_id": public_id,
         "destination": DESTINATION_CARECONNECT,
         "dest_host": _hostname(dest) or None,
         "payload_json": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
@@ -318,6 +424,52 @@ async def enqueue_careconnect_delivery(
         job.dest_host,
     )
     return job
+
+
+async def reconcile_missing_delivery_jobs(
+    db: AsyncSession,
+    limit: int = 50,
+) -> int:
+    """Create queue jobs for eligible intent rows that still lack one.
+
+    NULL / missing / ineligible intents are never queued. Unique
+    ``assessment_id`` makes this idempotent. No-op when 027 is absent.
+    """
+    if not await delivery_tables_present(db):
+        return 0
+    rows = (
+        await db.execute(
+            select(AiMedicalAssessment)
+            .outerjoin(
+                CcAssessmentDeliveryJob,
+                CcAssessmentDeliveryJob.assessment_id == AiMedicalAssessment.id,
+            )
+            .where(
+                AiMedicalAssessment.delivery_intent_json.is_not(None),
+                CcAssessmentDeliveryJob.id.is_(None),
+            )
+            .order_by(AiMedicalAssessment.id.asc())
+            .limit(max(1, int(limit)))
+        )
+    ).scalars().all()
+    created = 0
+    for row in rows:
+        intent = parse_delivery_intent(row.delivery_intent_json)
+        if not intent_requests_enqueue(intent):
+            continue
+        if not assessment_eligible_for_delivery(row):
+            continue
+        try:
+            job = await enqueue_careconnect_delivery(db, row.agent_id, row)
+        except DeliveryEnqueueError:
+            log.warning("delivery reconcile enqueue failed assessment=%s", row.id)
+            continue
+        if job is not None:
+            created += 1
+    await db.commit()
+    if created:
+        log.info("delivery reconcile created=%s", created)
+    return created
 
 
 def _backoff_seconds(attempt_count: int) -> float:
@@ -623,7 +775,16 @@ async def tick_assessment_deliveries(
     """Bounded worker tick. Inactive until migration 027 tables exist."""
     factory = session_factory or async_session_factory
     if not await delivery_schema_is_ready(session_factory=factory):
-        return {"due": 0, "delivered": 0, "failed": 0, "inactive": 1}
+        return {"due": 0, "delivered": 0, "failed": 0, "inactive": 1, "reconciled": 0}
+
+    reconciled = 0
+    try:
+        async with factory() as session:
+            reconciled = await reconcile_missing_delivery_jobs(
+                session, limit=max(1, int(limit))
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("delivery reconcile raised err=%s", type(exc).__name__)
 
     now = datetime.now()
     delivered = 0
@@ -667,12 +828,19 @@ async def tick_assessment_deliveries(
             log.warning("delivery tick job=%s err=%s", job_id, type(exc).__name__)
 
     log.info(
-        "assessment delivery tick due=%d delivered=%d failed=%d",
+        "assessment delivery tick due=%d delivered=%d failed=%d reconciled=%d",
         len(due),
         delivered,
         failed,
+        reconciled,
     )
-    return {"due": len(due), "delivered": delivered, "failed": failed, "inactive": 0}
+    return {
+        "due": len(due),
+        "delivered": delivered,
+        "failed": failed,
+        "inactive": 0,
+        "reconciled": reconciled,
+    }
 
 
 async def kick_assessment_delivery(db: AsyncSession, assessment_id: int) -> bool:

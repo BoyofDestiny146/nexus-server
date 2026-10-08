@@ -571,6 +571,7 @@ def test_delivery_defaults_to_careconnect_and_does_not_gate_portal_persist():
     assert "push_assessment_best_effort" in runner
     assert "enqueue_careconnect_delivery" in runner
     assert "DeliveryEnqueueError" in runner
+    assert "snapshot_delivery_intent" in runner
     assert "assessOnEscalationPhrases" not in runner
     assert "assessmentDelivery" not in runner
     assert "assessOnEscalationPhrases" not in sales_runner

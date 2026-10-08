@@ -22,8 +22,11 @@ from careconnect_api.assessment_delivery import (
     DeliveryEnqueueError,
     _classify_http,
     assessment_eligible_for_delivery,
+    dump_delivery_intent,
     enqueue_careconnect_delivery,
     idempotency_key_for,
+    parse_delivery_intent,
+    reconcile_missing_delivery_jobs,
     reset_delivery_runtime_for_tests,
     tick_assessment_deliveries,
 )
@@ -51,6 +54,8 @@ _CHAT_PK = 18000
 API_DIR = Path(__file__).resolve().parents[1]
 MIGRATION = (API_DIR / "migrations" / "027_cc_assessment_delivery.sql").read_text()
 VERIFY = (API_DIR / "migrations" / "027_cc_assessment_delivery.verify.sql").read_text()
+MIGRATION_028 = (API_DIR / "migrations" / "028_assessment_delivery_intent.sql").read_text()
+VERIFY_028 = (API_DIR / "migrations" / "028_assessment_delivery_intent.verify.sql").read_text()
 RUNNER_SRC = (API_DIR / "careconnect_api" / "triage" / "runner.py").read_text()
 SALES_SRC = (API_DIR / "careconnect_api" / "assessment_engine" / "sales_runner.py").read_text()
 ENGINE_SRC = (API_DIR / "careconnect_api" / "assessment_engine" / "engine.py").read_text()
@@ -226,6 +231,17 @@ def test_migration_027_is_additive_and_stores_no_secrets():
     assert "secret_enc" in VERIFY
 
 
+def test_migration_028_is_additive_nullable_and_stores_no_secrets():
+    assert "ALTER TABLE ai_medical_assessment" in MIGRATION_028
+    assert "ADD COLUMN IF NOT EXISTS delivery_intent_json TEXT NULL" in MIGRATION_028
+    assert "DROP COLUMN" not in MIGRATION_028.split("Rollback")[0]
+    assert "secret_enc" not in MIGRATION_028
+    assert "X-Client-Secret" not in MIGRATION_028
+    assert "delivery_intent_json" in MODEL_SRC
+    assert "delivery_intent_json" in VERIFY_028
+    assert "cc_assessment_delivery_job" in VERIFY_028
+
+
 def test_worker_uses_scheduler_and_existing_json_mapper():
     assert "tick_assessment_deliveries" in SCHEDULER_SRC
     assert 'id="assessment_delivery"' in SCHEDULER_SRC
@@ -233,6 +249,10 @@ def test_worker_uses_scheduler_and_existing_json_mapper():
     assert "enqueue_careconnect_delivery_safe" not in RUNNER_SRC
     assert "push_assessment_best_effort" in RUNNER_SRC
     assert "DeliveryEnqueueError" in RUNNER_SRC
+    assert "snapshot_delivery_intent" in RUNNER_SRC
+    assert "dump_delivery_intent" in RUNNER_SRC
+    assert "reconcile_missing_delivery_jobs" in DELIVERY_SRC
+    assert "release_escalation_message" in ESCALATION_SRC
     assert "await db.rollback()" in RUNNER_SRC
     assert "assessmentDelivery" not in RUNNER_SRC
     assert "enqueue_careconnect_delivery" not in SALES_SRC
@@ -828,14 +848,19 @@ async def test_run_for_agent_enqueues_for_each_trigger(
     assert job.status == STATUS_DELIVERED
     assert captured["calls"] == 1
     assert json.loads(job.payload_json)["schemaVersion"] == SCHEMA_VERSION
+    intent = parse_delivery_intent(row.delivery_intent_json)
+    assert intent is not None
+    assert intent["eligible"] is True
+    assert intent["destination"] == "careconnect"
+    assert intent["publicClientId"] == job.public_client_id
 
 
 @pytest.mark.asyncio
-async def test_enqueue_failure_rolls_back_assessment_and_keeps_chat(
+async def test_enqueue_failure_persists_assessment_and_keeps_chat(
     client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch
 ):
-    agent_id = await _onboard(client, admin_token, "Rollback Ray")
-    await _connect_cc(client, admin_token, agent_id)
+    agent_id = await _onboard(client, admin_token, "Persist Ray")
+    public_id, _secret = await _connect_cc(client, admin_token, agent_id)
     await _seed_chat(db_session, agent_id)
     monkeypatch.setattr(settings, "careconnect_ingest_url", _EXTERNAL)
 
@@ -850,13 +875,12 @@ async def test_enqueue_failure_rolls_back_assessment_and_keeps_chat(
     monkeypatch.setattr(
         "careconnect_api.assessment_delivery.enqueue_careconnect_delivery", _boom
     )
-    with pytest.raises(DeliveryEnqueueError):
-        await run_for_agent(db_session, agent_id, trigger_type="manual")
-    n_assess = (
+    row = await run_for_agent(db_session, agent_id, trigger_type="manual")
+    assert row is not None
+    db_session.expire_all()
+    still = (
         await db_session.execute(
-            select(func.count()).select_from(AiMedicalAssessment).where(
-                AiMedicalAssessment.agent_id == agent_id
-            )
+            select(AiMedicalAssessment).where(AiMedicalAssessment.agent_id == agent_id)
         )
     ).scalar_one()
     n_jobs = (
@@ -869,9 +893,13 @@ async def test_enqueue_failure_rolls_back_assessment_and_keeps_chat(
             )
         )
     ).scalar_one()
-    assert int(n_assess or 0) == 0
     assert int(n_jobs or 0) == 0
     assert int(n_chat or 0) == 1
+    intent = parse_delivery_intent(still.delivery_intent_json)
+    assert intent is not None
+    assert intent["eligible"] is True
+    assert intent["publicClientId"] == public_id
+    assert still.risk_level == "low"
 
 
 @pytest.mark.asyncio
@@ -901,3 +929,369 @@ async def test_disabled_delivery_run_persists_without_job(
     assert row is not None
     assert captured.get("calls", 0) == 0
     assert await _job_count(db_session, row.id) == 0
+    intent = parse_delivery_intent(row.delivery_intent_json)
+    assert intent is not None
+    assert intent["eligible"] is False
+    assert intent["destination"] == "none"
+    factory = await _tick_factory(db_session)
+    stats = await tick_assessment_deliveries(limit=5, session_factory=factory)
+    assert stats.get("reconciled", 0) == 0
+    assert await _job_count(db_session, row.id) == 0
+
+
+def _eligible_intent(public_id: str) -> str:
+    return dump_delivery_intent({
+        "version": 1,
+        "destination": "careconnect",
+        "publicClientId": public_id,
+        "eligible": True,
+        "reason": "ok",
+    })
+
+
+@pytest.mark.asyncio
+async def test_schema_missing_persist_then_reconcile(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch
+):
+    agent_id = await _onboard(client, admin_token, "Defer Mia")
+    public_id, secret = await _connect_cc(client, admin_token, agent_id)
+    await _seed_chat(db_session, agent_id)
+    monkeypatch.setattr(settings, "careconnect_ingest_url", _EXTERNAL)
+    present = {"ok": False}
+
+    async def _gate(_db):
+        return present["ok"]
+
+    monkeypatch.setattr(
+        "careconnect_api.assessment_delivery.delivery_tables_present", _gate
+    )
+
+    async def _llm(_dialogue: str) -> TriageResult:
+        return TriageResult("low", 0.6, ["fatigue"], ["Phone check-in"])
+
+    monkeypatch.setattr("careconnect_api.triage.runner._invoke_llm", _llm)
+    row = await run_for_agent(db_session, agent_id, trigger_type="scheduled")
+    assert row is not None
+    assessment_id = int(row.id)
+    assert await _job_count(db_session, assessment_id) == 0
+    intent = parse_delivery_intent(row.delivery_intent_json)
+    assert intent is not None
+    assert intent["eligible"] is True
+    assert intent["publicClientId"] == public_id
+
+    present["ok"] = True
+    reset_delivery_runtime_for_tests()
+    captured: dict = {"calls": 0}
+    monkeypatch.setattr(
+        "careconnect_api.partner_push.httpx.AsyncClient", _CaptureClient(captured)
+    )
+    factory = await _tick_factory(db_session)
+    stats = await tick_assessment_deliveries(limit=5, session_factory=factory)
+    assert stats.get("inactive", 0) == 0
+    assert stats.get("reconciled", 0) == 1
+    assert stats["delivered"] == 1
+    assert captured["calls"] == 1
+    assert captured["headers"]["X-Client-Id"] == public_id
+    assert captured["headers"]["X-Client-Secret"] == secret
+    assert await _job_count(db_session, assessment_id) == 1
+    stats2 = await tick_assessment_deliveries(limit=5, session_factory=factory)
+    assert stats2.get("reconciled", 0) == 0
+    assert await _job_count(db_session, assessment_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_null_intent_is_never_retroactively_enqueued(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch
+):
+    agent_id = await _onboard(client, admin_token, "Legacy Ned")
+    await _connect_cc(client, admin_token, agent_id)
+    row = await _seed_assessment(db_session, agent_id)
+    assert row.delivery_intent_json is None
+    monkeypatch.setattr(settings, "careconnect_ingest_url", _EXTERNAL)
+    captured: dict = {"calls": 0}
+    monkeypatch.setattr(
+        "careconnect_api.partner_push.httpx.AsyncClient", _CaptureClient(captured)
+    )
+    factory = await _tick_factory(db_session)
+    stats = await tick_assessment_deliveries(limit=5, session_factory=factory)
+    assert stats.get("reconciled", 0) == 0
+    assert captured.get("calls", 0) == 0
+    assert await _job_count(db_session, row.id) == 0
+
+
+@pytest.mark.asyncio
+async def test_parse_error_and_empty_intents_are_not_reconciled(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch
+):
+    agent_id = await _onboard(client, admin_token, "Skip Ora")
+    public_id, _secret = await _connect_cc(client, admin_token, agent_id)
+    monkeypatch.setattr(settings, "careconnect_ingest_url", _EXTERNAL)
+    empty = await _seed_assessment(db_session, agent_id, source_msg_count=0)
+    err = await _seed_assessment(
+        db_session, agent_id, concerns_json='["parse_error", "llm_call_failed"]'
+    )
+    empty.delivery_intent_json = _eligible_intent(public_id)
+    err.delivery_intent_json = _eligible_intent(public_id)
+    await db_session.commit()
+    n = await reconcile_missing_delivery_jobs(db_session, limit=20)
+    assert n == 0
+    assert await _job_count(db_session, empty.id) == 0
+    assert await _job_count(db_session, err.id) == 0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_is_idempotent_on_assessment_id(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch
+):
+    agent_id = await _onboard(client, admin_token, "Idem Pot")
+    public_id, _secret = await _connect_cc(client, admin_token, agent_id)
+    row = await _seed_assessment(db_session, agent_id)
+    row.delivery_intent_json = _eligible_intent(public_id)
+    await db_session.commit()
+    monkeypatch.setattr(settings, "careconnect_ingest_url", _EXTERNAL)
+    first = await reconcile_missing_delivery_jobs(db_session, limit=20)
+    second = await reconcile_missing_delivery_jobs(db_session, limit=20)
+    assert first == 1
+    assert second == 0
+    assert await _job_count(db_session, row.id) == 1
+    job = (
+        await db_session.execute(
+            select(CcAssessmentDeliveryJob).where(
+                CcAssessmentDeliveryJob.assessment_id == row.id
+            )
+        )
+    ).scalar_one()
+    assert job.public_client_id == public_id
+    assert job.idempotency_key == idempotency_key_for(row.id)
+
+
+@pytest.mark.asyncio
+async def test_reconnect_before_reconcile_does_not_substitute_client(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch
+):
+    agent_id = await _onboard(client, admin_token, "Snap Quinn")
+    old_id, _old = await _connect_cc(client, admin_token, agent_id)
+    await _seed_chat(db_session, agent_id)
+    monkeypatch.setattr(settings, "careconnect_ingest_url", _EXTERNAL)
+    present = {"ok": False}
+
+    async def _gate(_db):
+        return present["ok"]
+
+    monkeypatch.setattr(
+        "careconnect_api.assessment_delivery.delivery_tables_present", _gate
+    )
+
+    async def _llm(_dialogue: str) -> TriageResult:
+        return TriageResult("low", 0.6, ["fatigue"], ["Phone check-in"])
+
+    monkeypatch.setattr("careconnect_api.triage.runner._invoke_llm", _llm)
+    row = await run_for_agent(db_session, agent_id, trigger_type="manual")
+    assert row is not None
+    assessment_id = int(row.id)
+    intent = parse_delivery_intent(row.delivery_intent_json)
+    assert intent["publicClientId"] == old_id
+    gone = await client.delete(
+        f"/api/agent/{agent_id}/integrations/careconnect",
+        headers=_auth(admin_token),
+    )
+    assert gone.json()["code"] == 0
+    new_id, _new = await _connect_cc(client, admin_token, agent_id)
+    assert new_id != old_id
+    present["ok"] = True
+    reset_delivery_runtime_for_tests()
+    captured: dict = {"calls": 0}
+    monkeypatch.setattr(
+        "careconnect_api.partner_push.httpx.AsyncClient", _CaptureClient(captured)
+    )
+    factory = await _tick_factory(db_session)
+    await tick_assessment_deliveries(limit=5, session_factory=factory)
+    assert captured.get("calls", 0) == 0
+    db_session.expire_all()
+    job = (
+        await db_session.execute(
+            select(CcAssessmentDeliveryJob).where(
+                CcAssessmentDeliveryJob.assessment_id == assessment_id
+            )
+        )
+    ).scalar_one()
+    assert job.public_client_id == old_id
+    assert job.public_client_id != new_id
+    assert json.loads(job.payload_json)["clientId"] == old_id
+    assert job.last_error_category == "client_id_mismatch"
+    assert job.status == STATUS_DEAD_LETTER
+    assert await db_session.get(AiMedicalAssessment, assessment_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_escalation_retries_after_persist_failure_without_duplicate(
+    client: AsyncClient,
+    admin_token: str,
+    db_session: AsyncSession,
+    db_engine,
+    monkeypatch,
+):
+    from sqlalchemy.ext.asyncio import AsyncSession as AS
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from careconnect_api.assessment_engine.run_lock import reset_locks_for_tests
+    from careconnect_api.assessment_escalation import _escalation_task
+    from careconnect_api.triage.runner import run_for_agent as real_run
+
+    reset_locks_for_tests()
+    factory = async_sessionmaker(db_engine, expire_on_commit=False, class_=AS)
+    monkeypatch.setattr("careconnect_api.assessment_escalation.async_session_factory", factory)
+    agent_id = await _onboard(client, admin_token, "Esc Retry")
+    await _connect_cc(client, admin_token, agent_id)
+    agent = await db_session.get(AiAgent, agent_id)
+    merged = merge_profile(load_profile(agent.profile_json), {
+        "escalationPhrases": ["I fell"],
+    })
+    agent.profile_json = dump_profile(merged)
+    global _CHAT_PK
+    _CHAT_PK += 1
+    chat_id = _CHAT_PK
+    db_session.add(
+        AiAgentChatHistory(
+            id=chat_id,
+            agent_id=agent_id,
+            session_id="s-esc-dur",
+            chat_type=CHAT_TYPE_CLIENT,
+            content="I fell in the kitchen",
+            created_at=datetime.now(),
+        )
+    )
+    await db_session.commit()
+    monkeypatch.setattr(settings, "careconnect_ingest_url", _EXTERNAL)
+
+    async def _llm(_dialogue: str) -> TriageResult:
+        return TriageResult("elevated", 0.8, ["fall"], ["Call family"])
+
+    monkeypatch.setattr("careconnect_api.triage.runner._invoke_llm", _llm)
+    captured: dict = {"calls": 0}
+    monkeypatch.setattr(
+        "careconnect_api.partner_push.httpx.AsyncClient", _CaptureClient(captured)
+    )
+    attempts = {"n": 0}
+
+    async def flaky(db, agent_id_arg, for_date=None, **kwargs):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError("persist failed")
+        return await real_run(db, agent_id_arg, for_date=for_date, **kwargs)
+
+    monkeypatch.setattr("careconnect_api.assessment_escalation.run_for_agent", flaky)
+    await _escalation_task(agent_id, "I fell in the kitchen", chat_id)
+    await _escalation_task(agent_id, "I fell in the kitchen", chat_id)
+    assert attempts["n"] == 2
+    n_assess = (
+        await db_session.execute(
+            select(func.count()).select_from(AiMedicalAssessment).where(
+                AiMedicalAssessment.agent_id == agent_id
+            )
+        )
+    ).scalar_one()
+    n_jobs = (
+        await db_session.execute(
+            select(func.count()).select_from(CcAssessmentDeliveryJob).where(
+                CcAssessmentDeliveryJob.agent_id == agent_id
+            )
+        )
+    ).scalar_one()
+    assert int(n_assess or 0) == 1
+    assert int(n_jobs or 0) == 1
+    assert captured["calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_escalation_keeps_claim_when_persist_succeeds_and_enqueue_fails(
+    client: AsyncClient,
+    admin_token: str,
+    db_session: AsyncSession,
+    db_engine,
+    monkeypatch,
+):
+    from sqlalchemy.ext.asyncio import AsyncSession as AS
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from careconnect_api.assessment_engine.run_lock import reset_locks_for_tests
+    from careconnect_api.assessment_escalation import _escalation_task
+
+    reset_locks_for_tests()
+    factory = async_sessionmaker(db_engine, expire_on_commit=False, class_=AS)
+    monkeypatch.setattr("careconnect_api.assessment_escalation.async_session_factory", factory)
+    agent_id = await _onboard(client, admin_token, "Esc Enq")
+    public_id, _secret = await _connect_cc(client, admin_token, agent_id)
+    agent = await db_session.get(AiAgent, agent_id)
+    merged = merge_profile(load_profile(agent.profile_json), {
+        "escalationPhrases": ["I fell"],
+    })
+    agent.profile_json = dump_profile(merged)
+    global _CHAT_PK
+    _CHAT_PK += 1
+    chat_id = _CHAT_PK
+    db_session.add(
+        AiAgentChatHistory(
+            id=chat_id,
+            agent_id=agent_id,
+            session_id="s-esc-enq",
+            chat_type=CHAT_TYPE_CLIENT,
+            content="I fell in the kitchen",
+            created_at=datetime.now(),
+        )
+    )
+    await db_session.commit()
+    monkeypatch.setattr(settings, "careconnect_ingest_url", _EXTERNAL)
+
+    async def _llm(_dialogue: str) -> TriageResult:
+        return TriageResult("elevated", 0.8, ["fall"], ["Call family"])
+
+    monkeypatch.setattr("careconnect_api.triage.runner._invoke_llm", _llm)
+
+    async def _boom(*_a, **_k):
+        raise DeliveryEnqueueError("queue down")
+
+    monkeypatch.setattr(
+        "careconnect_api.assessment_delivery.enqueue_careconnect_delivery", _boom
+    )
+    await _escalation_task(agent_id, "I fell in the kitchen", chat_id)
+    await _escalation_task(agent_id, "I fell in the kitchen", chat_id)
+    n_assess = (
+        await db_session.execute(
+            select(func.count()).select_from(AiMedicalAssessment).where(
+                AiMedicalAssessment.agent_id == agent_id
+            )
+        )
+    ).scalar_one()
+    assert int(n_assess or 0) == 1
+    assert await _job_count(
+        db_session,
+        (
+            await db_session.execute(
+                select(AiMedicalAssessment.id).where(AiMedicalAssessment.agent_id == agent_id)
+            )
+        ).scalar_one(),
+    ) == 0
+
+    monkeypatch.setattr(
+        "careconnect_api.assessment_delivery.enqueue_careconnect_delivery",
+        enqueue_careconnect_delivery,
+    )
+    created = await reconcile_missing_delivery_jobs(db_session, limit=20)
+    assert created == 1
+    n_jobs = (
+        await db_session.execute(
+            select(func.count()).select_from(CcAssessmentDeliveryJob).where(
+                CcAssessmentDeliveryJob.agent_id == agent_id
+            )
+        )
+    ).scalar_one()
+    assert int(n_jobs or 0) == 1
+    job = (
+        await db_session.execute(
+            select(CcAssessmentDeliveryJob).where(
+                CcAssessmentDeliveryJob.agent_id == agent_id
+            )
+        )
+    ).scalar_one()
+    assert job.public_client_id == public_id
