@@ -22,8 +22,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth import CurrentUser, get_current_user, require_root
 from ..db import get_db
 from ..envelope import APIException
+from ..device_personality import assign_device_personality, assignment_view
 from ..models import AiAgent, AiAgentChatHistory, AiDevice
 from ..rbac import assert_can_access_agent
+from ..watcher_device import get_watcher_device
 
 
 router = APIRouter(tags=["device"])
@@ -273,3 +275,55 @@ async def list_all_devices(
 # when the W1-B SenseCAP bridge was dropped. Device discovery now happens via
 # the watcher heartbeat API (/api/v1/watcher/*) which uses the W1-A XiaoZhi
 # path.
+
+
+class DevicePersonalityUpdate(BaseModel):
+    personalityId: str | None = None
+
+
+async def _authorize_device_row(
+    db: AsyncSession, user: CurrentUser, mac: str
+) -> AiDevice:
+    """Same RBAC as voice: bound device is scoped to its client; unbound is root-only."""
+    if not user.is_root:
+        dev = await get_watcher_device(db, mac)
+        if dev is not None and dev.agent_id:
+            await assert_can_access_agent(db, user, dev.agent_id)
+        else:
+            raise APIException(403, "not permitted for this device")
+    dev = await get_watcher_device(db, mac)
+    if dev is None:
+        raise APIException(404, "device not found")
+    return dev
+
+
+@router.get("/device/{mac}/personality", response_model=None)
+async def get_device_personality(
+    mac: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Return this Watcher's Agent Personality assignment.
+
+    ``personalityId`` is the device override when the library row is active.
+    NULL means inherit the bound client's personality. Stored on ``ai_device``,
+    never in ``voice_config.json``.
+    """
+    device = await _authorize_device_row(db, user, mac)
+    return await assignment_view(db, device)
+
+
+@router.put("/device/{mac}/personality", response_model=None)
+async def set_device_personality(
+    mac: str,
+    payload: DevicePersonalityUpdate,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Set or clear a per-device Agent Personality override.
+
+    Empty / null ``personalityId`` inherits the client. Does not write voice
+    settings. Applies on the next XiaoZhi conversation session.
+    """
+    device = await _authorize_device_row(db, user, mac)
+    return await assign_device_personality(db, device, payload.personalityId)

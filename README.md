@@ -161,6 +161,23 @@ Send-time still refuses a live `public_id` that does not match the
 snapshot. Verify with
 `api/migrations/028_assessment_delivery_intent.verify.sql`.
 
+Apply `api/migrations/029_device_personality.sql` to add nullable
+`ai_device.personality_id`. NULL inherits the bound client's Agent
+Personality. A Watcher may override independently of other devices on the
+same client. Stored in MariaDB only — never in `voice_config.json`. The
+migration is idempotent (`ADD COLUMN IF NOT EXISTS`). Feature rollback does
+not require dropping the column — revert the code; leftover NULLs still
+mean inherit. Verify with `api/migrations/029_device_personality.verify.sql`.
+
+XiaoZhi resolves the session prompt via
+`GET http://api:8080/api/internal/device/{mac}/session-persona` using
+`X-Internal-Token` (same `CC_INTERNAL_TOKEN_FILE` as notify). Prefer an
+explicit `CC_SESSION_PERSONA_URL` on the xiaozhi-server service, for example
+`http://api:8080/api/internal/device/{mac}/session-persona`. If unset, the
+origin is taken from `CC_NOTIFY_URL` (compose already sets
+`http://api:8080/...`). Do not derive the route by rewriting
+`CC_KNOWLEDGE_SEARCH_URL`.
+
 Apply `api/migrations/023_cc_agent_personality.sql` for the Agent Personality
 library (`cc_agent_personality`). Clients store a `personalityId` on
 `ai_agent.profile_json`; canonical prompt text lives in the library.
@@ -285,6 +302,14 @@ docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
 docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
   'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
   < api/migrations/028_assessment_delivery_intent.verify.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/029_device_personality.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/029_device_personality.verify.sql
 ```
 
 ### Operator-selected test player (do not auto-bind)

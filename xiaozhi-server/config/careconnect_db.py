@@ -26,7 +26,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 import pymysql
@@ -90,6 +90,7 @@ KNOWLEDGE_SEARCH_URL = os.environ.get(
     "CC_KNOWLEDGE_SEARCH_URL",
     "http://127.0.0.1:8080/api/internal/device/{mac}/knowledge-search",
 )
+SESSION_PERSONA_ROUTE = "/api/internal/device/{mac}/session-persona"
 DB_HOST = os.environ.get("CC_DB_HOST", "127.0.0.1")
 DB_PORT = int(os.environ.get("CC_DB_PORT", "3306"))
 DB_USER = os.environ.get("CC_DB_USER", "xiaozhi")
@@ -297,8 +298,99 @@ def lookup_agent_id(mac_address: str) -> Optional[str]:
         return None
 
 
+def _careconnect_api_origin() -> str:
+    """Hostname:port for the CareConnect API container.
+
+    Does not assume ``CC_KNOWLEDGE_SEARCH_URL`` contains ``knowledge-search``.
+    Prefers ``CC_NOTIFY_URL`` (always set in compose as ``http://api:8080/...``).
+    """
+    for key in ("CC_NOTIFY_URL", "CC_REVEL_COMMAND_URL", "CC_KNOWLEDGE_SEARCH_URL"):
+        raw = (os.environ.get(key) or "").strip()
+        if not raw:
+            continue
+        parsed = urlparse(raw)
+        if parsed.scheme in ("http", "https") and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+    return "http://127.0.0.1:8080"
+
+
+def _session_persona_url(mac_address: str) -> str:
+    """Build GET /api/internal/device/{mac}/session-persona.
+
+    Prefer explicit ``CC_SESSION_PERSONA_URL``. Otherwise use the API origin
+    from notify/revel/knowledge env (Docker hostname ``api`` port ``8080``)
+    plus the stable route. Never string-replace ``knowledge-search``.
+    """
+    explicit = (os.environ.get("CC_SESSION_PERSONA_URL") or "").strip()
+    if explicit:
+        template = explicit
+    else:
+        template = f"{_careconnect_api_origin()}{SESSION_PERSONA_ROUTE}"
+    encoded = quote((mac_address or "").strip(), safe=":")
+    if "{mac}" in template:
+        return template.replace("{mac}", encoded)
+    return f"{template.rstrip('/')}/{encoded}/session-persona"
+
+
+def _session_persona_timeout() -> float:
+    try:
+        return max(
+            0.2,
+            min(float(os.environ.get("CC_SESSION_PERSONA_TIMEOUT") or "2.5"), 5.0),
+        )
+    except (TypeError, ValueError):
+        return 2.5
+
+
+def fetch_session_persona(mac_address: str) -> Optional[dict]:
+    """Ask CareConnect to compose the session prompt (device override else client).
+
+    Fail-open: errors return None so SQL lookup can inherit the client snapshot.
+    Auth is ``X-Internal-Token`` from the same ``api-internal-token`` secret
+    the notify path uses (``CC_INTERNAL_TOKEN_FILE`` in compose).
+    """
+    token = _token()
+    mac = (mac_address or "").strip()
+    if not token or not mac:
+        return None
+    try:
+        resp = httpx.get(
+            _session_persona_url(mac),
+            headers={"X-Internal-Token": token},
+            timeout=_session_persona_timeout(),
+        )
+        if resp.status_code >= 400:
+            log.warning(
+                "session persona http=%s mac=%s",
+                resp.status_code,
+                _display_mac(mac),
+            )
+            return None
+        data = resp.json()
+        if isinstance(data, dict) and data.get("code") not in (None, 0):
+            return None
+        if isinstance(data, dict) and isinstance(data.get("data"), dict):
+            data = data["data"]
+        if isinstance(data, dict) and data.get("system_prompt"):
+            return data
+    except Exception as e:
+        log.debug(
+            "careconnect_db.fetch_session_persona failed (non-fatal) type=%s",
+            type(e).__name__,
+        )
+    return None
+
+
 def lookup_agent_persona(mac_address: str) -> Optional[dict]:
-    """Return agent persona including optional ``bot_name`` command prefix."""
+    """Return agent persona including optional ``bot_name`` command prefix.
+
+    Prefers CareConnect composition so a device-level personality override
+    is applied. Falls back to the bound client's ``system_prompt`` when the
+    API is unreachable (inherit client; never a different identity).
+    """
+    composed = fetch_session_persona(mac_address)
+    if composed:
+        return composed
     if not mac_address:
         return None
     candidates = _mac_lookup_candidates(mac_address)

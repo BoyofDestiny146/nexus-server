@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import AiAgent, CcAgentPersonality
+from ..models import AiAgent, AiDevice, CcAgentPersonality
 from .seeds import DEFAULT_PERSONALITY_ID, SYSTEM_PERSONALITIES
 
 
@@ -118,12 +118,19 @@ async def duplicate_personality(
 
 async def count_personality_usage(db: AsyncSession, personality_id: str) -> int:
     needle = f'"personalityId":"{personality_id}"'
-    count = (
+    agents = (
         await db.execute(
             select(func.count()).select_from(AiAgent).where(AiAgent.profile_json.contains(needle))
         )
     ).scalar_one()
-    return int(count or 0)
+    devices = (
+        await db.execute(
+            select(func.count()).select_from(AiDevice).where(
+                AiDevice.personality_id == personality_id
+            )
+        )
+    ).scalar_one()
+    return int(agents or 0) + int(devices or 0)
 
 
 async def personality_mapping(db: AsyncSession, personality_id: str | None) -> dict[str, str] | None:

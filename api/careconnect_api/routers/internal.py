@@ -29,6 +29,9 @@ Endpoints
 * ``GET /api/internal/revel/control`` — read-only control table schema/binding.
 * ``GET /api/internal/revel/status/{agent_id}`` — read-only Revel observability
   for a client discussion. Same payload as ``GET /api/agent/{id}/revel/status``.
+* ``GET /api/internal/device/{mac}/session-persona`` — composed XiaoZhi session
+  prompt: device Agent Personality override if assigned and active, else the
+  bound client's stored ``system_prompt``. Requires ``X-Internal-Token``.
 """
 from __future__ import annotations
 
@@ -42,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
 from ..envelope import APIException
+from ..device_personality import resolve_session_persona
 from ..knowledge_retrieval import device_knowledge_search
 from ..knowledge_revel import evaluate_knowledge_revel
 from ..pubsub import publish_chat_turn
@@ -409,3 +413,23 @@ async def internal_device_knowledge_revel(
         session_id=payload.sessionId,
     )
     return result
+
+
+@router.get(
+    "/device/{mac}/session-persona",
+    response_model=None,
+    dependencies=[Depends(require_internal_token)],
+)
+async def internal_device_session_persona(
+    mac: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Composed session prompt for XiaoZhi. Device override else client snapshot.
+
+    Reuses ``build_system_prompt``. Fail-open at the XiaoZhi caller if this
+    endpoint is unreachable. Does not execute Revel.
+    """
+    persona = await resolve_session_persona(db, mac)
+    if persona is None:
+        raise APIException(404, "device not found")
+    return persona

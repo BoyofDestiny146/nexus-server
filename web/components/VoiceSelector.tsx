@@ -3,10 +3,13 @@
 /**
  * VoiceSelector — per-device voice + speed picker, shown in a centered modal.
  *
- * Renders Voice / Speed / Length, Preview, volume, test message, Test Voice,
- * power/sleep, Unbind, and Delete / Reset Device. Catalog from GET /api/voices;
- * current values from GET /api/device/{mac}/voice. Save uses PUT
- * /api/device/{mac}/voice and closes the modal only after that call succeeds.
+ * Renders Agent Personality, Voice / Speed / Length, Preview, volume, test
+ * message, Test Voice, power/sleep, Unbind, and Delete / Reset Device.
+ * Personality from GET /api/device/{mac}/personality (MariaDB, never
+ * voice_config.json). Voice catalog from GET /api/voices; current voice from
+ * GET /api/device/{mac}/voice. Save attempts personality and voice independently.
+ * The modal closes only when both succeed. A partial failure is reported
+ * without claiming a full save.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -14,7 +17,8 @@ import { Volume2, Loader2, Check, AlertTriangle, Wifi, Trash2, Play, Unlink2 } f
 import { apiGet, apiPut, apiPost, apiBinary, apiDelete, ApiError } from "@/lib/api";
 import { classNames } from "@/lib/format";
 import { Modal } from "@/components/Modal";
-import type { VoiceCatalog, DeviceVoice } from "@/lib/types";
+import type { AgentPersonality, DevicePersonalityAssignment, DeviceVoice, VoiceCatalog } from "@/lib/types";
+import { PERSONALITY_SECTION_ORDER } from "@/lib/types";
 import { groupedVoiceOptions, voiceLabel } from "@/lib/voiceCatalog";
 import {
   coercePower,
@@ -51,6 +55,9 @@ export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted, op
   const [selectedSpeed, setSelectedSpeed] = useState<string>("");
   const [selectedLength, setSelectedLength] = useState<string>("");
   const [selectedVolume, setSelectedVolume] = useState<number>(80);
+  const [personalities, setPersonalities] = useState<AgentPersonality[]>([]);
+  const [selectedPersonalityId, setSelectedPersonalityId] = useState<string>("");
+  const [personalityUnavailable, setPersonalityUnavailable] = useState(false);
   const [testMessage, setTestMessage] = useState<string>(DEFAULT_TEST_MESSAGE);
   const [power, setPower] = useState<DevicePowerSettings>(DEFAULT_POWER);
   const [powerApplyState, setPowerApplyState] = useState<DeviceVoice["powerApplyState"]>("unset");
@@ -78,12 +85,19 @@ export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted, op
 
     async function load() {
       try {
-        const [cat, dev] = await Promise.all([
+        const [cat, dev, personalityList, assignment] = await Promise.all([
           apiGet<VoiceCatalog>("/voices"),
           apiGet<DeviceVoice>(`/device/${encodeURIComponent(mac)}/voice`),
+          apiGet<{ personalities: AgentPersonality[] }>("/personalities").catch(() => ({ personalities: [] })),
+          apiGet<DevicePersonalityAssignment>(
+            `/device/${encodeURIComponent(mac)}/personality`,
+          ),
         ]);
         if (cancelled) return;
         setCatalog(cat);
+        setPersonalities(personalityList.personalities || []);
+        setSelectedPersonalityId(assignment?.personalityId || "");
+        setPersonalityUnavailable(Boolean(assignment?.personalityUnavailable));
         setSelectedVoice(dev.voice || cat.default);
         setSelectedSpeed(dev.speed || cat.default_speed);
         setSelectedLength(dev.response_length || cat.default_length || "brief");
@@ -176,8 +190,22 @@ export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted, op
     if (saveStatus === "saving") return;
     setSaveStatus("saving");
     setSaveError(null);
+    let personalityOk = false;
+    let voiceOk = false;
+    let voiceSaved: DeviceVoice | null = null;
+    let personalityErr: string | null = null;
+    let voiceErr: string | null = null;
     try {
-      const saved = await apiPut<DeviceVoice>(
+      await apiPut<DevicePersonalityAssignment>(
+        `/device/${encodeURIComponent(mac)}/personality`,
+        { personalityId: selectedPersonalityId.trim() || null },
+      );
+      personalityOk = true;
+    } catch (e) {
+      personalityErr = e instanceof ApiError ? e.message : "Agent Personality save failed.";
+    }
+    try {
+      voiceSaved = await apiPut<DeviceVoice>(
         `/device/${encodeURIComponent(mac)}/voice`,
         {
           voice: selectedVoice,
@@ -189,14 +217,42 @@ export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted, op
           sleepMode: power.sleepMode,
         },
       );
-      setPowerApplyState(saved.powerApplyState ?? "unset");
-      setPowerSaveMessage(saved.powerSaveMessage ?? null);
+      voiceOk = true;
+    } catch (e) {
+      voiceErr = e instanceof ApiError ? e.message : "Voice settings save failed.";
+    }
+    if (personalityOk && voiceOk && voiceSaved) {
+      setPowerApplyState(voiceSaved.powerApplyState ?? "unset");
+      setPowerSaveMessage(voiceSaved.powerSaveMessage ?? null);
       setSaveStatus("saved");
       onClose();
-    } catch (e) {
-      setSaveStatus("error");
-      setSaveError(e instanceof ApiError ? e.message : "Save failed.");
+      return;
     }
+    const parts: string[] = [];
+    if (personalityOk) {
+      parts.push("Agent Personality was saved.");
+    } else {
+      parts.push(
+        personalityErr
+          ? `Agent Personality was not saved: ${personalityErr}`
+          : "Agent Personality was not saved.",
+      );
+    }
+    if (voiceOk) {
+      parts.push("Voice settings were saved.");
+    } else {
+      parts.push(
+        voiceErr
+          ? `Voice settings were not saved: ${voiceErr}`
+          : "Voice settings were not saved.",
+      );
+    }
+    if (voiceOk && voiceSaved) {
+      setPowerApplyState(voiceSaved.powerApplyState ?? "unset");
+      setPowerSaveMessage(voiceSaved.powerSaveMessage ?? null);
+    }
+    setSaveStatus("error");
+    setSaveError(parts.join(" "));
   }
 
   async function handleUnbind() {
@@ -235,6 +291,7 @@ export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted, op
     onClose();
   }
 
+  const personalitySelectId = `personality-${mac}`;
   const voiceSelectId = `voice-${mac}`;
   const speedSelectId = `speed-${mac}`;
   const lengthSelectId = `length-${mac}`;
@@ -338,6 +395,55 @@ export function VoiceSelector({ mac, deviceId, agentId, agentName, onDeleted, op
 
         {catalog && (
           <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1 min-w-0">
+              <label
+                htmlFor={personalitySelectId}
+                className="text-[10px] uppercase tracking-[0.12em] text-slate-muted font-medium"
+              >
+                Agent Personality
+              </label>
+              <select
+                id={personalitySelectId}
+                value={selectedPersonalityId}
+                onChange={(e) => {
+                  setSelectedPersonalityId(e.target.value);
+                  setPersonalityUnavailable(false);
+                  setSaveStatus("idle");
+                }}
+                className={selectClass}
+                aria-label="Agent Personality"
+              >
+                <option value="">Use Client Default</option>
+                {selectedPersonalityId &&
+                !personalities.some((p) => p.id === selectedPersonalityId) ? (
+                  <option value={selectedPersonalityId}>Currently assigned</option>
+                ) : null}
+                {PERSONALITY_SECTION_ORDER.map((section) => {
+                  const rows = personalities.filter((p) => {
+                    const cat = String(p.category || "custom");
+                    const key = ["system", "sales", "care"].includes(cat) ? cat : "custom";
+                    return key === section.key && p.isActive;
+                  });
+                  if (rows.length === 0) return null;
+                  return (
+                    <optgroup key={section.key} label={section.label}>
+                      {rows.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
+              </select>
+              {personalityUnavailable ? (
+                <div className="text-[11px] text-slate-muted">
+                  The previously assigned personality is no longer available. Using the client default until you save a new choice.
+                </div>
+              ) : (
+                <div className="text-[11px] text-slate-muted">
+                  This Watcher only. Other devices on the same client keep their own assignment. Applies on the next conversation.
+                </div>
+              )}
+            </div>
             <div className="flex flex-wrap items-end gap-3">
               <div className="flex flex-col gap-1 min-w-0">
                 <label

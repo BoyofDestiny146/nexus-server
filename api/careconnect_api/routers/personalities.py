@@ -150,7 +150,7 @@ async def delete_custom(
     if used:
         raise APIException(
             409,
-            "personality is assigned to clients; deactivate it instead of deleting",
+            "personality is assigned to clients or devices; deactivate it instead of deleting",
             data={"inUseCount": used},
         )
     await db.delete(row)

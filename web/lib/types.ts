@@ -283,6 +283,15 @@ export interface VoiceCatalog {
   default_length: string;
 }
 
+export interface DevicePersonalityAssignment {
+  personalityId: string | null;
+  storedPersonalityId?: string | null;
+  clientPersonalityId?: string | null;
+  source?: "device" | "client" | "unassigned" | string;
+  unbound?: boolean;
+  personalityUnavailable?: boolean;
+}
+
 export interface DeviceVoice {
   voice: string;
   speed: string;

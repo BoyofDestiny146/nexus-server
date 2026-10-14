@@ -111,7 +111,7 @@ async def ensure_watcher_device(
     """Create a minimal W1-A row or update liveness on the existing one.
 
     New rows: canonical colon MAC, W1-A/xiaozhi/sensecap_watcher, sort=0,
-    agent_id NULL. Existing rows: agent_id, alias, client_device_id,
+    agent_id NULL.     Existing rows: agent_id, alias, client_device_id, personality_id,
     mac_address spelling, and unspecified telemetry are preserved.
     """
     if not stripped_mac(mac):

@@ -407,10 +407,10 @@ class ConnectionHandler:
             """初始化组件"""
             if self.config.get("prompt") is not None:
                 user_prompt = self.config["prompt"]
-                # careconnect: per-agent persona override. If the device's MAC
-                # is bound to an ai_agent row in our DB, use that agent's
-                # system_prompt instead of the global one. Falls back silently
-                # to the global prompt on any error so we never block startup.
+                # careconnect: session persona. Prefers a device-level Agent
+                # Personality override, else the bound client's system_prompt.
+                # Falls back silently to the global prompt on any error so we
+                # never block startup. Does not disconnect an active session.
                 try:
                     from config.careconnect_db import lookup_agent_persona
                     persona = lookup_agent_persona(self.device_id or "")
@@ -436,9 +436,11 @@ class ConnectionHandler:
                         identity += f"If anyone asks your name, say you are {assistant}."
                         user_prompt = per_agent + identity
                         self.config["prompt"] = user_prompt  # also flow through to RAG enhancement
+                        agent_key = str(persona.get("agent_id") or "unbound")
                         self.logger.bind(tag=TAG).info(
-                            f"careconnect persona override: agent={persona['agent_id'][:8]} "
+                            f"careconnect persona override: agent={agent_key[:12]} "
                             f"name={persona.get('agent_name')!r} "
+                            f"source={persona.get('personalitySource')!r} "
                             f"prompt_len={len(user_prompt)}"
                         )
                     else:
@@ -448,7 +450,7 @@ class ConnectionHandler:
                         )
                 except Exception as e:
                     self.logger.bind(tag=TAG).warning(
-                        f"careconnect persona lookup failed (non-fatal): {e}"
+                        f"careconnect persona lookup failed (non-fatal): {type(e).__name__}"
                     )
                 # 使用快速提示词进行初始化
                 prompt = self.prompt_manager.get_quick_prompt(user_prompt)

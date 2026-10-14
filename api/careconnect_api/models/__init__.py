@@ -90,6 +90,9 @@ class AiDevice(Base):
     # client's unique id instead of our MAC/EUI. See migration 011.
     client_device_id: Mapped[str | None] = mapped_column(String(64), index=True)
     agent_id: Mapped[str | None] = mapped_column(String(32))
+    # Optional Agent Personality override. NULL inherits the bound client's
+    # profile_json.personalityId / composed system_prompt. See migration 029.
+    personality_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     app_version: Mapped[str | None] = mapped_column(String(20))
     sort: Mapped[int | None] = mapped_column(Integer, default=0)
     creator: Mapped[int | None] = mapped_column(BigInteger)
@@ -253,7 +256,12 @@ class CcAssessmentDeliveryAttempt(Base):
 
 
 class CcAgentPersonality(Base):
-    """Reusable Agent Personality library. Clients store personality_id only."""
+    """Reusable Agent Personality library.
+
+    Clients store ``personalityId`` on ``ai_agent.profile_json``. Devices may
+    store an optional override on ``ai_device.personality_id`` (NULL = inherit).
+    Canonical prompt text lives here, not copied into every client or device.
+    """
 
     __tablename__ = "cc_agent_personality"
     __table_args__ = (
