@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.warehouse-13.biz/contracts/bridgingcare-assessment-config-1.0.schema.json",
+  "title": "Bridging Care companion assessment-config (Nexus read-only)",
+  "description": "data object returned by GET /api/v1/integrations/bridgingcare/companions/{companionId}/assessment-config. Wrapped by the Nexus envelope {code, msg, data}. Not the R60C ingest contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "companionId",
+    "source",
+    "assessmentProfile",
+    "assessmentSchedule",
+    "lastAssessmentAt",
+    "nextAssessmentAt",
+    "bridgingCare"
+  ],
+  "properties": {
+    "companionId": { "type": "string", "pattern": "^Nx-[A-Za-z0-9]+$" },
+    "source": { "const": "nexus" },
+    "assessmentProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "displayName"],
+      "properties": {
+        "id": { "type": "string" },
+        "displayName": { "type": "string" }
+      }
+    },
+    "assessmentSchedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "mode",
+        "intervalMinutes",
+        "onlyIfNewData",
+        "assessOnEscalationPhrases"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "mode": { "enum": ["interval", "manual"] },
+        "intervalMinutes": {
+          "type": ["integer", "null"],
+          "enum": [60, 120, 240, 480, 720, 1440, 4320, 10080, null]
+        },
+        "onlyIfNewData": { "type": "boolean" },
+        "assessOnEscalationPhrases": { "type": "boolean" }
+      }
+    },
+    "lastAssessmentAt": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "nextAssessmentAt": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "bridgingCare": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mapped", "executeEnabled"],
+      "properties": {
+        "mapped": { "type": "boolean" },
+        "executeEnabled": { "type": "boolean" }
+      }
+    }
+  }
+}

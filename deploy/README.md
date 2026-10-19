@@ -96,6 +96,8 @@ cp .env.example .env            # set CC_ADMIN1_PASSWORD, CC_ADMIN2_PASSWORD, CC
 ./scripts/gen-secrets.sh        # creates the cc-secrets volume (random secret files)
 # Optional: install Revel Developer API key as revel-api-key in cc-secrets
 # (never auto-generated), then re-run gen-secrets.sh to align appuser perms.
+# Optional: install Bridging Care inbound bcrypt hash as
+# bridgingcare-inbound-secret-hash (never auto-generated, never plaintext).
 docker compose pull
 docker compose up -d
 docker compose ps               # 8 services up / healthy within ~60 s

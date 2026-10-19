@@ -146,6 +146,13 @@ class Settings(BaseSettings):
     bridgingcare_ingest_url: str = ""
     bridgingcare_execute_enabled: bool = False
     bridgingcare_api_key_file: Path = CFG_DIR / "bridgingcare-api-key-absent"
+    # Inbound M2M for GET assessment-config. Identifier is not a secret.
+    # Hash file is installed by hand (bcrypt only). Do not auto-create —
+    # a missing file fails closed (all inbound requests 401).
+    bridgingcare_inbound_client_id: str = ""
+    bridgingcare_inbound_secret_hash_file: Path = (
+        CFG_DIR / "bridgingcare-inbound-secret-hash-absent"
+    )
     bridgingcare_timeout_s: float = 5.0
     bridgingcare_tick_seconds: int = 15
     bridgingcare_max_attempts: int = 8

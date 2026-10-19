@@ -87,3 +87,23 @@ if [ -s "$REVEL_KEY" ]; then
 else
   echo "absent  revel-api-key (not generated)"
 fi
+
+# Optional Bridging Care inbound M2M bcrypt hash. Never auto-create. If the
+# operator installed bridgingcare-inbound-secret-hash, clone uid/gid/mode so
+# appuser can read it after gosu on the :ro secrets mount. Never print the hash.
+BC_INBOUND_HASH="${DIR}/bridgingcare-inbound-secret-hash"
+if [ -s "$BC_INBOUND_HASH" ]; then
+  if [ -n "$REF" ]; then
+    chown "$(stat -c '%u:%g' "$REF")" "$BC_INBOUND_HASH"
+    chmod "$(stat -c '%a' "$REF")" "$BC_INBOUND_HASH"
+  else
+    chmod 600 "$BC_INBOUND_HASH"
+  fi
+  chmod o-w "$BC_INBOUND_HASH"
+  bmode="$(stat -c '%a' "$BC_INBOUND_HASH")"
+  buid="$(stat -c '%u' "$BC_INBOUND_HASH")"
+  bgid="$(stat -c '%g' "$BC_INBOUND_HASH")"
+  echo "aligned bridgingcare-inbound-secret-hash uid=${buid} gid=${bgid} mode=${bmode}"
+else
+  echo "absent  bridgingcare-inbound-secret-hash (not generated)"
+fi

@@ -12,11 +12,19 @@
 #   mqtt-signature-key   HMAC key for MQTT credential generation
 #   integration-secret-key  Fernet key for per-client Revel (and future) credentials
 #
-# Optional, NEVER auto-generated:
+# Optional, NEVER auto-generated (not in the create loop below):
 #   revel-api-key        Revel Developer API key (Account → Developer API).
 #                        Install by hand into cc-secrets, then re-run this
 #                        script so align_secret_perms.sh can clone appuser
 #                        ownership. A random value here would be a fake key.
+#   bridgingcare-api-key Outbound Bridging Care ingest X-Api-Key. Independent
+#                        of the inbound M2M hash. Install by hand if execute
+#                        is later approved. Never auto-generate.
+#   bridgingcare-inbound-secret-hash
+#                        bcrypt hash of the Bridging Care inbound M2M secret
+#                        (GET assessment-config). Install the hash only —
+#                        never the plaintext — then re-run this script to
+#                        align appuser ownership. Never auto-generate.
 #
 # integration-secret-key uid/gid/mode are cloned from api-client-key (then
 # api-internal-token, then api-jwt-secret) so the API's non-root appuser can
@@ -43,3 +51,4 @@ docker run --rm \
 echo "cc-secrets volume ready: $VOL"
 echo "Read a value later with:  docker run --rm -v $VOL:/s:ro alpine cat /s/api-client-key"
 echo "Optional revel-api-key is never auto-generated. Install the Revel Developer API key into this volume, then re-run this script to align perms."
+echo "Optional bridgingcare-inbound-secret-hash is never auto-generated. Install the bcrypt hash (not the plaintext secret) into this volume, then re-run this script to align perms."

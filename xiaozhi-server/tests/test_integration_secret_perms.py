@@ -157,6 +157,7 @@ def test_align_does_not_overwrite_empty_named_other_secrets(tmp_path: Path):
     assert mqtt.read_text() == "mqtt-keep"
     assert (tmp_path / "integration-secret-key").is_file()
     assert not (tmp_path / "revel-api-key").exists()
+    assert not (tmp_path / "bridgingcare-inbound-secret-hash").exists()
 
 
 def test_align_does_not_create_revel_api_key_but_aligns_if_present(tmp_path: Path):
@@ -177,3 +178,49 @@ def test_align_does_not_create_revel_api_key_but_aligns_if_present(tmp_path: Pat
     assert "aligned revel-api-key" in again.stdout
     assert _mode(dest) == 0o640
     assert dest.stat().st_uid == ref.stat().st_uid
+
+
+def test_align_does_not_create_bridgingcare_inbound_hash_but_aligns_if_present(
+    tmp_path: Path,
+):
+    ref = tmp_path / "api-client-key"
+    ref.write_text("client-key-placeholder")
+    ref.chmod(0o640)
+    result = _run_align(tmp_path)
+    dest = tmp_path / "bridgingcare-inbound-secret-hash"
+    assert not dest.exists()
+    assert "absent  bridgingcare-inbound-secret-hash" in result.stdout
+    assert "not generated" in result.stdout
+
+    dest.write_text("$2b$10$placeholderhashnotarealsecretxxxxx")
+    dest.chmod(0o600)
+    again = _run_align(tmp_path)
+    body = dest.read_text()
+    assert body == "$2b$10$placeholderhashnotarealsecretxxxxx"
+    assert body not in again.stdout
+    assert "aligned bridgingcare-inbound-secret-hash" in again.stdout
+    assert _mode(dest) == 0o640
+    assert dest.stat().st_uid == ref.stat().st_uid
+
+
+def test_align_does_not_create_or_rewrite_outbound_bridgingcare_api_key(
+    tmp_path: Path,
+):
+    """Inbound hash alignment must not touch the outbound ingest key file."""
+    ref = tmp_path / "api-client-key"
+    ref.write_text("client-key-placeholder")
+    ref.chmod(0o640)
+    result = _run_align(tmp_path)
+    outbound = tmp_path / "bridgingcare-api-key"
+    inbound = tmp_path / "bridgingcare-inbound-secret-hash"
+    assert not outbound.exists()
+    assert not inbound.exists()
+    assert "bridgingcare-api-key" not in result.stdout
+
+    outbound.write_text("outbound-ingest-key-keep-me")
+    outbound.chmod(0o600)
+    again = _run_align(tmp_path)
+    assert outbound.read_text() == "outbound-ingest-key-keep-me"
+    assert "outbound-ingest-key-keep-me" not in again.stdout
+    assert _mode(outbound) == 0o600
+    assert not inbound.exists()

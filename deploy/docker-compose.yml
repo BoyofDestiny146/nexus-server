@@ -163,6 +163,13 @@ services:
       CC_BRIDGINGCARE_API_KEY_FILE: "${CC_BRIDGINGCARE_API_KEY_FILE:-/run/secrets/bridgingcare-api-key}"
       CC_BRIDGINGCARE_TICK_SECONDS: "${CC_BRIDGINGCARE_TICK_SECONDS:-15}"
       BRIDGINGCARE_EXECUTE_ENABLED: "${BRIDGINGCARE_EXECUTE_ENABLED:-false}"
+      # Bridging Care inbound M2M (GET assessment-config). Identifier is not a
+      # secret. Hash file is bcrypt of the inbound secret, installed by hand
+      # into cc-secrets like revel-api-key. Never auto-create. Missing file →
+      # all inbound requests 401. Do not put the plaintext secret in compose.
+      # Do not copy this file over production compose; add keys after review.
+      CC_BRIDGINGCARE_INBOUND_CLIENT_ID: "${CC_BRIDGINGCARE_INBOUND_CLIENT_ID:-}"
+      CC_BRIDGINGCARE_INBOUND_SECRET_HASH_FILE: "${CC_BRIDGINGCARE_INBOUND_SECRET_HASH_FILE:-/run/secrets/bridgingcare-inbound-secret-hash}"
     volumes:
       - cc-secrets:/run/secrets:ro
       - cc-voice:/data

@@ -116,23 +116,13 @@ async def lookup_agents_named(db: AsyncSession, name: str) -> list[AiAgent]:
     return list(rows)
 
 
-async def resolve_verified_mapping(
-    db: AsyncSession, agent_id: str
+async def _freeze_verified_mapping(
+    db: AsyncSession, row: CcBridgingcareCompanionMap | None
 ) -> CcBridgingcareCompanionMap | None:
-    """Return the frozen mapping only when the Nexus client still matches."""
-    raw = (agent_id or "").strip()
-    if not is_nexus_agent_id(raw):
-        return None
-    row = (
-        await db.execute(
-            select(CcBridgingcareCompanionMap).where(
-                CcBridgingcareCompanionMap.agent_id == raw
-            )
-        )
-    ).scalar_one_or_none()
+    """Same freeze rules for agent-id and companion-id lookups."""
     if row is None or row.verified_at is None:
         return None
-    agent = await db.get(AiAgent, raw)
+    agent = await db.get(AiAgent, row.agent_id)
     if agent is None:
         return None
     if not agent_name_matches(agent, row.expected_agent_name):
@@ -152,6 +142,44 @@ async def resolve_verified_mapping(
     except APIException:
         return None
     return row
+
+
+async def resolve_verified_mapping(
+    db: AsyncSession, agent_id: str
+) -> CcBridgingcareCompanionMap | None:
+    """Return the frozen mapping only when the Nexus client still matches."""
+    raw = (agent_id or "").strip()
+    if not is_nexus_agent_id(raw):
+        return None
+    row = (
+        await db.execute(
+            select(CcBridgingcareCompanionMap).where(
+                CcBridgingcareCompanionMap.agent_id == raw
+            )
+        )
+    ).scalar_one_or_none()
+    return await _freeze_verified_mapping(db, row)
+
+
+async def resolve_verified_mapping_by_companion(
+    db: AsyncSession, companion_id: str
+) -> CcBridgingcareCompanionMap | None:
+    """Return the frozen mapping for a Bridging Care companion id, or None.
+
+    Unknown, unverified, missing client, name mismatch, and identity
+    collisions are all treated as not found. Never returns agent ids.
+    """
+    raw = (companion_id or "").strip()
+    if not is_companion_registration_id(raw):
+        return None
+    row = (
+        await db.execute(
+            select(CcBridgingcareCompanionMap).where(
+                CcBridgingcareCompanionMap.companion_id == raw
+            )
+        )
+    ).scalar_one_or_none()
+    return await _freeze_verified_mapping(db, row)
 
 
 async def bind_verified_mapping(

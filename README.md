@@ -182,6 +182,9 @@ Receiver contract (R60C field names: `assessmentId`, `generatedAt`,
 `forDate`, `assessment.riskLevel`, confidence 0–1):
 `docs/contracts/bridgingcare-ai-companion-assessment-1.0.schema.json`.
 Verify with `api/migrations/030_bridgingcare_assessment_delivery.verify.sql`.
+Read-only Bridging Care inbound GET (`/api/v1/integrations/bridgingcare/companions/{companionId}/assessment-config`)
+is documented in `docs/contracts/bridgingcare-assessment-config-phase2-design.md`
+(implementation/ops). Dedicated M2M hash file; execute stays false.
 
 Apply `api/migrations/029_device_personality.sql` to add nullable
 `ai_device.personality_id`. NULL inherits the bound client's Agent
