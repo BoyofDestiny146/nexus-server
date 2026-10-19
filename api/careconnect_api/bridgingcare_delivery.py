@@ -308,7 +308,7 @@ async def _post_snapshot(payload: dict[str, Any]) -> tuple[int | None, str | Non
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     key = _api_key()
     if key:
-        headers["X-Api-Key"] = key
+        headers["Authorization"] = f"x-api-key {key}"
     timeout = float(getattr(settings, "bridgingcare_timeout_s", 5.0) or 5.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:

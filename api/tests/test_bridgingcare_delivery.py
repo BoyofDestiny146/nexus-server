@@ -461,6 +461,38 @@ async def test_execute_disabled_never_posts(
 
 
 @pytest.mark.asyncio
+async def test_authorization_header_uses_lowercase_prefix(
+    client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch, tmp_path, caplog
+):
+    agent_id = await _onboard(client, admin_token, BILL_BOB_DISPLAY_NAME)
+    await _bind_betty(db_session, agent_id)
+    row = await _seed_assessment(db_session, agent_id)
+    job = await enqueue_bridgingcare_after_persist(db_session, agent_id, row)
+    job_id = int(job.id)
+    secret = "local-bridgingcare-header-fixture"
+    key_file = tmp_path / "bridgingcare-api-key"
+    key_file.write_text(secret + "\n")
+    captured = {"calls": 0}
+    monkeypatch.setattr(settings, "bridgingcare_ingest_url", STAGING_INGEST_URL)
+    monkeypatch.setattr(settings, "bridgingcare_api_key_file", key_file)
+    monkeypatch.setenv("BRIDGINGCARE_EXECUTE_ENABLED", "false")
+    monkeypatch.setattr(
+        "careconnect_api.bridgingcare_delivery.httpx.AsyncClient",
+        _CaptureClient(captured),
+    )
+    caplog.set_level("INFO")
+    assert await deliver_job(db_session, job_id) is False
+    assert captured["calls"] == 0
+    monkeypatch.setenv("BRIDGINGCARE_EXECUTE_ENABLED", "true")
+    assert await deliver_job(db_session, job_id) is True
+    headers = captured["headers"]
+    assert headers["Authorization"] == f"x-api-key {secret}"
+    assert headers["Authorization"].startswith("x-api-key ")
+    assert "X-Api-Key" not in headers
+    assert secret not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_execute_posts_frozen_snapshot_once(
     client: AsyncClient, admin_token: str, db_session: AsyncSession, monkeypatch
 ):
