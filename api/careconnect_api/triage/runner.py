@@ -367,6 +367,12 @@ async def run_for_agent(
         raise
     await db.refresh(row)
     try:
+        from ..bridgingcare_delivery import enqueue_bridgingcare_after_persist
+
+        await enqueue_bridgingcare_after_persist(db, agent_id, row)
+    except Exception:
+        log.warning("bridgingcare enqueue raised after persist")
+    try:
         from ..partner_push import push_assessment_best_effort
 
         await push_assessment_best_effort(db, agent_id, row)

@@ -7,6 +7,9 @@ Currently runs:
 * outbound CareConnect delivery worker every
   ``settings.assessment_delivery_tick_seconds`` (default 15s). Inactive
   (catalog check only) until migration 027 tables exist.
+* outbound Bridging Care delivery worker every
+  ``settings.bridgingcare_tick_seconds`` (default 15s). Separate outbox;
+  HTTP stays off unless execute is enabled.
 * Google Calendar read-only reminder poll every ``settings.gcal_poll_seconds``
   (default 60s)
 
@@ -26,6 +29,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from .assessment_delivery import tick_assessment_deliveries
 from .assessment_scheduler import tick_due_assessments
+from .bridgingcare_delivery import tick_bridgingcare_deliveries
 from .calendar_poller import poll_google_calendars
 from .settings import settings
 
@@ -64,12 +68,22 @@ def start_scheduler() -> None:
         misfire_grace_time=25,
         replace_existing=True,
     )
+    scheduler.add_job(
+        tick_bridgingcare_deliveries,
+        IntervalTrigger(seconds=max(5, int(settings.bridgingcare_tick_seconds))),
+        id="bridgingcare_delivery",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=25,
+        replace_existing=True,
+    )
     scheduler.start()
     log.info(
-        "scheduler started (assessment_due_check every %ss, google_calendar_poll every %ss, assessment_delivery every %ss)",
+        "scheduler started (assessment_due_check every %ss, google_calendar_poll every %ss, assessment_delivery every %ss, bridgingcare_delivery every %ss)",
         settings.assessment_due_check_seconds,
         settings.gcal_poll_seconds,
         settings.assessment_delivery_tick_seconds,
+        settings.bridgingcare_tick_seconds,
     )
 
 

@@ -70,6 +70,9 @@ from ..models import (
     AiMedicalAssessment,
     CcAssessmentDeliveryAttempt,
     CcAssessmentDeliveryJob,
+    CcBridgingcareCompanionMap,
+    CcBridgingcareDeliveryAttempt,
+    CcBridgingcareDeliveryJob,
     ClientIntegration,
     RevelPlayerMap,
 )
@@ -623,6 +626,8 @@ async def delete_agent(
       • cc_revel_player_map      — removes stored Revel device-id mappings
       • cc_client_integration    — removes partner credentials (not Watchers)
       • cc_assessment_delivery_attempt / cc_assessment_delivery_job
+      • cc_bridgingcare_delivery_attempt / cc_bridgingcare_delivery_job
+      • cc_bridgingcare_companion_map
       • ai_medical_assessment    — removes triage rows
       • ai_agent_chat_history    — removes conversation rows
       • ai_device                — UNBINDS (sets agent_id=NULL) so the
@@ -697,6 +702,38 @@ async def delete_agent(
         await db.execute(
             delete(CcAssessmentDeliveryJob).where(
                 CcAssessmentDeliveryJob.agent_id == agent_id
+            )
+        )
+        bc_job_ids = (
+            await db.execute(
+                select(CcBridgingcareDeliveryJob.id).where(
+                    CcBridgingcareDeliveryJob.agent_id == agent_id
+                )
+            )
+        ).scalars().all()
+        if bc_job_ids:
+            await db.execute(
+                delete(CcBridgingcareDeliveryAttempt).where(
+                    CcBridgingcareDeliveryAttempt.job_id.in_(bc_job_ids)
+                )
+            )
+        await db.execute(
+            delete(CcBridgingcareDeliveryAttempt).where(
+                CcBridgingcareDeliveryAttempt.assessment_id.in_(
+                    select(AiMedicalAssessment.id).where(
+                        AiMedicalAssessment.agent_id == agent_id
+                    )
+                )
+            )
+        )
+        await db.execute(
+            delete(CcBridgingcareDeliveryJob).where(
+                CcBridgingcareDeliveryJob.agent_id == agent_id
+            )
+        )
+        await db.execute(
+            delete(CcBridgingcareCompanionMap).where(
+                CcBridgingcareCompanionMap.agent_id == agent_id
             )
         )
         await db.execute(

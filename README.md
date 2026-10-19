@@ -161,6 +161,28 @@ Send-time still refuses a live `public_id` that does not match the
 snapshot. Verify with
 `api/migrations/028_assessment_delivery_intent.verify.sql`.
 
+Apply `api/migrations/030_bridgingcare_assessment_delivery.sql` for the
+dedicated Bridging Care assessment outbox
+(`cc_bridgingcare_delivery_job` / `cc_bridgingcare_delivery_attempt`) and
+verified companion map (`cc_bridgingcare_companion_map`). Additive only —
+it does not alter the CareConnect 027 queue, assessment schedule, or
+`ai_medical_assessment` columns. Only successfully persisted **scheduled**
+Care & Wellness rows are eligible, and only if `generated_at` is at or
+after the companion map `verified_at` (no historical backfill when 030
+or the map is applied). Mapping is operator-verified: Nexus
+`ai_agent.id` is the *client* / assessment owner (Bill Bob
+`795e977e58784702a3b7e309889fbc61`), not the Bridging Care companion
+registration id (`Nx-C97S1X9PS` is Betty). `expected_agent_name` is the
+client display name (Bill Bob). Organization id and CareConnect
+public client id are never used as Bridging Care account/client UUIDs.
+HTTP is off unless `BRIDGINGCARE_EXECUTE_ENABLED=true`. Staging destination
+(do not enable in this slice):
+`https://llkzju8pfa.execute-api.us-east-2.amazonaws.com/staging/registration/integrations/nexus/assessments`.
+Receiver contract (R60C field names: `assessmentId`, `generatedAt`,
+`forDate`, `assessment.riskLevel`, confidence 0–1):
+`docs/contracts/bridgingcare-ai-companion-assessment-1.0.schema.json`.
+Verify with `api/migrations/030_bridgingcare_assessment_delivery.verify.sql`.
+
 Apply `api/migrations/029_device_personality.sql` to add nullable
 `ai_device.personality_id`. NULL inherits the bound client's Agent
 Personality. A Watcher may override independently of other devices on the
@@ -310,6 +332,14 @@ docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
 docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
   'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
   < api/migrations/029_device_personality.verify.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/030_bridgingcare_assessment_delivery.sql
+
+docker compose -f deploy/docker-compose.yml exec -T mariadb sh -c \
+  'mariadb -u root -p"$(cat /run/secrets/mariadb-root)" "$MARIADB_DATABASE"' \
+  < api/migrations/030_bridgingcare_assessment_delivery.verify.sql
 ```
 
 ### Operator-selected test player (do not auto-bind)

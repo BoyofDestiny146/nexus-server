@@ -155,6 +155,14 @@ services:
       REVEL_CONTROL_TABLE_ID: "${REVEL_CONTROL_TABLE_ID:-}"
       REVEL_DEFAULT_DEVICE_ID: "${REVEL_DEFAULT_DEVICE_ID:-}"
       REVEL_EXECUTE_ENABLED: "${REVEL_EXECUTE_ENABLED:-false}"
+      # Bridging Care companion ingest. Execute stays false until George
+      # approves a live POST. Do not copy this file over production compose;
+      # add these keys to /mnt/xiaozhi/nexus-deploy after reviewing it.
+      CC_BRIDGINGCARE_INGEST_URL: "${CC_BRIDGINGCARE_INGEST_URL:-}"
+      CC_BRIDGINGCARE_EXECUTE_ENABLED: "${CC_BRIDGINGCARE_EXECUTE_ENABLED:-false}"
+      CC_BRIDGINGCARE_API_KEY_FILE: "${CC_BRIDGINGCARE_API_KEY_FILE:-/run/secrets/bridgingcare-api-key}"
+      CC_BRIDGINGCARE_TICK_SECONDS: "${CC_BRIDGINGCARE_TICK_SECONDS:-15}"
+      BRIDGINGCARE_EXECUTE_ENABLED: "${BRIDGINGCARE_EXECUTE_ENABLED:-false}"
     volumes:
       - cc-secrets:/run/secrets:ro
       - cc-voice:/data

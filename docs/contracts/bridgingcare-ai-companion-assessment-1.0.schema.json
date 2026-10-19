@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.warehouse-13.biz/contracts/bridgingcare-ai-companion-assessment-1.0.schema.json",
+  "title": "Bridging Care AI Companion Assessment (R60C receiver)",
+  "description": "Exact JSON accepted by the deployed Bridging Care staging Nexus assessment receiver. No extra fields. assessmentId is the persisted Nexus ai_medical_assessment.id. Does not include Nexus ai_agent.id, organization id, Watcher MAC, or CareConnect public client id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "assessmentId",
+    "source",
+    "companionId",
+    "accountId",
+    "clientId",
+    "generatedAt",
+    "forDate",
+    "assessment"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "assessmentId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Persisted Nexus ai_medical_assessment.id. Stable on retry. Not regenerated."
+    },
+    "source": {
+      "const": "nexus"
+    },
+    "companionId": {
+      "type": "string",
+      "pattern": "^Nx-[A-Za-z0-9]+$",
+      "description": "Bridging Care companion registration identifier (Betty: Nx-C97S1X9PS)."
+    },
+    "accountId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Bridging Care account UUID. Not a Nexus organization id."
+    },
+    "clientId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Bridging Care bound client UUID. Not a CareConnect public id and not Nexus ai_agent.id."
+    },
+    "generatedAt": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "Assessment generated_at converted to UTC (Z)."
+    },
+    "forDate": {
+      "type": "string",
+      "format": "date",
+      "description": "Nexus assessment for_date (YYYY-MM-DD)."
+    },
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["riskLevel", "confidence", "concerns", "recommendations"],
+      "properties": {
+        "riskLevel": {
+          "type": "string",
+          "enum": ["low", "moderate", "elevated", "urgent"]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "concerns": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "recommendations": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

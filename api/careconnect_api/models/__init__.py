@@ -255,6 +255,104 @@ class CcAssessmentDeliveryAttempt(Base):
     error_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class CcBridgingcareCompanionMap(Base):
+    """Verified Nexus client → Bridging Care companion/account/client.
+
+    ``agent_id`` is the Nexus *client* ``ai_agent.id`` (32-char hex) — the
+    assessment owner (Bill Bob). ``companion_id`` is Bridging Care Betty
+    (``Nx-C97S1X9PS``). ``expected_agent_name`` is the client display name
+    (Bill Bob), never the companion name. Never store organization id or
+    CareConnect public client id as Bridging Care account/client UUIDs.
+    """
+
+    __tablename__ = "cc_bridgingcare_companion_map"
+    __table_args__ = (
+        UniqueConstraint("agent_id", name="uq_bc_map_agent"),
+        UniqueConstraint("companion_id", name="uq_bc_map_companion"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    agent_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    companion_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    account_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    client_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    expected_agent_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    verified_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CcBridgingcareDeliveryJob(Base):
+    """Dedicated Bridging Care outbox. Separate from CareConnect 027."""
+
+    __tablename__ = "cc_bridgingcare_delivery_job"
+    __table_args__ = (
+        UniqueConstraint("assessment_id", name="uq_bc_delivery_assessment"),
+        UniqueConstraint("idempotency_key", name="uq_bc_delivery_idempotency"),
+        Index("idx_bc_delivery_agent", "agent_id"),
+        Index("idx_bc_delivery_status_retry", "status", "next_retry_at"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    assessment_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    companion_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    account_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    client_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    destination: Mapped[str] = mapped_column(String(32), nullable=False, default="bridgingcare")
+    dest_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class CcBridgingcareDeliveryAttempt(Base):
+    """Audit row for one Bridging Care delivery attempt. No secrets/payloads."""
+
+    __tablename__ = "cc_bridgingcare_delivery_attempt"
+    __table_args__ = (
+        Index("idx_bc_delivery_attempt_job", "job_id"),
+        Index("idx_bc_delivery_attempt_assessment", "assessment_id"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    job_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    assessment_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    success: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    destination: Mapped[str] = mapped_column(String(32), nullable=False)
+    dest_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
 class CcAgentPersonality(Base):
     """Reusable Agent Personality library.
 

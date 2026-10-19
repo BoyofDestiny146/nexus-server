@@ -141,6 +141,15 @@ class Settings(BaseSettings):
     assessment_delivery_backoff_base_s: float = 30.0
     assessment_delivery_lease_s: int = 90
     assessment_delivery_schema_retry_s: int = 60
+    # Bridging Care companion ingest. Empty URL + execute=false means queue only.
+    # Never transmit unless BRIDGINGCARE_EXECUTE_ENABLED / CC_BRIDGINGCARE_EXECUTE_ENABLED.
+    bridgingcare_ingest_url: str = ""
+    bridgingcare_execute_enabled: bool = False
+    bridgingcare_api_key_file: Path = CFG_DIR / "bridgingcare-api-key-absent"
+    bridgingcare_timeout_s: float = 5.0
+    bridgingcare_tick_seconds: int = 15
+    bridgingcare_max_attempts: int = 8
+    bridgingcare_backoff_base_s: float = 30.0
 
     # Google Calendar (read-only iCal). Poller speaks timed occurrences only.
     gcal_poll_seconds: int = 60
