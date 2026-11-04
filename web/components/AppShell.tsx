@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import {
-  Users, Cpu, Shield, Settings, LogOut, HeartPulse, BookOpen, Sparkles,
+  Users, Cpu, Shield, Settings, LogOut, HeartPulse, BookOpen, Sparkles, Bot,
   Building2, Plus, ChevronDown,
 } from "lucide-react";
 import { clearSession } from "@/lib/api";
@@ -22,7 +22,7 @@ import {
 } from "@/lib/clientsNav";
 
 const MAIN_NAV = [
-  { href: "/devices", label: "Devices", icon: Cpu },
+  { href: "/devices", label: "Agents", icon: Cpu },
   { href: "/personalities", label: "Agent Personality", icon: Sparkles },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/health", label: "System Status", icon: HeartPulse },
@@ -157,6 +157,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </li>
                 </ul>
               )}
+            </li>
+            <li>
+              <NavLink
+                href="/virtual-agents"
+                label="Virtual Agents"
+                icon={Bot}
+                active={pathname === "/virtual-agents" || pathname.startsWith("/virtual-agents/")}
+              />
             </li>
             {MAIN_NAV.map((n) => (
               <li key={n.href}>

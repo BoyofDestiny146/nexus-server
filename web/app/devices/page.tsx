@@ -283,8 +283,8 @@ function DevicesView() {
     <>
       <PageHeader
         kicker="Hardware"
-        title="Devices"
-        subtitle="Every Watcher registered on this server. The Last connected column shows online (≤5 min) at a glance. Use the Control button on each row to configure voice, speed, and other device settings."
+        title="Agents"
+        subtitle="Physical agents on this server: every registered Watcher. The Last connected column shows online (≤5 min) at a glance. Use the Control button on each row to configure voice, speed, and other device settings."
       />
 
       <section className="px-8 md:px-12 py-8">

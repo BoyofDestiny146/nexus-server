@@ -17,6 +17,7 @@ import { AppShell, PageHeader } from "@/components/AppShell";
 import { RequireAuth } from "@/components/RequireAuth";
 import { RiskDot, RiskBadge } from "@/components/RiskDot";
 import { EmptyState } from "@/components/EmptyState";
+import { visibleClientRecords } from "@/lib/virtualAgents";
 
 const REFRESH_MS = 30_000;
 
@@ -144,9 +145,10 @@ function PatientsView() {
 
   const filtered = useMemo(() => {
     if (!agents) return null;
+    const clients = visibleClientRecords(agents);
     const q = query.trim().toLowerCase();
-    if (!q) return agents;
-    return agents.filter((a) =>
+    if (!q) return clients;
+    return clients.filter((a) =>
       (a.agentName ?? "").toLowerCase().includes(q) ||
       a.id.toLowerCase().includes(q),
     );
@@ -169,7 +171,7 @@ function PatientsView() {
             : orgFilter === UNASSIGNED_ORGANIZATION_ID
               ? "Clients not yet linked to a facility or customer organization."
               : orgFilter
-                ? "Clients in this organization. Search stays within this group."
+                ? "Clients in this organization. Virtual agents are listed on the Virtual Agents page."
                 : "Every resident issued a Watcher. Click a card to review their conversation history and risk indicators."
         }
         actions={

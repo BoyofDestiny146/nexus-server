@@ -427,6 +427,125 @@ class AdminClientAccess(Base):
     granted_by: Mapped[int] = mapped_column(BigInteger)
 
 
+class CcVirtualAgentBinding(Base):
+    """Link from a care client to an existing virtual-agent client.
+
+    Both ids are ai_agent primary keys. The pair is unique. No device row.
+    """
+
+    __tablename__ = "cc_virtual_agent_binding"
+    __table_args__ = (
+        Index("idx_va_bind_virtual", "virtual_agent_id"),
+    )
+
+    client_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("ai_agent.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    virtual_agent_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("ai_agent.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
+class CcVirtualAgentMessage(Base):
+    """One stored virtual-agent turn, scoped to the owning Nexus client.
+
+    Separate from Watcher ai_agent_chat_history. Nothing in the Sam route writes here.
+    """
+
+    __tablename__ = "cc_virtual_agent_message"
+    __table_args__ = (
+        Index("idx_va_msg_scope", "client_id", "virtual_agent_id", "session_id", "id"),
+        Index("idx_va_msg_virtual", "virtual_agent_id"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    client_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("ai_agent.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    virtual_agent_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("ai_agent.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    question: Mapped[str] = mapped_column(String(2000), nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    follow_up: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class CcSamSession(Base):
+    """One Ask Sam dialog owned by a verified portal subject.
+
+    Separate from cc_virtual_agent_message. Library rows have no account,
+    device, or Nexus client. nexus_client_id is not taken from the browser.
+    """
+
+    __tablename__ = "cc_sam_session"
+    __table_args__ = (
+        Index("idx_sam_session_agent", "virtual_agent_id", "created_at"),
+        Index("idx_sam_session_owner", "owner_subject", "session_id"),
+    )
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    virtual_agent_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("ai_agent.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    owner_subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    context_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    account_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    registered_device_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    nexus_client_id: Mapped[str | None] = mapped_column(
+        String(32),
+        ForeignKey("ai_agent.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    answer_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    helpful: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    feedback_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CcSamSessionTurn(Base):
+    """One completed Ask Sam answer. Failed generations are not inserted."""
+
+    __tablename__ = "cc_sam_session_turn"
+    __table_args__ = (
+        Index("idx_sam_turn_session", "session_id", "id"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    session_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("cc_sam_session.session_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    question: Mapped[str] = mapped_column(String(2000), nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    follow_up: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class ClientIntegration(Base):
     """Per-client partner identity (CareConnect, Revel, later V6G / sensors).
 

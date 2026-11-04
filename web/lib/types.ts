@@ -13,6 +13,13 @@ export interface AgentSummary {
   riskLevel: RiskLevel | null;
   createdAt: string | null;
   organizationId?: string | null;
+  virtualAgent?: boolean;
+  boundAsVirtualAgent?: boolean;
+  boundAsClient?: boolean;
+  /** Care client id when this row is bound as a virtual agent. */
+  boundClientId?: string | null;
+  /** Care client agent_name when this row is bound as a virtual agent. */
+  boundClientName?: string | null;
 }
 
 export interface AgentDetail extends AgentSummary {
@@ -36,6 +43,10 @@ export interface AgentDetail extends AgentSummary {
   personalityId?: string | null;
   organizationId?: string | null;
   assessmentProfile?: AssessmentProfileDefinition | null;
+  storedModel?: string | null;
+  serverModel?: string | null;
+  effectiveModel?: string | null;
+  isActiveIntegrationAgent?: boolean;
 }
 
 export interface ChatSession {

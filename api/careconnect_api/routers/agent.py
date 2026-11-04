@@ -27,6 +27,18 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import httpx
+from pydantic import BaseModel
+
+from ..agent_classification import (
+    ask_sam_model_status,
+    binding_membership,
+    exact_model_tag,
+    is_virtual_agent,
+    normalize_model_tag,
+    primary_bound_client,
+    write_ask_sam_model,
+)
 from ..assessment_engine.storage import resolved_assessment_profile_dict
 from ..auth import CurrentUser, get_current_user, require_root
 from ..client_profile import effective_profile, public_profile
@@ -34,6 +46,8 @@ from ..db import get_db
 from ..envelope import APIException
 from ..models import AiAgent, AiAgentChatHistory, AiDevice, AiMedicalAssessment
 from ..rbac import assert_can_access_agent, scoped_agent_ids
+from ..settings import settings
+from .health import read_ollama_tags
 
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -47,6 +61,10 @@ def _agent_summary(
     device_count: int = 0,
     last_connected_at: datetime | None = None,
     risk_level: str | None = None,
+    bound_as_virtual_agent: bool = False,
+    bound_as_client: bool = False,
+    bound_client_id: str | None = None,
+    bound_client_name: str | None = None,
 ) -> dict[str, Any]:
     """Shape used by /agent/list — matches dashboard's AgentSummary type."""
     return {
@@ -76,10 +94,28 @@ def _agent_summary(
         # a risk dot per card without an N+1 fetch.
         "riskLevel": risk_level,
         "organizationId": agent.organization_id,
+        "boundAsVirtualAgent": bound_as_virtual_agent,
+        "boundAsClient": bound_as_client,
+        # Care client attached via cc_virtual_agent_binding when this row is
+        # the virtual-agent side. Null when unbound. Never the VA agent_name.
+        "boundClientId": bound_client_id,
+        "boundClientName": bound_client_name,
+        "virtualAgent": is_virtual_agent(
+            organization_id=agent.organization_id,
+            device_count=device_count,
+            bound_as_virtual_agent=bound_as_virtual_agent,
+            bound_as_client=bound_as_client,
+        ),
     }
 
 
-def _agent_info(agent: AiAgent) -> dict[str, Any]:
+def _agent_info(
+    agent: AiAgent,
+    *,
+    device_count: int = 0,
+    bound_as_virtual_agent: bool = False,
+    bound_as_client: bool = False,
+) -> dict[str, Any]:
     """Shape used by /agent/{id} — matches Java's AgentInfoVO (extends AgentEntity)."""
     profile = public_profile(effective_profile(agent.profile_json, agent.system_prompt))
     return {
@@ -115,6 +151,15 @@ def _agent_info(agent: AiAgent) -> dict[str, Any]:
         "personaOverride": profile.get("personaOverride"),
         "personalityId": profile.get("personalityId"),
         "organizationId": agent.organization_id,
+        "boundAsVirtualAgent": bound_as_virtual_agent,
+        "boundAsClient": bound_as_client,
+        "virtualAgent": is_virtual_agent(
+            organization_id=agent.organization_id,
+            device_count=device_count,
+            bound_as_virtual_agent=bound_as_virtual_agent,
+            bound_as_client=bound_as_client,
+        ),
+        **ask_sam_model_status(agent.id, agent.profile_json),
         # Resolved Nexus Assessment Engine profile. Missing/unknown/unimplemented
         # stored values become care_wellness; wizard fields are unchanged.
         "assessmentProfile": resolved_assessment_profile_dict(agent.profile_json),
@@ -224,16 +269,25 @@ async def list_agents(
     device_counts = await _device_counts_by_agent(db, ids)
     last_connected = await _last_connected_by_agent(db, ids)
     latest_risk = await _latest_risk_by_agent(db, ids)
+    virtual_ids, client_ids = await binding_membership(db, ids)
+    bound_clients = await primary_bound_client(db, list(virtual_ids))
 
-    return [
-        _agent_summary(
-            a,
-            device_count=device_counts.get(a.id, 0),
-            last_connected_at=last_connected.get(a.id),
-            risk_level=latest_risk.get(a.id),
+    summaries: list[dict[str, Any]] = []
+    for a in agents:
+        bound = bound_clients.get(a.id)
+        summaries.append(
+            _agent_summary(
+                a,
+                device_count=device_counts.get(a.id, 0),
+                last_connected_at=last_connected.get(a.id),
+                risk_level=latest_risk.get(a.id),
+                bound_as_virtual_agent=a.id in virtual_ids,
+                bound_as_client=a.id in client_ids,
+                bound_client_id=bound[0] if bound else None,
+                bound_client_name=bound[1] if bound else None,
+            )
         )
-        for a in agents
-    ]
+    return summaries
 
 
 @router.get("/all", response_model=None)
@@ -256,8 +310,19 @@ async def list_all_agents(
         )
     ).scalars().all()
 
+    ids = [row.id for row in rows]
+    device_counts = await _device_counts_by_agent(db, ids)
+    virtual_ids, client_ids = await binding_membership(db, ids)
     return {
-        "list": [_agent_info(a) for a in rows],
+        "list": [
+            _agent_info(
+                row,
+                device_count=device_counts.get(row.id, 0),
+                bound_as_virtual_agent=row.id in virtual_ids,
+                bound_as_client=row.id in client_ids,
+            )
+            for row in rows
+        ],
         "total": int(total or 0),
         "page": page,
         "limit": limit,
@@ -277,7 +342,57 @@ async def get_agent(
     ).scalar_one_or_none()
     if agent is None:
         raise APIException(404, "agent not found")
-    return _agent_info(agent)
+    device_counts = await _device_counts_by_agent(db, [agent_id])
+    virtual_ids, client_ids = await binding_membership(db, [agent_id])
+    return _agent_info(
+        agent,
+        device_count=device_counts.get(agent_id, 0),
+        bound_as_virtual_agent=agent_id in virtual_ids,
+        bound_as_client=agent_id in client_ids,
+    )
+
+
+class AskSamModelBody(BaseModel):
+    askSamModel: str | None
+
+
+@router.put("/{agent_id}/ask-sam-model", response_model=None)
+async def put_ask_sam_model(
+    agent_id: str,
+    body: AskSamModelBody,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Save or clear the conversational Ollama tag on this agent.
+
+    Writes ``profile_json.askSamModel`` only. Voice slot, TTS, personality,
+    knowledge, bindings, and ``system_prompt`` are left as they are. Ask Sam
+    routing is not changed.
+    """
+    await assert_can_access_agent(db, user, agent_id)
+    agent = await db.get(AiAgent, agent_id)
+    if agent is None:
+        raise APIException(404, "agent not found")
+    try:
+        selected = normalize_model_tag(body.askSamModel)
+    except ValueError as exc:
+        raise APIException(400, "invalid model") from exc
+    if selected is not None:
+        try:
+            async with httpx.AsyncClient(timeout=settings.health_probe_timeout_s) as client:
+                reachable, names = await read_ollama_tags(client)
+        except Exception as exc:
+            raise APIException(503, "Ollama is unreachable") from exc
+        if not reachable:
+            raise APIException(503, "Ollama is unreachable")
+        if not exact_model_tag(names, selected):
+            raise APIException(400, "model is not available")
+    agent.profile_json = write_ask_sam_model(agent.profile_json, selected)
+    agent.updater = user.id
+    agent.updated_at = func.now()
+    await db.commit()
+    await db.refresh(agent)
+    return ask_sam_model_status(agent.id, agent.profile_json)
 
 
 @router.get("/{agent_id}/sessions", response_model=None)
