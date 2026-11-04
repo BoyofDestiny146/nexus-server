@@ -161,6 +161,34 @@ async def resolve_verified_mapping(
     return await _freeze_verified_mapping(db, row)
 
 
+async def resolve_verified_client_by_account(
+    db: AsyncSession, account_id: str
+) -> str | None:
+    """Return the one Nexus client verified for this Bridging Care account.
+
+    A missing account, an account that is not a verified map, and more than
+    one verified client are all unresolved. The caller must not guess.
+    """
+    raw = (account_id or "").strip()
+    if not is_uuid(raw):
+        return None
+    rows = (
+        await db.execute(
+            select(CcBridgingcareCompanionMap).where(
+                CcBridgingcareCompanionMap.account_id == raw
+            )
+        )
+    ).scalars().all()
+    verified: list[str] = []
+    for row in rows:
+        frozen = await _freeze_verified_mapping(db, row)
+        if frozen is not None and frozen.agent_id not in verified:
+            verified.append(frozen.agent_id)
+    if len(verified) != 1:
+        return None
+    return verified[0]
+
+
 async def resolve_verified_mapping_by_companion(
     db: AsyncSession, companion_id: str
 ) -> CcBridgingcareCompanionMap | None:

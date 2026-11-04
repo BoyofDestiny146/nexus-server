@@ -51,3 +51,25 @@ test("Edit Client wizard headings are clickable and Generate with AI is gone", (
   assert.doesNotMatch(guard, /Persona Override/);
   assert.match(edit, /apiGet<AgentDetail>\(`\/agent\/\$\{agentId\}`\)/);
 });
+
+test("Additional Persona Instructions is edited only for an eligible virtual agent", () => {
+  const guard = readFileSync(join(here, "../components/clientForm/GuardrailsFields.tsx"), "utf8");
+  const edit = readFileSync(join(here, "../components/EditClientWorkspace.tsx"), "utf8");
+  const add = readFileSync(join(here, "../app/patients/new/page.tsx"), "utf8");
+  const control = readFileSync(join(here, "../app/virtual-agents/control/page.tsx"), "utf8");
+  assert.match(guard, /Additional Persona Instructions/);
+  assert.match(guard, /showPersonaInstructions &&/);
+  assert.match(guard, /value=\{draft\.personaOverride\}/);
+  assert.match(guard, /update\("personaOverride", e\.target\.value\)/);
+  assert.match(guard, /Agent Personality Selection/);
+  assert.doesNotMatch(guard, /update\("condition"/);
+  assert.match(edit, /isVirtualAgent\(\{/);
+  assert.match(edit, /deviceCount: devices\.length/);
+  assert.match(edit, /showPersonaInstructions=\{showPersonaInstructions\}/);
+  assert.match(edit, /if \(profileDirty\) \{\s*await apiPatch\(`\/agent\/\$\{agent\.id\}`, clientPatchBody\(draft\)\)/);
+  assert.doesNotMatch(add, /showPersonaInstructions/);
+  assert.doesNotMatch(add, /Additional Persona Instructions/);
+  assert.doesNotMatch(control, /Additional Persona Instructions/);
+  assert.doesNotMatch(control, /apiPatch/);
+  assert.doesNotMatch(edit, /1c46373751d84d29a1aab382fd65501f/);
+});

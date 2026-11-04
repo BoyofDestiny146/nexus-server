@@ -48,6 +48,8 @@ import { EditClientWorkspace } from "@/components/EditClientWorkspace";
 import { RevelContextCard } from "@/components/RevelContextCard";
 import { RevelDisplayEvent } from "@/components/RevelDisplayEvent";
 import { AssessmentEngineRail } from "@/components/assessment/AssessmentEngineRail";
+import { AskSamDiscussions } from "@/components/AskSamDiscussions";
+import { VirtualAgentBindings } from "@/components/VirtualAgentBindings";
 
 const WATCHER_ONLINE_MS = 5 * 60_000;
 
@@ -557,7 +559,12 @@ function PatientDetailView({ id }: { id: string }) {
                 </ul>
               )}
             </div>
+            <div>
+              <VirtualAgentBindings clientId={id} />
+            </div>
           </div>
+
+          <AskSamDiscussions clientId={id} />
 
           <div className="px-3 pt-4 pb-2 flex items-baseline justify-between gap-2">
             <div className="kicker">Sessions</div>

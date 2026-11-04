@@ -89,6 +89,28 @@ test("clientPatchBody sends the same keys Edit saves, never a new client id", ()
   assert.equal("systemPrompt" in body, false);
 });
 
+test("a loaded persona note can be edited or cleared without changing personality or condition", () => {
+  const loaded = draftFromAgent(agent({ personaOverride: "Note" }));
+  assert.equal(loaded.personaOverride, "Note");
+  assert.equal(draftsEqual(loaded, draftFromAgent(agent({ personaOverride: "Note" }))), true);
+
+  const edited = { ...loaded, personaOverride: "Updated note" };
+  const saved = clientPatchBody(edited);
+  assert.equal(saved.personaOverride, "Updated note");
+  assert.equal(saved.personalityId, loaded.personalityId);
+  assert.equal(saved.condition, loaded.condition);
+
+  const cleared = clientPatchBody({ ...edited, personaOverride: "" });
+  assert.equal(cleared.personaOverride, null);
+  assert.equal(cleared.personalityId, loaded.personalityId);
+  assert.equal(cleared.condition, loaded.condition);
+
+  const reloaded = draftFromAgent(agent({ personaOverride: "Updated note" }));
+  assert.equal(reloaded.personaOverride, "Updated note");
+  assert.equal(reloaded.personalityId, loaded.personalityId);
+  assert.equal(reloaded.condition, loaded.condition);
+});
+
 test("empty persona and condition become null so PATCH can clear them without dropping other fields", () => {
   const draft: ClientFormDraft = {
     ...EMPTY_CLIENT_DRAFT,

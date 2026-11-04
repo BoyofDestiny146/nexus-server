@@ -24,6 +24,7 @@ import { ProfileFields } from "@/components/clientForm/ProfileFields";
 import { GuardrailsFields } from "@/components/clientForm/GuardrailsFields";
 import { KnowledgeAccessFields } from "@/components/clientForm/KnowledgeAccessFields";
 import { ProfileReview } from "@/components/clientForm/ReviewFields";
+import { isVirtualAgent } from "@/lib/virtualAgents";
 
 const WATCHER_ONLINE_MS = 5 * 60_000;
 
@@ -100,6 +101,13 @@ export function EditClientWorkspace({
     setDraft((d) => ({ ...d, [key]: value }));
   }
 
+  const showPersonaInstructions = isVirtualAgent({
+    id: agent.id,
+    organizationId: agent.organizationId,
+    deviceCount: devices.length,
+    boundAsVirtualAgent: agent.boundAsVirtualAgent,
+    boundAsClient: agent.boundAsClient,
+  });
   const profileDirty = !draftsEqual(draft, baseline);
   const knowledgeDirty = kbReady && !knowledgeIdsEqual(selectedKbIds, baselineKbIds);
   const dirty = profileDirty || knowledgeDirty;
@@ -170,7 +178,11 @@ export function EditClientWorkspace({
           <div className="xl:col-span-2 min-h-[18rem]">
             {step === 0 && <ProfileFields draft={draft} update={update} autoFocusName />}
             {step === 1 && (
-              <GuardrailsFields draft={draft} update={update} />
+              <GuardrailsFields
+                draft={draft}
+                update={update}
+                showPersonaInstructions={showPersonaInstructions}
+              />
             )}
             {step === 2 && (
               <EditDeviceStep

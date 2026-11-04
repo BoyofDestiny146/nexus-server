@@ -74,6 +74,8 @@ from ..models import (
     CcBridgingcareDeliveryAttempt,
     CcBridgingcareDeliveryJob,
     ClientIntegration,
+    CcVirtualAgentBinding,
+    CcVirtualAgentMessage,
     RevelPlayerMap,
 )
 from ..personalities.store import (
@@ -630,6 +632,9 @@ async def delete_agent(
       • cc_bridgingcare_companion_map
       • ai_medical_assessment    — removes triage rows
       • ai_agent_chat_history    — removes conversation rows
+      • cc_virtual_agent_binding / cc_virtual_agent_message
+                                 — removes links and virtual-agent turns
+                                   where this client is either side
       • ai_device                — UNBINDS (sets agent_id=NULL) so the
                                    physical Watcher row survives and can be
                                    re-attached to another client
@@ -741,6 +746,18 @@ async def delete_agent(
         )
         await db.execute(
             delete(AiAgentChatHistory).where(AiAgentChatHistory.agent_id == agent_id)
+        )
+        await db.execute(
+            delete(CcVirtualAgentMessage).where(
+                (CcVirtualAgentMessage.client_id == agent_id)
+                | (CcVirtualAgentMessage.virtual_agent_id == agent_id)
+            )
+        )
+        await db.execute(
+            delete(CcVirtualAgentBinding).where(
+                (CcVirtualAgentBinding.client_id == agent_id)
+                | (CcVirtualAgentBinding.virtual_agent_id == agent_id)
+            )
         )
 
         # 3. unbind devices (don't delete — keep the physical Watcher rows)

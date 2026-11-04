@@ -225,11 +225,19 @@ def parse_profile_from_prompt(prompt: str | None) -> dict[str, Any]:
     return out
 
 
+def _copy_unknown(stored: Mapping[str, Any], into: dict[str, Any]) -> dict[str, Any]:
+    """Wizard recovery must not drop keys Edit Client does not understand."""
+    for key, value in stored.items():
+        if key not in PROFILE_KEYS:
+            into[key] = value
+    return into
+
+
 def effective_profile(profile_json: Any, system_prompt: str | None) -> dict[str, Any]:
     stored = load_profile(profile_json)
     parsed = parse_profile_from_prompt(system_prompt)
     if profile_is_empty(stored):
-        return parsed
+        return _copy_unknown(stored, parsed)
     # Live system_prompt may have been hand-edited (old Edit Client) after
     # structured JSON was stored. Keep that persona text instead of dropping it.
     if not stored.get("personaOverride") and parsed.get("personaOverride"):

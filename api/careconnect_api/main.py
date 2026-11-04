@@ -107,6 +107,7 @@ def healthz():
 # Routers — registered as we build phases out
 from .routers import user as user_router  # noqa: E402
 from .routers import agent as agent_router  # noqa: E402
+from .routers import virtual_agent_binding as virtual_agent_binding_router  # noqa: E402
 from .routers import device as device_router  # noqa: E402
 from .routers import assessment as assessment_router  # noqa: E402
 from .routers import admin as admin_router  # noqa: E402
@@ -122,8 +123,11 @@ from .routers import partner_bridgingcare as partner_bridgingcare_router  # noqa
 from .routers import knowledge as knowledge_router  # noqa: E402
 from .routers import personalities as personalities_router  # noqa: E402
 from .routers import organizations as organizations_router  # noqa: E402
+from .routers import ollama_models as ollama_models_router  # noqa: E402
 
 app.include_router(user_router.router, prefix="/api")
+# Registered before /agent/{agent_id} so /agent/virtual is not treated as a client id.
+app.include_router(virtual_agent_binding_router.router, prefix="/api")
 app.include_router(agent_router.router, prefix="/api")
 app.include_router(device_router.router, prefix="/api")
 app.include_router(assessment_router.router, prefix="/api")
@@ -135,7 +139,7 @@ app.include_router(public_router.router, prefix="/api")
 # CareConnect partner M2M — X-Client-Id + X-Client-Secret. Not dashboard JWT.
 app.include_router(partner_router.router, prefix="/api")
 # Bridging Care inbound M2M — X-Client-Id + X-Client-Secret. Not dashboard JWT,
-# not outbound ingest X-Api-Key. Read-only assessment-config GET.
+# not outbound ingest X-Api-Key. Read-only assessment-config GET and Sam conversation POST.
 app.include_router(partner_bridgingcare_router.router, prefix="/api")
 # WebSocket router mounted at root — /ws/* is intentionally outside /api so
 # the envelope middleware skips it (websocket upgrades aren't JSON anyway).
@@ -146,6 +150,7 @@ app.include_router(integrations_router.router, prefix="/api")
 app.include_router(knowledge_router.router, prefix="/api")
 app.include_router(personalities_router.router, prefix="/api")
 app.include_router(organizations_router.router, prefix="/api")
+app.include_router(ollama_models_router.router, prefix="/api")
 
 
 @app.get("/readyz")
