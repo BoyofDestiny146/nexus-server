@@ -153,6 +153,12 @@ class Settings(BaseSettings):
     bridgingcare_inbound_secret_hash_file: Path = (
         CFG_DIR / "bridgingcare-inbound-secret-hash-absent"
     )
+    # Ask Sam only. Empty means the conversation fails closed. This does not
+    # change the companion model in CC_LLM_MODEL / llm_model.
+    sam_knowledge_base_ids: str = ""
+    # Integration agent for Ask Sam. Empty fails closed. Not accepted from a request.
+    sam_client_id: str = ""
+    sam_conversation_timeout_s: float = 20.0
     bridgingcare_timeout_s: float = 5.0
     bridgingcare_tick_seconds: int = 15
     bridgingcare_max_attempts: int = 8

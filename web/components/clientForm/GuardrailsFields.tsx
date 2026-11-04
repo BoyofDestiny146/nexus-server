@@ -11,10 +11,12 @@ import { DEFAULT_PERSONALITY_ID, LEGACY_PERSONALITY_ID } from "@/lib/types";
 export function GuardrailsFields({
   draft,
   update,
+  showPersonaInstructions = false,
 }: {
   draft: ClientFormDraft;
   update: <K extends keyof ClientFormDraft>(key: K, value: ClientFormDraft[K]) => void;
   preserveExisting?: boolean;
+  showPersonaInstructions?: boolean;
 }) {
   const [personalities, setPersonalities] = useState<AgentPersonality[]>([]);
 
@@ -94,6 +96,20 @@ export function GuardrailsFields({
           <div className="helper">How Nexus talks. Independent of Assessment Profile and Knowledge Bases.</div>
         )}
       </div>
+
+      {showPersonaInstructions && (
+        <div>
+          <label htmlFor="additional-persona-instructions" className="label">Additional Persona Instructions</label>
+          <textarea
+            id="additional-persona-instructions"
+            rows={3}
+            className="input"
+            value={draft.personaOverride}
+            onChange={(e) => update("personaOverride", e.target.value)}
+          />
+          <div className="helper">Saved on this virtual agent. Personality selection and the condition note stay as entered.</div>
+        </div>
+      )}
 
       <div>
         <label className="label">Escalation phrases</label>

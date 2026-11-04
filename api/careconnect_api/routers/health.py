@@ -346,81 +346,131 @@ async def _probe_vad_asr(client: httpx.AsyncClient) -> dict[str, Any]:
         return _hop("vad_asr", "VAD / ASR", FAIL, f"service unreachable ({type(exc).__name__})", ms)
 
 
-async def _probe_llm(client: httpx.AsyncClient) -> dict[str, Any]:
-    """Conversational model via host Ollama. Never probes the triage model."""
-    base = (settings.ollama_url or "").rstrip("/")
-    model = (settings.llm_model or "").strip()
-    label = llm_hop_label(model)
-    t0 = time.monotonic()
-    if not base or not model:
-        return _hop("llm", label, FAIL, "LLM runtime unconfigured", 0)
+def ollama_generate_body(model: str) -> dict[str, Any]:
+    """One-token probe. Shared by the global health hop and a selected tag."""
+    return {
+        "model": model,
+        "prompt": "Reply with the single word OK.",
+        "stream": False,
+        "options": {"num_predict": 1},
+    }
 
-    try:
-        vr = await client.get(f"{base}/api/version")
-        if vr.status_code != 200:
-            ms = (time.monotonic() - t0) * 1000
-            return _hop("llm", label, FAIL, "LLM runtime unreachable", ms)
 
-        tags_r = await client.get(f"{base}/api/tags")
-        names: list[str] = []
-        if tags_r.status_code == 200:
-            try:
-                names = [m.get("name", "") for m in (tags_r.json().get("models") or [])]
-            except Exception:
-                names = []
-        if not model_is_listed(names, model):
-            ms = (time.monotonic() - t0) * 1000
-            return _hop(
-                "llm",
-                label,
-                FAIL,
-                f"Ollama reachable; {model} unavailable",
-                ms,
-            )
-
-        gen_ms = None
+async def read_ollama_tags(client: httpx.AsyncClient, base: str | None = None) -> tuple[bool, list[str]]:
+    """Reachability plus ``GET /api/tags``. The only Ollama model discovery."""
+    root = (settings.ollama_url if base is None else base or "").rstrip("/")
+    if not root:
+        return False, []
+    version = await client.get(f"{root}/api/version")
+    if version.status_code != 200:
+        return False, []
+    tags = await client.get(f"{root}/api/tags")
+    names: list[str] = []
+    if tags.status_code == 200:
         try:
-            t_gen = time.monotonic()
-            gen_r = await client.post(
-                f"{base}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": "Reply with the single word OK.",
-                    "stream": False,
-                    "options": {"num_predict": 1},
-                },
+            names = [item.get("name", "") for item in (tags.json().get("models") or [])]
+        except Exception:
+            names = []
+    return True, names
+
+
+async def probe_selected_model(
+    client: httpx.AsyncClient,
+    model: str,
+    base: str | None = None,
+) -> dict[str, Any]:
+    """Check one tag: Ollama is up, the tag is listed, and a short generate works.
+
+    This does not report BridgingCare connectivity. ``hopStatus`` keeps the
+    global health page vocabulary.
+    """
+    root = (settings.ollama_url if base is None else base or "").rstrip("/")
+    target = (model or "").strip()
+    started = time.monotonic()
+    if not root or not target:
+        return {
+            "ollamaReachable": False,
+            "listed": False,
+            "generationSucceeded": False,
+            "detail": "LLM runtime unconfigured",
+            "hopStatus": FAIL,
+            "latency_ms": 0.0,
+        }
+    try:
+        reachable, names = await read_ollama_tags(client, root)
+        if not reachable:
+            return {
+                "ollamaReachable": False,
+                "listed": False,
+                "generationSucceeded": False,
+                "detail": "LLM runtime unreachable",
+                "hopStatus": FAIL,
+                "latency_ms": (time.monotonic() - started) * 1000,
+            }
+        if not model_is_listed(names, target):
+            return {
+                "ollamaReachable": True,
+                "listed": False,
+                "generationSucceeded": False,
+                "detail": f"Ollama reachable; {target} unavailable",
+                "hopStatus": FAIL,
+                "latency_ms": (time.monotonic() - started) * 1000,
+            }
+        generated_ms = None
+        try:
+            generated_at = time.monotonic()
+            generated = await client.post(
+                f"{root}/api/generate",
+                json=ollama_generate_body(target),
                 timeout=2.0,
             )
-            gen_ms = (time.monotonic() - t_gen) * 1000
-            total_ms = (time.monotonic() - t0) * 1000
-            if gen_r.status_code == 200:
-                return _hop(
-                    "llm",
-                    label,
-                    OK,
-                    f"{llm_short_name(model)} reachable via Ollama",
-                    total_ms,
-                )
-            return _hop(
-                "llm",
-                label,
-                WARN,
-                f"Ollama reachable; {model} listed, generate HTTP {gen_r.status_code}",
-                total_ms,
-            )
+            generated_ms = (time.monotonic() - generated_at) * 1000
+            elapsed = (time.monotonic() - started) * 1000
+            if generated.status_code == 200:
+                return {
+                    "ollamaReachable": True,
+                    "listed": True,
+                    "generationSucceeded": True,
+                    "detail": f"{llm_short_name(target)} reachable via Ollama",
+                    "hopStatus": OK,
+                    "latency_ms": elapsed,
+                }
+            return {
+                "ollamaReachable": True,
+                "listed": True,
+                "generationSucceeded": False,
+                "detail": f"Ollama reachable; {target} listed, generate HTTP {generated.status_code}",
+                "hopStatus": WARN,
+                "latency_ms": elapsed,
+            }
         except Exception:
-            total_ms = (time.monotonic() - t0) * 1000
-            extra = f" ({gen_ms:.0f}ms)" if gen_ms is not None else ""
-            return _hop(
-                "llm",
-                label,
-                WARN,
-                f"Ollama reachable; {model} listed, no reply yet{extra}",
-                total_ms,
-            )
+            elapsed = (time.monotonic() - started) * 1000
+            extra = f" ({generated_ms:.0f}ms)" if generated_ms is not None else ""
+            return {
+                "ollamaReachable": True,
+                "listed": True,
+                "generationSucceeded": False,
+                "detail": f"Ollama reachable; {target} listed, no reply yet{extra}",
+                "hopStatus": WARN,
+                "latency_ms": elapsed,
+            }
     except Exception:
-        ms = (time.monotonic() - t0) * 1000
-        return _hop("llm", label, FAIL, "LLM runtime unreachable", ms)
+        return {
+            "ollamaReachable": False,
+            "listed": False,
+            "generationSucceeded": False,
+            "detail": "LLM runtime unreachable",
+            "hopStatus": FAIL,
+            "latency_ms": (time.monotonic() - started) * 1000,
+        }
+
+
+async def _probe_llm(client: httpx.AsyncClient) -> dict[str, Any]:
+    """Conversational model via host Ollama. Never probes the triage model."""
+    model = (settings.llm_model or "").strip()
+    label = llm_hop_label(model)
+    result = await probe_selected_model(client, model)
+    return _hop("llm", label, result["hopStatus"], result["detail"], result["latency_ms"])
 
 
 async def _probe_tts(client: httpx.AsyncClient) -> dict[str, Any]:
