@@ -212,13 +212,16 @@ async def test_model_probe_does_not_claim_the_integration_is_connected(monkeypat
 
 
 def test_ask_sam_route_uses_the_configured_agent_model():
+    """Class A / image-exact: Sam agent id comes from settings.sam_client_id."""
     partner = Path(__file__).resolve().parents[1] / "careconnect_api" / "routers" / "partner_bridgingcare.py"
     conversation = Path(__file__).resolve().parents[1] / "careconnect_api" / "sam_conversation.py"
     partner_text = partner.read_text()
     conversation_text = conversation.read_text()
-    assert "configured_integration_agent_id()" in partner_text
-    assert "conversation_model_for_profile(" in partner_text
-    assert "model=model or None" in partner_text
+    assert "settings.sam_client_id" in partner_text
+    assert "virtual_agent_id = settings.sam_client_id.strip()" in partner_text
+    assert "configured_integration_agent_id()" not in partner_text
+    assert "conversation_model_for_profile(" not in partner_text
+    assert "model=model or None" not in partner_text
     assert "chosen_model = model or settings.llm_model" in conversation_text
     assert 'payload.get("model")' not in partner_text
     assert "1c46373751d84d29a1aab382fd65501f" not in partner_text
