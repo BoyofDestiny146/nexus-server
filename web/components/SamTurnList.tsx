@@ -1,4 +1,5 @@
 import {
+  samClientResponseLabel,
   samContextLabel,
   samFeedbackLabel,
   samFollowUpHeading,
@@ -29,7 +30,7 @@ export function SamTurnList({
       <ol className="space-y-3">
         {session.turns.map((turn, index) => (
           <SamTurnRow
-            key={`${session.sessionId}-${index}`}
+            key={`${session.sessionId}-${turn.id ?? index}`}
             turn={turn}
             agentLabel={agentLabel}
             testId="ask-sam-turn"
@@ -50,6 +51,7 @@ export function SamTurnRow({
   testId?: string;
 }) {
   const followUp = virtualAgentTurnFollowUp(turn);
+  const clientResponse = samClientResponseLabel(turn.followUpResponse);
   return (
     <li
       data-testid={testId}
@@ -64,6 +66,12 @@ export function SamTurnRow({
         <div data-testid="sam-turn-follow-up">
           <div className="mt-2 text-[12px] text-slate-muted">{samFollowUpHeading(agentLabel)}</div>
           <div className="text-[14px] text-slate-deep leading-relaxed whitespace-pre-wrap">{followUp}</div>
+        </div>
+      )}
+      {followUp !== "" && clientResponse !== null && (
+        <div data-testid="sam-turn-client-response">
+          <div className="mt-2 text-[12px] text-slate-muted">Client Response</div>
+          <div className="text-[14px] text-slate-deep leading-relaxed">{clientResponse}</div>
         </div>
       )}
     </li>

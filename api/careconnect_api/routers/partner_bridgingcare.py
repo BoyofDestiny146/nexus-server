@@ -3,13 +3,14 @@
 GET  /api/v1/integrations/bridgingcare/companions/{companionId}/assessment-config
 POST /api/v1/integrations/bridgingcare/sam/conversation
 POST /api/v1/integrations/bridgingcare/sam/feedback
+POST /api/v1/integrations/bridgingcare/sam/follow-up-response
 
 Dashboard JWT, Watcher X-API-Key, CareConnect partner credentials,
 and outbound Bridging Care ingest X-Api-Key are not accepted. Does not
 generate assessments, mutate schedule/profile, or enable automatic delivery.
 The Sam conversation does not write Watcher chat history or the
 Phase 2A client discussion table. Completed answers can be stored
-on cc_sam_session.
+on cc_sam_session. Follow-up Yes/No is separate from session helpfulness.
 """
 from __future__ import annotations
 
@@ -33,7 +34,13 @@ from ..knowledge import list_client_assignments
 from ..knowledge_retrieval import semantic_search
 from ..models import AiAgent
 from ..sam_conversation import handle_sam_conversation
-from ..sam_session import record_completed_turn, record_feedback, require_owned_session, session_claim_from_body
+from ..sam_session import (
+    record_completed_turn,
+    record_feedback,
+    record_follow_up_response,
+    require_owned_session,
+    session_claim_from_body,
+)
 from ..settings import settings
 
 
@@ -133,7 +140,7 @@ async def sam_conversation(
         return result
     question = payload.get("question") if isinstance(payload.get("question"), str) else ""
     try:
-        result["sessionId"] = await record_completed_turn(
+        stored = await record_completed_turn(
             db,
             claim,
             virtual_agent_id,
@@ -141,6 +148,8 @@ async def sam_conversation(
             str(result.get("message") or ""),
             str(result.get("followUpQuestion") or ""),
         )
+        result["sessionId"] = stored.session_id
+        result["turnId"] = stored.turn_id
     except APIException:
         raise
     except Exception:
@@ -168,4 +177,31 @@ async def sam_feedback(
         log.exception("sam feedback persist failed")
         raise APIException(503, "feedback is unavailable") from None
     log.info("bridgingcare sam feedback")
+    return {"recorded": True}
+
+
+@router.post("/sam/follow-up-response", response_model=None)
+async def sam_follow_up_response(
+    payload: dict[str, Any],
+    _inbound_id: str = Depends(require_bridgingcare_inbound),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Record Yes/No for Sam's follow-up on one turn. Not session helpfulness."""
+    claim = session_claim_from_body(payload)
+    response = payload.get("response")
+    raw_turn = payload.get("turnId")
+    turn_id = raw_turn if isinstance(raw_turn, int) else None
+    if turn_id is None and isinstance(raw_turn, str) and raw_turn.strip().isdigit():
+        turn_id = int(raw_turn.strip())
+    if claim is None or not isinstance(response, bool) or turn_id is None:
+        raise APIException(400, "invalid session")
+    try:
+        await record_follow_up_response(db, claim, turn_id, response)
+    except APIException:
+        raise
+    except Exception:
+        await db.rollback()
+        log.exception("sam follow-up response persist failed")
+        raise APIException(503, "follow-up response is unavailable") from None
+    log.info("bridgingcare sam follow-up response")
     return {"recorded": True}

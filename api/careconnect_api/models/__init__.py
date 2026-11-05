@@ -544,6 +544,7 @@ class CcSamSessionTurn(Base):
     question: Mapped[str] = mapped_column(String(2000), nullable=False)
     answer: Mapped[str] = mapped_column(Text, nullable=False)
     follow_up: Mapped[str | None] = mapped_column(Text, nullable=True)
+    follow_up_response: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
 
 class ClientIntegration(Base):

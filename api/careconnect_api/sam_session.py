@@ -4,6 +4,9 @@ The browser cannot choose a Nexus client. Library sessions store no account,
 device, or resident. Turns are written only after a completed answer.
 cc_virtual_agent_message is not used.
 
+Follow-up Yes/No answers are stored on the turn (follow_up_response) and are
+separate from session helpfulness (helpful / feedback_at).
+
 Retention is 30 days from created_at. sam_session_retention_cutoff documents
 the future cleanup and does not delete rows.
 """
@@ -38,6 +41,12 @@ class SessionClaim:
     account_id: str | None
     registered_device_id: str | None
     session_id: str | None
+
+
+@dataclass(frozen=True)
+class CompletedTurn:
+    session_id: str
+    turn_id: int
 
 
 def sam_session_retention_cutoff(now: datetime | None = None) -> datetime:
@@ -148,7 +157,7 @@ async def record_completed_turn(
     question: str,
     answer: str,
     follow_up: str | None,
-) -> str:
+) -> CompletedTurn:
     """Insert one completed turn. The session id is server-generated."""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     if claim.session_id:
@@ -174,16 +183,19 @@ async def record_completed_turn(
     asked = question.strip()[:2000]
     if asked == "" or answer.strip() == "":
         raise APIException(400, "invalid session")
-    db.add(CcSamSessionTurn(
+    turn = CcSamSessionTurn(
         session_id=session.session_id,
         created_at=now,
         question=asked,
         answer=answer,
         follow_up=follow_up.strip() if isinstance(follow_up, str) and follow_up.strip() else None,
-    ))
+        follow_up_response=None,
+    )
+    db.add(turn)
     session.answer_count = int(session.answer_count or 0) + 1
     await db.commit()
-    return session.session_id
+    await db.refresh(turn)
+    return CompletedTurn(session_id=session.session_id, turn_id=int(turn.id))
 
 
 async def record_feedback(
@@ -207,6 +219,36 @@ async def record_feedback(
         raise APIException(403, "session is not available")
     session.helpful = 1 if helpful else 0
     session.feedback_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    await db.commit()
+
+
+async def record_follow_up_response(
+    db: AsyncSession,
+    claim: SessionClaim,
+    turn_id: int,
+    response: bool,
+) -> None:
+    """Record Yes or No for this turn's follow-up. Separate from session helpfulness."""
+    if not claim.session_id:
+        raise APIException(400, "invalid session")
+    if not isinstance(turn_id, int) or turn_id < 1:
+        raise APIException(400, "invalid session")
+    session = await db.get(CcSamSession, claim.session_id)
+    if session is None or session.owner_subject != claim.owner_subject:
+        raise APIException(403, "session is not available")
+    if (
+        session.context_kind != claim.context_kind
+        or session.account_id != claim.account_id
+        or session.registered_device_id != claim.registered_device_id
+    ):
+        raise APIException(403, "session is not available")
+    turn = await db.get(CcSamSessionTurn, turn_id)
+    if turn is None or turn.session_id != session.session_id:
+        raise APIException(403, "session is not available")
+    follow = (turn.follow_up or "").strip()
+    if follow == "":
+        raise APIException(400, "invalid session")
+    turn.follow_up_response = 1 if response else 0
     await db.commit()
 
 
@@ -305,9 +347,11 @@ async def review_sam_sessions(
     grouped: dict[str, list[dict[str, Any]]] = {item: [] for item in ids}
     for turn in turns:
         grouped.setdefault(turn.session_id, []).append({
+            "id": int(turn.id),
             "question": turn.question,
             "answer": turn.answer,
             "followUp": turn.follow_up,
+            "followUpResponse": _helpful(turn.follow_up_response),
             "createdAt": _iso(turn.created_at),
         })
     return {
