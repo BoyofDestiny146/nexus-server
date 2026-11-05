@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { Loader2, Plus } from "lucide-react";
 import { apiDelete, apiGet, apiPost, ApiError } from "@/lib/api";
 import { Modal } from "@/components/Modal";
-import { relativeTime } from "@/lib/format";
+import {
+  askSamReviewPath,
+  pickSamSessionForView,
+} from "@/lib/askSamDiscussions";
+import type { SamReviewSession, SamReviewSummary } from "@/lib/samConversationReview";
 import {
   EMPTY_AVAILABLE_VIRTUAL_AGENTS,
   EMPTY_VIRTUAL_AGENT_DISCUSSION,
@@ -12,22 +16,19 @@ import {
   VIRTUAL_AGENTS_PATH,
   type BoundVirtualAgent,
   type VirtualAgentChoice,
-  type VirtualAgentTurn,
   bindVirtualAgentPayload,
   clientVirtualAgentPath,
   clientVirtualAgentsPath,
   selectableVirtualAgents,
   virtualAgentLabel,
-  virtualAgentSessionPath,
-  virtualAgentSessionsPath,
-  virtualAgentTurnFollowUp,
 } from "@/lib/virtualAgentBinding";
 
-interface SessionRow {
-  sessionId: string;
-  createdAt?: string | null;
-  messageCount: number;
-}
+export type SamDiscussionViewRequest = {
+  agent: BoundVirtualAgent;
+  summary: SamReviewSummary | null;
+  sessions: SamReviewSession[];
+  selectedSessionId: string | null;
+};
 
 export function VirtualAgentBindings({
   clientId,
@@ -36,17 +37,21 @@ export function VirtualAgentBindings({
   attachOpen: attachOpenProp,
   onAttachOpenChange,
   onBoundChange,
+  /** Opens Sam discussions in the parent center panel via the client sam-review API. */
+  onViewSamDiscussion,
 }: {
   clientId: string;
   embedded?: boolean;
   attachOpen?: boolean;
   onAttachOpenChange?: (open: boolean) => void;
   onBoundChange?: (bound: BoundVirtualAgent[] | null) => void;
+  onViewSamDiscussion?: (request: SamDiscussionViewRequest) => void;
 }) {
   const [bound, setBound] = useState<BoundVirtualAgent[] | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [viewErr, setViewErr] = useState<string | null>(null);
+  const [viewBusy, setViewBusy] = useState(false);
   const [attachOpenInternal, setAttachOpenInternal] = useState(false);
-  const [discussion, setDiscussion] = useState<BoundVirtualAgent | null>(null);
   const [pendingUnbind, setPendingUnbind] = useState<BoundVirtualAgent | null>(null);
 
   const controlled = typeof attachOpenProp === "boolean";
@@ -92,12 +97,50 @@ export function VirtualAgentBindings({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- reload on clientId only
   }, [clientId]);
 
+  async function viewDiscussion(agent: BoundVirtualAgent) {
+    if (viewBusy) return;
+    const path = askSamReviewPath(clientId);
+    if (!path || !onViewSamDiscussion) {
+      setViewErr(EMPTY_VIRTUAL_AGENT_DISCUSSION);
+      return;
+    }
+    setViewBusy(true);
+    setViewErr(null);
+    try {
+      const review = await apiGet<{ summary: SamReviewSummary; sessions: SamReviewSession[] }>(path);
+      const sessions = review.sessions ?? [];
+      if (sessions.length === 0) {
+        setViewErr(EMPTY_VIRTUAL_AGENT_DISCUSSION);
+        onViewSamDiscussion({
+          agent,
+          summary: review.summary ?? null,
+          sessions: [],
+          selectedSessionId: null,
+        });
+        return;
+      }
+      onViewSamDiscussion({
+        agent,
+        summary: review.summary ?? null,
+        sessions,
+        selectedSessionId: pickSamSessionForView(sessions),
+      });
+    } catch (error) {
+      setViewErr(error instanceof ApiError ? error.message : "Could not load the discussion.");
+    } finally {
+      setViewBusy(false);
+    }
+  }
+
   return (
     <div>
       {!embedded && <div className="kicker px-2 mb-1.5">Virtual Agents</div>}
       {bound === null && <p className="px-2 py-1.5 text-[12px] text-slate-muted">Loading…</p>}
       {loadErr && (
         <p className="px-2 py-1.5 text-[12px] text-risk-urgent leading-relaxed">{loadErr}</p>
+      )}
+      {viewErr && (
+        <p className="px-2 py-1.5 text-[12px] text-risk-urgent leading-relaxed">{viewErr}</p>
       )}
       {!embedded && bound && bound.length === 0 && !loadErr && (
         <p className="px-2 py-1.5 text-[12px] text-slate-muted leading-relaxed">{EMPTY_VIRTUAL_AGENTS}</p>
@@ -112,7 +155,13 @@ export function VirtualAgentBindings({
                 <div className="mt-0.5 text-[11px] text-slate-muted truncate">{agent.agentName}</div>
               ) : null}
               <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
-                <button type="button" className="text-[12px] text-teal-deep hover:underline" onClick={() => setDiscussion(agent)}>
+                <button
+                  type="button"
+                  className="text-[12px] text-teal-deep hover:underline disabled:opacity-60"
+                  disabled={viewBusy}
+                  data-testid="view-sam-discussion"
+                  onClick={() => viewDiscussion(agent)}
+                >
                   View Discussion
                 </button>
                 <button type="button" className="text-[12px] text-slate-muted hover:text-slate-deep" onClick={() => setPendingUnbind(agent)}>
@@ -143,7 +192,6 @@ export function VirtualAgentBindings({
           reload();
         }}
       />
-      <VirtualAgentDiscussionModal agent={discussion} clientId={clientId} onClose={() => setDiscussion(null)} />
       <UnbindVirtualAgentModal
         agent={pendingUnbind}
         clientId={clientId}
@@ -250,123 +298,6 @@ export function AttachVirtualAgentModal({
               ))}
             </select>
           </div>
-        )}
-        {err && (
-          <div className="text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">{err}</div>
-        )}
-      </div>
-    </Modal>
-  );
-}
-
-function VirtualAgentDiscussionModal({
-  agent,
-  clientId,
-  onClose,
-}: {
-  agent: BoundVirtualAgent | null;
-  clientId: string;
-  onClose: () => void;
-}) {
-  const [sessions, setSessions] = useState<SessionRow[] | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [turns, setTurns] = useState<VirtualAgentTurn[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!agent) return;
-    setSessions(null);
-    setSessionId(null);
-    setTurns(null);
-    setErr(null);
-    let cancelled = false;
-    apiGet<{ list: SessionRow[] }>(virtualAgentSessionsPath(clientId, agent.virtualAgentId))
-      .then((body) => {
-        if (cancelled) return;
-        const list = body?.list ?? [];
-        setSessions(list);
-        setSessionId(list[0]?.sessionId ?? null);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setSessions([]);
-        setErr(error instanceof ApiError ? error.message : "Could not load the discussion.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [agent, clientId]);
-
-  useEffect(() => {
-    if (!agent || !sessionId) {
-      setTurns(null);
-      return;
-    }
-    let cancelled = false;
-    setTurns(null);
-    apiGet<VirtualAgentTurn[]>(virtualAgentSessionPath(clientId, agent.virtualAgentId, sessionId))
-      .then((rows) => {
-        if (!cancelled) setTurns(rows ?? []);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setTurns([]);
-        setErr(error instanceof ApiError ? error.message : "Could not load the discussion.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [agent, clientId, sessionId]);
-
-  const empty = sessions !== null && sessions.length === 0 && !err;
-
-  return (
-    <Modal open={agent !== null} onClose={onClose} title="View Discussion" size="lg">
-      <div className="space-y-4">
-        <div className="text-[13px] text-slate-muted">{agent ? virtualAgentLabel(agent) : ""}</div>
-        {sessions === null && <div className="text-[13px] text-slate-muted">Loading…</div>}
-        {empty && (
-          <div className="text-[13.5px] text-slate-deep leading-relaxed border border-slate-line/80 bg-bone-soft/60 rounded-card px-3 py-3">
-            {EMPTY_VIRTUAL_AGENT_DISCUSSION}
-          </div>
-        )}
-        {sessions && sessions.length > 1 && (
-          <div>
-            <label htmlFor="virtual-agent-session" className="label">Session</label>
-            <select
-              id="virtual-agent-session"
-              className="input"
-              value={sessionId ?? ""}
-              onChange={(event) => setSessionId(event.target.value)}
-            >
-              {sessions.map((session) => (
-                <option key={session.sessionId} value={session.sessionId}>
-                  {relativeTime(session.createdAt)} · {session.messageCount}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-        {turns && turns.length > 0 && (
-          <ol className="space-y-3">
-            {turns.map((turn) => {
-              const followUp = virtualAgentTurnFollowUp(turn);
-              return (
-                <li key={turn.id} className="rounded-card border border-slate-line/70 bg-white/80 px-3 py-2.5">
-                  <div className="text-[12px] text-slate-muted">Question</div>
-                  <div className="text-[14px] text-slate-deep leading-relaxed">{turn.question}</div>
-                  <div className="mt-2 text-[12px] text-slate-muted">Sam</div>
-                  <div className="text-[14px] text-slate-deep leading-relaxed">{turn.answer}</div>
-                  {followUp !== "" && (
-                    <>
-                      <div className="mt-2 text-[12px] text-slate-muted">Follow-up</div>
-                      <div className="text-[14px] text-slate-deep leading-relaxed">{followUp}</div>
-                    </>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
         )}
         {err && (
           <div className="text-[13px] text-risk-urgent border border-risk-urgent/30 bg-risk-urgent/5 rounded-card px-3 py-2">{err}</div>

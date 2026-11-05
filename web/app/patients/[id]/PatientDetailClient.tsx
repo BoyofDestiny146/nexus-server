@@ -49,7 +49,15 @@ import { RevelContextCard } from "@/components/RevelContextCard";
 import { RevelDisplayEvent } from "@/components/RevelDisplayEvent";
 import { AssessmentEngineRail } from "@/components/assessment/AssessmentEngineRail";
 import { AskSamDiscussions } from "@/components/AskSamDiscussions";
+import { SamTurnList } from "@/components/SamTurnList";
 import { VirtualAgentBindings } from "@/components/VirtualAgentBindings";
+import {
+  SAM_CENTER_SELECT_PROMPT,
+  SAM_DISCUSSION_AGENT_LABEL,
+  samDiscussionSession,
+} from "@/lib/askSamDiscussions";
+import type { SamReviewSession } from "@/lib/samConversationReview";
+import { EMPTY_VIRTUAL_AGENT_DISCUSSION, virtualAgentLabel } from "@/lib/virtualAgentBinding";
 
 const WATCHER_ONLINE_MS = 5 * 60_000;
 
@@ -204,6 +212,11 @@ function PatientDetailView({ id }: { id: string }) {
   const [activeSession, setActiveSession] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
+  /** Center panel mode: Watcher chat-history vs Ask Sam (sam-review) turns. */
+  const [centerMode, setCenterMode] = useState<"watcher" | "sam">("watcher");
+  const [activeSamSessionId, setActiveSamSessionId] = useState<string | null>(null);
+  const [samSessions, setSamSessions] = useState<SamReviewSession[]>([]);
+  const [samAgentLabel, setSamAgentLabel] = useState(SAM_DISCUSSION_AGENT_LABEL);
 
   const [latest, setLatest] = useState<MedicalAssessment | null>(null);
   const [regenBusy, setRegenBusy] = useState(false);
@@ -433,6 +446,11 @@ function PatientDetailView({ id }: { id: string }) {
     [messages],
   );
 
+  const activeSamSession = useMemo(
+    () => (activeSamSessionId ? samDiscussionSession(samSessions, activeSamSessionId) : null),
+    [activeSamSessionId, samSessions],
+  );
+
   if (agentError) {
     return (
       <EmptyState
@@ -570,11 +588,29 @@ function PatientDetailView({ id }: { id: string }) {
                 attachOpen={virtualAttachOpen}
                 onAttachOpenChange={setVirtualAttachOpen}
                 onBoundChange={(rows) => setVirtualBoundCount(rows === null ? null : rows.length)}
+                onViewSamDiscussion={(request) => {
+                  setSamSessions(request.sessions);
+                  setSamAgentLabel(virtualAgentLabel(request.agent) || SAM_DISCUSSION_AGENT_LABEL);
+                  setCenterMode("sam");
+                  setActiveSamSessionId(request.selectedSessionId);
+                }}
               />
             </div>
           </div>
 
-          <AskSamDiscussions clientId={id} />
+          <AskSamDiscussions
+            clientId={id}
+            selectedSessionId={centerMode === "sam" ? activeSamSessionId : null}
+            pollWhileSelected={centerMode === "sam" && activeSamSessionId !== null}
+            onSelectSession={(sessionId) => {
+              setCenterMode("sam");
+              setActiveSamSessionId(sessionId);
+              setSamAgentLabel(SAM_DISCUSSION_AGENT_LABEL);
+            }}
+            onReviewChange={(review) => {
+              setSamSessions(review.sessions);
+            }}
+          />
 
           <div className="px-3 pt-4 pb-2 flex items-baseline justify-between gap-2">
             <div className="kicker">Sessions</div>
@@ -593,11 +629,15 @@ function PatientDetailView({ id }: { id: string }) {
             )}
             <ul className="space-y-0.5">
               {sessions?.map((s) => {
-                const active = s.sessionId === activeSession;
+                const active = centerMode === "watcher" && s.sessionId === activeSession;
                 return (
                   <li key={s.sessionId}>
                     <button
-                      onClick={() => setActiveSession(s.sessionId)}
+                      onClick={() => {
+                        setCenterMode("watcher");
+                        setActiveSamSessionId(null);
+                        setActiveSession(s.sessionId);
+                      }}
                       className={classNames(
                         "w-full text-left px-2.5 py-2 rounded-card border transition",
                         active
@@ -636,43 +676,83 @@ function PatientDetailView({ id }: { id: string }) {
           )}
         </aside>
 
-        {/* Center: chat transcript */}
+        {/* Center: Watcher chat transcript or Ask Sam discussion */}
         <div
           ref={scrollerRef}
           className={PATIENT_DETAIL_CENTER}
+          data-testid="client-discussion-center"
+          data-discussion-mode={centerMode}
         >
-          {loadingMsgs && (
-            <div className="space-y-3 max-w-2xl">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="skeleton h-12 w-2/3" />
-              ))}
+          {centerMode === "sam" ? (
+            <div className="max-w-2xl mx-auto w-full" data-testid="sam-discussion-center">
+              {!activeSamSessionId && (
+                <EmptyState
+                  icon={MessageCircle}
+                  title="Select an Ask Sam Discussion"
+                  body={
+                    samSessions.length > 0
+                      ? SAM_CENTER_SELECT_PROMPT
+                      : EMPTY_VIRTUAL_AGENT_DISCUSSION
+                  }
+                />
+              )}
+              {activeSamSessionId && !activeSamSession && (
+                <EmptyState
+                  icon={MessageCircle}
+                  title="Select an Ask Sam Discussion"
+                  body={SAM_CENTER_SELECT_PROMPT}
+                />
+              )}
+              {activeSamSession && activeSamSession.turns.length === 0 && (
+                <EmptyState
+                  icon={MessageCircle}
+                  title="No messages in this session"
+                  body="This Ask Sam discussion has no completed answers yet."
+                />
+              )}
+              {activeSamSession && activeSamSession.turns.length > 0 && (
+                <SamTurnList session={activeSamSession} agentLabel={samAgentLabel} />
+              )}
             </div>
-          )}
-
-          {!loadingMsgs && grouped.length === 0 && (
-            <EmptyState
-              icon={MessageCircle}
-              title="No messages in this session"
-              body="When the client speaks to the Watcher, the conversation will stream in here."
-            />
-          )}
-
-          {!loadingMsgs && grouped.map((group, gi) => (
-            <div key={gi} className="mb-7 max-w-2xl mx-auto">
-              {group.day ? (
-                <div className="flex items-center gap-3 mb-3.5">
-                  <div className="kicker">{group.day}</div>
-                  <div className="flex-1 h-px grid-rule" />
+          ) : (
+            <>
+              {loadingMsgs && (
+                <div className="space-y-3 max-w-2xl">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="skeleton h-12 w-2/3" />
+                  ))}
                 </div>
-              ) : null}
-              <ol className="space-y-4" data-testid="conversation-timeline">
-                {group.items.map((item) => (
-                  <TimelineRow key={item.key} item={item} />
-                ))}
-              </ol>
-            </div>
-          ))}
+              )}
 
+              {!loadingMsgs && grouped.length === 0 && (
+                <EmptyState
+                  icon={MessageCircle}
+                  title="No messages in this session"
+                  body={
+                    samSessions.length > 0
+                      ? "When the client speaks to the Watcher, the conversation will stream in here. Or select an Ask Sam Discussion in the left column."
+                      : "When the client speaks to the Watcher, the conversation will stream in here."
+                  }
+                />
+              )}
+
+              {!loadingMsgs && grouped.map((group, gi) => (
+                <div key={gi} className="mb-7 max-w-2xl mx-auto">
+                  {group.day ? (
+                    <div className="flex items-center gap-3 mb-3.5">
+                      <div className="kicker">{group.day}</div>
+                      <div className="flex-1 h-px grid-rule" />
+                    </div>
+                  ) : null}
+                  <ol className="space-y-4" data-testid="conversation-timeline">
+                    {group.items.map((item) => (
+                      <TimelineRow key={item.key} item={item} />
+                    ))}
+                  </ol>
+                </div>
+              ))}
+            </>
+          )}
         </div>
 
         {/* Right: Nexus Assessment Engine */}

@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
+  SAM_CENTER_SELECT_PROMPT,
+  SAM_DISCUSSION_POLL_MS,
   askSamDiscussionsVisible,
   askSamReviewPath,
+  pickSamSessionForView,
   samDiscussionSession,
   samDiscussionTurnCount,
   samReviewTimestamp,
@@ -104,30 +107,51 @@ test("the four stored sessions keep five turns, timestamps, and their own feedba
   assert.equal(samDiscussionSession(sessions, "missing"), null);
 });
 
-test("the client screen adds Ask Sam beside the Watcher reader", () => {
+test("View Discussion auto-selects only a single Sam session", () => {
+  assert.equal(pickSamSessionForView([]), null);
+  assert.equal(pickSamSessionForView(null), null);
+  assert.equal(pickSamSessionForView(storedSessions()), null);
+  assert.equal(pickSamSessionForView([storedSessions()[0]]), storedSessions()[0].sessionId);
+  assert.equal(SAM_DISCUSSION_POLL_MS, 30_000);
+  assert.match(SAM_CENTER_SELECT_PROMPT, /Select an Ask Sam Discussion/);
+});
+
+test("the client screen drives Ask Sam into the center panel beside the Watcher reader", () => {
   const patient = readFileSync(new URL("../app/patients/[id]/PatientDetailClient.tsx", import.meta.url), "utf8");
   const section = readFileSync(new URL("../components/AskSamDiscussions.tsx", import.meta.url), "utf8");
+  const turns = readFileSync(new URL("../components/SamTurnList.tsx", import.meta.url), "utf8");
   const helper = readFileSync(new URL("./askSamDiscussions.ts", import.meta.url), "utf8");
   const control = readFileSync(new URL("../app/virtual-agents/control/page.tsx", import.meta.url), "utf8");
 
-  assert.match(patient, /<AskSamDiscussions clientId=\{id\} \/>/);
+  assert.match(patient, /<AskSamDiscussions/);
+  assert.match(patient, /onSelectSession/);
+  assert.match(patient, /centerMode/);
+  assert.match(patient, /data-discussion-mode=\{centerMode\}/);
+  assert.match(patient, /SamTurnList/);
+  assert.match(patient, /SAM_CENTER_SELECT_PROMPT/);
+  assert.match(patient, /pollWhileSelected=\{centerMode === "sam"/);
   assert.doesNotMatch(patient, /SAM_PORTAL_CLIENT_ID/);
   assert.match(patient, /No conversations yet\. The first will appear here when the Watcher is used\./);
   assert.match(patient, /\/agent\/\$\{id\}\/sessions/);
-  assert.doesNotMatch(patient, /sam-review/);
   assert.match(patient, /Attach a Watcher/);
 
   assert.match(section, /Ask Sam Discussions/);
   assert.match(section, /askSamReviewPath\(clientId\)/);
   assert.match(section, /askSamDiscussionsVisible/);
+  assert.match(section, /onSelectSession/);
+  assert.match(section, /SAM_DISCUSSION_POLL_MS/);
+  assert.doesNotMatch(section, /Modal/);
   assert.doesNotMatch(section, /SAM_PORTAL_CLIENT_ID/);
   assert.doesNotMatch(section, /virtual-agents/);
   assert.doesNotMatch(helper, /SAM_PORTAL_CLIENT_ID/);
   assert.match(helper, /return `\/agent\/\$\{id\}\/sam-review`;/);
+  assert.match(helper, /pickSamSessionForView/);
 
   assert.match(section, /apiGet</);
   assert.doesNotMatch(section, /apiPost|apiPatch|apiDelete/);
   assert.doesNotMatch(section, /ai_agent_chat_history|cc_virtual_agent_message|cc_sam_session/);
+  assert.match(turns, /agentLabel/);
+  assert.match(turns, /Question/);
   assert.match(control, /agentSamReviewPath\(agentId\)/);
   assert.doesNotMatch(helper, /view=agent/);
   assert.doesNotMatch(control, /apiPost|apiPatch|apiDelete/);

@@ -25,6 +25,11 @@ test("resident discussion stays separate from Sam review", () => {
   assert.doesNotMatch(control, /sam-review"/);
   assert.match(control, /samContextLabel/);
   assert.doesNotMatch(control, /apiPost|apiPatch|apiDelete/);
-  assert.doesNotMatch(patient, /sam-review/);
+  // Client page reuses AskSamDiscussions + sam-review helpers for the center panel;
+  // Watcher chat-history remains the Solid transcript path.
+  assert.match(patient, /AskSamDiscussions/);
+  assert.match(patient, /centerMode/);
+  assert.match(patient, /\/agent\/\$\{id\}\/chat-history/);
   assert.match(patient, /Attach a Watcher/);
+  assert.doesNotMatch(patient, /cc_virtual_agent_message/);
 });
