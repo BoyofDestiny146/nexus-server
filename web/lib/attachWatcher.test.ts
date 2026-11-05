@@ -96,7 +96,7 @@ test("no unbound Watchers shows empty state and disables Attach device", () => {
     false,
   );
   assert.equal(EMPTY_UNBOUND_WATCHERS, (
-    "No unbound Watchers are available. Add or unbind a Watcher from Devices first."
+    "No unbound Watchers are available. Add or unbind a Watcher from Solid Agents first."
   ));
   assert.match(modal, /data-testid="attach-unbound-empty"/);
   assert.match(modal, /EMPTY_UNBOUND_WATCHERS/);

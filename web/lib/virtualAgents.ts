@@ -1,8 +1,16 @@
 /** Portal AI Agents. Software agents are created in this organization. Not an agent id. */
 export const PORTAL_AI_AGENTS_ORGANIZATION_ID = "d51af0ec95ac4b4a949f8d5b64cdd30a";
 
-/** Shown until integration connectivity is verified. Never report Online from this page. */
+/**
+ * Control-page connection status. Integration connectivity is not probed from
+ * the roster; never report Online from Virtual Agents UI.
+ */
 export const VIRTUAL_AGENT_STATUS = "Not verified";
+
+/** Roster Status from reliable bind state already on the row. Never Online. */
+export function virtualAgentRosterStatus(boundClientId?: string | null): string {
+  return (boundClientId || "").trim() ? "Bound" : "Unattached";
+}
 
 export interface VirtualAgentCandidate {
   id: string;
@@ -215,7 +223,7 @@ export function toVirtualAgentRow(input: {
     inheritsDefault: stored === "",
     serverModel: server,
     knowledge: input.knowledge,
-    status: VIRTUAL_AGENT_STATUS,
+    status: virtualAgentRosterStatus(clientId),
   };
 }
 

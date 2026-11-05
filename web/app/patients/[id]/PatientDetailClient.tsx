@@ -211,7 +211,11 @@ function PatientDetailView({ id }: { id: string }) {
   const [devices, setDevices] = useState<DeviceRow[]>([]);
 
   const [editOpen, setEditOpen] = useState(false);
-  const [attachOpen, setAttachOpen] = useState(false);
+  /** Unified Attach Agent entry: chooser → solid Watcher modal or virtual bind modal. */
+  const [attachChooserOpen, setAttachChooserOpen] = useState(false);
+  const [solidAttachOpen, setSolidAttachOpen] = useState(false);
+  const [virtualAttachOpen, setVirtualAttachOpen] = useState(false);
+  const [virtualBoundCount, setVirtualBoundCount] = useState<number | null>(null);
   const [knowledgeTick, setKnowledgeTick] = useState(0);
   const [revelStatus, setRevelStatus] = useState<RevelStatus | null>(null);
   const [revelStatusError, setRevelStatusError] = useState<string | null>(null);
@@ -496,7 +500,7 @@ function PatientDetailView({ id }: { id: string }) {
             <div>
               <SectionLabel>Client</SectionLabel>
               <PanelAction icon={Pencil} label="Edit client" onClick={() => setEditOpen(true)} />
-              <PanelAction icon={Plus} label="Attach device" onClick={() => setAttachOpen(true)} />
+              <PanelAction icon={Plus} label="Attach Agent" onClick={() => setAttachChooserOpen(true)} />
             </div>
             <div>
               <ClientIntegrations
@@ -515,12 +519,13 @@ function PatientDetailView({ id }: { id: string }) {
               />
             </div>
             <div>
-              <SectionLabel>Devices</SectionLabel>
-              {devices.length === 0 ? (
+              <SectionLabel>Agents</SectionLabel>
+              {devices.length === 0 && virtualBoundCount === 0 ? (
                 <p className="px-2 py-1.5 text-[12px] text-slate-muted leading-relaxed">
-                  No Watcher bound to this client.
+                  No Agents bound to this client.
                 </p>
-              ) : (
+              ) : null}
+              {devices.length > 0 && (
                 <ul className="space-y-2">
                   {devices.map((d) => {
                     const online = isWatcherOnline(d.lastConnectedAt);
@@ -532,6 +537,7 @@ function PatientDetailView({ id }: { id: string }) {
                         <div className="text-[13px] tracking-tight text-slate-deep leading-snug">
                           {deviceTitle(d)}
                         </div>
+                        <div className="mt-0.5 text-[11px] uppercase tracking-[0.12em] text-slate-muted">Solid</div>
                         <div className="mt-0.5 font-mono text-[11px] text-slate-muted truncate">
                           {d.macAddress}
                         </div>
@@ -558,9 +564,13 @@ function PatientDetailView({ id }: { id: string }) {
                   })}
                 </ul>
               )}
-            </div>
-            <div>
-              <VirtualAgentBindings clientId={id} />
+              <VirtualAgentBindings
+                clientId={id}
+                embedded
+                attachOpen={virtualAttachOpen}
+                onAttachOpenChange={setVirtualAttachOpen}
+                onBoundChange={(rows) => setVirtualBoundCount(rows === null ? null : rows.length)}
+              />
             </div>
           </div>
 
@@ -701,7 +711,7 @@ function PatientDetailView({ id }: { id: string }) {
         devices={devices}
         onAttachDevice={() => {
           setEditOpen(false);
-          setAttachOpen(true);
+          setAttachChooserOpen(true);
         }}
         onSaved={async () => {
           setEditOpen(false);
@@ -711,12 +721,25 @@ function PatientDetailView({ id }: { id: string }) {
         }}
       />
 
+      <AttachAgentChooserModal
+        open={attachChooserOpen}
+        onClose={() => setAttachChooserOpen(false)}
+        onChooseSolid={() => {
+          setAttachChooserOpen(false);
+          setSolidAttachOpen(true);
+        }}
+        onChooseVirtual={() => {
+          setAttachChooserOpen(false);
+          setVirtualAttachOpen(true);
+        }}
+      />
+
       <AttachDeviceModal
-        open={attachOpen}
-        onClose={() => setAttachOpen(false)}
+        open={solidAttachOpen}
+        onClose={() => setSolidAttachOpen(false)}
         agentId={id}
         onAttached={async (res) => {
-          setAttachOpen(false);
+          setSolidAttachOpen(false);
           if (res.previousAgentId) {
             toast.push("Device was unbound from previous client.", "info");
           } else {
@@ -726,6 +749,51 @@ function PatientDetailView({ id }: { id: string }) {
         }}
       />
     </>
+  );
+}
+
+function AttachAgentChooserModal({
+  open, onClose, onChooseSolid, onChooseVirtual,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onChooseSolid: () => void;
+  onChooseVirtual: () => void;
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title="Attach Agent" size="md"
+      footer={
+        <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-[13.5px] text-slate-muted leading-relaxed">
+          Choose the agent type to attach. Solid and Virtual keep separate bind APIs.
+        </p>
+        <button
+          type="button"
+          onClick={onChooseSolid}
+          className="w-full text-left rounded-card border border-slate-line/70 bg-white px-3.5 py-3 hover:border-slate-line transition"
+          data-testid="attach-agent-choose-solid"
+        >
+          <div className="text-[14px] tracking-tight text-slate-deep">Solid Agent</div>
+          <div className="mt-0.5 text-[12px] text-slate-muted leading-relaxed">
+            Physical Watcher — uses the existing device attach workflow.
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={onChooseVirtual}
+          className="w-full text-left rounded-card border border-slate-line/70 bg-white px-3.5 py-3 hover:border-slate-line transition"
+          data-testid="attach-agent-choose-virtual"
+        >
+          <div className="text-[14px] tracking-tight text-slate-deep">Virtual Agent</div>
+          <div className="mt-0.5 text-[12px] text-slate-muted leading-relaxed">
+            Software agent — uses the existing virtual-agent bind workflow.
+          </div>
+        </button>
+      </div>
+    </Modal>
   );
 }
 

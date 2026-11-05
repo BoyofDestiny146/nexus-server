@@ -47,16 +47,24 @@ test("an empty discussion stays empty", () => {
   assert.equal(virtualAgentTurnFollowUp({ followUp: "Which alarm?" }), "Which alarm?");
 });
 
-test("the client page keeps Watchers and adds a separate virtual-agent section", () => {
+test("the client page consolidates Watchers and virtual agents under one Agents section", () => {
   const page = readFileSync(new URL("../app/patients/[id]/PatientDetailClient.tsx", import.meta.url), "utf8");
   const section = readFileSync(new URL("../components/VirtualAgentBindings.tsx", import.meta.url), "utf8");
   assert.equal(page.includes("Attach a Watcher"), true);
-  assert.equal(page.includes("<SectionLabel>Devices</SectionLabel>"), true);
-  assert.equal(page.includes("<VirtualAgentBindings clientId={id} />"), true);
+  assert.equal(page.includes("<SectionLabel>Agents</SectionLabel>"), true);
+  assert.equal(page.includes("<SectionLabel>Devices</SectionLabel>"), false);
+  assert.equal(page.includes("No Agents bound to this client."), true);
+  assert.equal(page.includes("Attach Agent"), true);
+  assert.equal(page.includes("AttachAgentChooserModal"), true);
+  assert.equal(page.includes('data-testid="attach-agent-choose-solid"'), true);
+  assert.equal(page.includes('data-testid="attach-agent-choose-virtual"'), true);
+  assert.equal(page.includes("embedded"), true);
+  assert.equal(page.includes("<VirtualAgentBindings"), true);
   assert.equal(section.includes("Attach Virtual Agent"), true);
   assert.equal(section.includes("View Discussion"), true);
   assert.equal(section.includes("Unbind"), true);
   assert.equal(section.includes("EMPTY_VIRTUAL_AGENT_DISCUSSION"), true);
+  assert.equal(section.includes("embedded"), true);
   assert.equal(section.includes("/sam/conversation"), false);
   assert.equal(section.includes("ai_device"), false);
 });

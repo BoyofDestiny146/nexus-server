@@ -283,7 +283,7 @@ function DevicesView() {
     <>
       <PageHeader
         kicker="Hardware"
-        title="Agents"
+        title="Solid Agents"
         subtitle="Physical agents on this server: every registered Watcher. The Last connected column shows online (≤5 min) at a glance. Use the Control button on each row to configure voice, speed, and other device settings."
       />
 
