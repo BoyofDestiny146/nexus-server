@@ -7,7 +7,7 @@ export const UNBOUND_WATCHERS_PATH = "/device/unbound";
 export const ATTACH_DEVICE_PATH = "/device/attach";
 
 export const EMPTY_UNBOUND_WATCHERS =
-  "No unbound Watchers are available. Add or unbind a Watcher from Devices first.";
+  "No unbound Watchers are available. Add or unbind a Watcher from Solid Agents first.";
 
 export const WATCHER_ALREADY_BOUND = "watcher_already_bound";
 

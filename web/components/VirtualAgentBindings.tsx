@@ -29,22 +29,48 @@ interface SessionRow {
   messageCount: number;
 }
 
-export function VirtualAgentBindings({ clientId }: { clientId: string }) {
+export function VirtualAgentBindings({
+  clientId,
+  /** When true, omit the Virtual Agents kicker, empty copy, and Attach button (parent hosts AGENTS). */
+  embedded = false,
+  attachOpen: attachOpenProp,
+  onAttachOpenChange,
+  onBoundChange,
+}: {
+  clientId: string;
+  embedded?: boolean;
+  attachOpen?: boolean;
+  onAttachOpenChange?: (open: boolean) => void;
+  onBoundChange?: (bound: BoundVirtualAgent[] | null) => void;
+}) {
   const [bound, setBound] = useState<BoundVirtualAgent[] | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [attachOpen, setAttachOpen] = useState(false);
+  const [attachOpenInternal, setAttachOpenInternal] = useState(false);
   const [discussion, setDiscussion] = useState<BoundVirtualAgent | null>(null);
   const [pendingUnbind, setPendingUnbind] = useState<BoundVirtualAgent | null>(null);
 
+  const controlled = typeof attachOpenProp === "boolean";
+  const attachOpen = controlled ? attachOpenProp : attachOpenInternal;
+
+  function setAttachOpen(open: boolean) {
+    if (!controlled) setAttachOpenInternal(open);
+    onAttachOpenChange?.(open);
+  }
+
+  function applyBound(rows: BoundVirtualAgent[] | null) {
+    setBound(rows);
+    onBoundChange?.(rows);
+  }
+
   function reload() {
-    setBound(null);
+    applyBound(null);
     apiGet<BoundVirtualAgent[]>(clientVirtualAgentsPath(clientId))
       .then((rows) => {
-        setBound(rows ?? []);
+        applyBound(rows ?? []);
         setLoadErr(null);
       })
       .catch((error) => {
-        setBound([]);
+        applyBound([]);
         setLoadErr(error instanceof ApiError ? error.message : "Could not load virtual agents.");
       });
   }
@@ -53,33 +79,35 @@ export function VirtualAgentBindings({ clientId }: { clientId: string }) {
     let cancelled = false;
     apiGet<BoundVirtualAgent[]>(clientVirtualAgentsPath(clientId))
       .then((rows) => {
-        if (!cancelled) setBound(rows ?? []);
+        if (!cancelled) applyBound(rows ?? []);
       })
       .catch((error) => {
         if (cancelled) return;
-        setBound([]);
+        applyBound([]);
         setLoadErr(error instanceof ApiError ? error.message : "Could not load virtual agents.");
       });
     return () => {
       cancelled = true;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- reload on clientId only
   }, [clientId]);
 
   return (
     <div>
-      <div className="kicker px-2 mb-1.5">Virtual Agents</div>
+      {!embedded && <div className="kicker px-2 mb-1.5">Virtual Agents</div>}
       {bound === null && <p className="px-2 py-1.5 text-[12px] text-slate-muted">Loading…</p>}
       {loadErr && (
         <p className="px-2 py-1.5 text-[12px] text-risk-urgent leading-relaxed">{loadErr}</p>
       )}
-      {bound && bound.length === 0 && !loadErr && (
+      {!embedded && bound && bound.length === 0 && !loadErr && (
         <p className="px-2 py-1.5 text-[12px] text-slate-muted leading-relaxed">{EMPTY_VIRTUAL_AGENTS}</p>
       )}
       {bound && bound.length > 0 && (
-        <ul className="space-y-2">
+        <ul className={embedded && bound.length > 0 ? "space-y-2 mt-2" : "space-y-2"}>
           {bound.map((agent) => (
             <li key={agent.virtualAgentId} className="rounded-card border border-slate-line/70 bg-white/80 px-2.5 py-2">
               <div className="text-[13px] tracking-tight text-slate-deep leading-snug">{virtualAgentLabel(agent)}</div>
+              <div className="mt-0.5 text-[11px] uppercase tracking-[0.12em] text-slate-muted">Virtual</div>
               {agent.agentName && agent.botName && agent.agentName !== agent.botName ? (
                 <div className="mt-0.5 text-[11px] text-slate-muted truncate">{agent.agentName}</div>
               ) : null}
@@ -95,14 +123,16 @@ export function VirtualAgentBindings({ clientId }: { clientId: string }) {
           ))}
         </ul>
       )}
-      <button
-        type="button"
-        onClick={() => setAttachOpen(true)}
-        className="mt-2 w-full flex items-center gap-2.5 px-2 py-2 rounded-card text-[13px] tracking-tight text-slate-deep hover:bg-white/90 transition"
-      >
-        <Plus size={14} className="text-slate-muted shrink-0" />
-        Attach Virtual Agent
-      </button>
+      {!embedded && (
+        <button
+          type="button"
+          onClick={() => setAttachOpen(true)}
+          className="mt-2 w-full flex items-center gap-2.5 px-2 py-2 rounded-card text-[13px] tracking-tight text-slate-deep hover:bg-white/90 transition"
+        >
+          <Plus size={14} className="text-slate-muted shrink-0" />
+          Attach Virtual Agent
+        </button>
+      )}
       <AttachVirtualAgentModal
         open={attachOpen}
         clientId={clientId}
@@ -127,7 +157,7 @@ export function VirtualAgentBindings({ clientId }: { clientId: string }) {
   );
 }
 
-function AttachVirtualAgentModal({
+export function AttachVirtualAgentModal({
   open,
   clientId,
   boundIds,

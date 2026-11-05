@@ -22,7 +22,7 @@ import {
 } from "@/lib/clientsNav";
 
 const MAIN_NAV = [
-  { href: "/devices", label: "Agents", icon: Cpu },
+  { href: "/devices", label: "Solid Agents", icon: Cpu },
   { href: "/personalities", label: "Agent Personality", icon: Sparkles },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/health", label: "System Status", icon: HeartPulse },

@@ -90,17 +90,20 @@ test("selecting a Watcher enables Attach; empty selection does not", () => {
   assert.match(modal, /canAttachWatcher\(/);
 });
 
-test("no unbound Watchers shows empty state and disables Attach device", () => {
+test("no unbound Watchers shows empty state and disables Attach Agent submit", () => {
   assert.equal(
     canAttachWatcher({ selectedId: "", unboundCount: 0, loading: false }),
     false,
   );
   assert.equal(EMPTY_UNBOUND_WATCHERS, (
-    "No unbound Watchers are available. Add or unbind a Watcher from Devices first."
+    "No unbound Watchers are available. Add or unbind a Watcher from Solid Agents first."
   ));
   assert.match(modal, /data-testid="attach-unbound-empty"/);
   assert.match(modal, /EMPTY_UNBOUND_WATCHERS/);
   assert.match(modal, /data-testid="attach-device-submit"/);
+  assert.match(modal, /Attach Agent/);
+  assert.doesNotMatch(modal, /Attach device/);
+  assert.match(modal, /title="Attach a Watcher"/);
 });
 
 test("selected Watcher alias is prefilled and editable", () => {

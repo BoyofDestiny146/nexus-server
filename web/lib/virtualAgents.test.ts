@@ -23,6 +23,7 @@ import {
   servingModelLabel,
   toVirtualAgentRow,
   virtualAgentControlHref,
+  virtualAgentRosterStatus,
   visibleClientRecords,
 } from "./virtualAgents.ts";
 
@@ -109,6 +110,9 @@ test("model labels come from server fields and a saved tag is not described as s
   assert.match(serverDefaultWarning("server-model", "unavailable") || "", /could not be checked/);
   assert.equal(VIRTUAL_AGENT_STATUS, "Not verified");
   assert.notEqual(VIRTUAL_AGENT_STATUS.toLowerCase(), "online");
+  assert.equal(virtualAgentRosterStatus(null), "Unattached");
+  assert.equal(virtualAgentRosterStatus(PORTAL_CLIENT), "Bound");
+  assert.notEqual(virtualAgentRosterStatus(PORTAL_CLIENT).toLowerCase(), "online");
   assert.equal(clientDetailHref(PORTAL_CLIENT), `/patients/${PORTAL_CLIENT}`);
 });
 
@@ -140,7 +144,7 @@ test("a virtual agent row shows the bound care client, not the VA agent_name", (
   assert.notEqual(row.clientName, "Sam");
   assert.equal(row.aiModel, "server-model (Server Default)");
   assert.equal(row.inheritsDefault, true);
-  assert.equal(row.status, "Not verified");
+  assert.equal(row.status, "Bound");
   const unbound = toVirtualAgentRow({
     id: "unbound-agent",
     botName: "Unbound Agent",
@@ -149,6 +153,7 @@ test("a virtual agent row shows the bound care client, not the VA agent_name", (
   });
   assert.equal(unbound.clientId, null);
   assert.equal(unbound.clientName, UNATTACHED_CLIENT_LABEL);
+  assert.equal(unbound.status, "Unattached");
   const saved = toVirtualAgentRow({
     id: SAM_AGENT,
     botName: row.agentName,
@@ -237,7 +242,7 @@ test("Virtual Agents sits between Clients and Agents and uses the devices table 
   const virtual = shell.indexOf('label="Virtual Agents"');
   const mainNav = shell.indexOf("{MAIN_NAV.map");
   assert.ok(clients >= 0 && virtual > clients && mainNav > virtual);
-  assert.match(shell, /href: "\/devices", label: "Agents"/);
+  assert.match(shell, /href: "\/devices", label: "Solid Agents"/);
   assert.doesNotMatch(shell, /label: "Devices"/);
   assert.match(shell, /href="\/virtual-agents"/);
   assert.match(page, /filterVirtualAgentRows/);
@@ -257,7 +262,7 @@ test("Virtual Agents sits between Clients and Agents and uses the devices table 
   assert.match(page, /\/agent\/list\?organizationId=/);
   assert.match(page, /\/knowledge-bases/);
   assert.doesNotMatch(page, /qwen2\.5:3b/);
-  assert.match(devices, /title="Agents"/);
+  assert.match(devices, /title="Solid Agents"/);
   assert.match(devices, /Physical agents on this server/);
   assert.match(devices, /MAC \/ EUI/);
   assert.match(devices, /VoiceSelector/);
