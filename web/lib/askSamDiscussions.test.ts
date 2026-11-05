@@ -154,11 +154,14 @@ test("the client screen drives Ask Sam into the center panel beside the Watcher 
   assert.match(turns, /Question/);
   assert.match(turns, /samFollowUpHeading/);
   assert.match(turns, /sam-turn-follow-up/);
+  assert.match(turns, /samClientResponseLabel/);
+  assert.match(turns, /sam-turn-client-response/);
   assert.match(turns, /virtualAgentTurnFollowUp/);
   assert.doesNotMatch(turns, />Follow-up</);
   assert.match(control, /agentSamReviewPath\(agentId\)/);
   assert.match(control, /samFollowUpHeading/);
   assert.match(control, /sam-turn-follow-up/);
+  assert.match(control, /samClientResponseLabel/);
   assert.doesNotMatch(helper, /view=agent/);
   assert.doesNotMatch(control, /apiPost|apiPatch|apiDelete/);
 });

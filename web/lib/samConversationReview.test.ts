@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   agentSamReviewPath,
+  samClientResponseLabel,
   samContextLabel,
   samFeedbackLabel,
   samFollowUpHeading,
@@ -27,6 +28,20 @@ test("follow-up heading uses the agent label and persisted followUp text stays s
   assert.equal(virtualAgentTurnFollowUp({ followUp: "Has a clinician already approved a limit?" }), "Has a clinician already approved a limit?");
   assert.equal(virtualAgentTurnFollowUp({ followUp: "  " }), "");
   assert.equal(virtualAgentTurnFollowUp({ followUp: null }), "");
+});
+
+test("client response label only renders recorded follow-up Yes/No and ignores helpfulness", () => {
+  assert.equal(samClientResponseLabel(true), "Yes");
+  assert.equal(samClientResponseLabel(false), "No");
+  assert.equal(samClientResponseLabel(null), null);
+  assert.equal(samClientResponseLabel(undefined), null);
+  const turns = readFileSync(new URL("../components/SamTurnList.tsx", import.meta.url), "utf8");
+  assert.match(turns, /samClientResponseLabel/);
+  assert.match(turns, /sam-turn-client-response/);
+  assert.match(turns, /Client Response/);
+  assert.match(turns, /turn\.followUpResponse/);
+  assert.match(turns, /samFeedbackLabel\(session\.helpful\)/);
+  assert.doesNotMatch(turns, /samClientResponseLabel\(session\.helpful\)/);
 });
 
 test("resident discussion stays separate from Sam review", () => {

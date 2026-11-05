@@ -7,11 +7,23 @@ export function agentSamReviewPath(agentId: string): string {
 }
 
 export type SamReviewTurn = {
+  id?: number | null;
   question: string;
   answer: string;
   followUp?: string | null;
+  /** Yes/No answer to this turn's follow-up only. Not session helpfulness. */
+  followUpResponse?: boolean | null;
   createdAt?: string | null;
 };
+
+/** Center label for a recorded follow-up Yes/No. Null/undefined means omit. */
+export function samClientResponseLabel(
+  followUpResponse: boolean | null | undefined,
+): "Yes" | "No" | null {
+  if (followUpResponse === true) return "Yes";
+  if (followUpResponse === false) return "No";
+  return null;
+}
 
 export type SamReviewSession = {
   sessionId: string;

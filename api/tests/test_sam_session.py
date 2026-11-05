@@ -26,6 +26,7 @@ from careconnect_api.sam_session import (
     feedback_summary,
     record_completed_turn,
     record_feedback,
+    record_follow_up_response,
     require_owned_session,
     review_sam_sessions,
     sam_session_retention_cutoff,
@@ -81,9 +82,9 @@ async def test_server_session_persists_only_completed_turns(db_session: AsyncSes
     assert claim is not None
     assert claim.account_id is None
     assert claim.registered_device_id is None
-    session_id = await record_completed_turn(
+    session_id = (await record_completed_turn(
         db_session, claim, SAM_ID, "What is the library?", "A completed answer.", "One follow-up",
-    )
+    )).session_id
     assert session_id != BILL_ID
     assert len(session_id) == 32
     row = await db_session.get(CcSamSession, session_id)
@@ -102,15 +103,15 @@ async def test_server_session_persists_only_completed_turns(db_session: AsyncSes
         await require_owned_session(db_session, _library("auth0|other", session_id), SAM_ID)
     assert denied.value.code == 403
     with pytest.raises(APIException) as crossed:
-        await record_completed_turn(
+        (await record_completed_turn(
             db_session, _device("auth0|master-a", session_id), SAM_ID, "Again?", "No.", None,
-        )
+        )).session_id
     assert crossed.value.code == 403
     db_session.expire_all()
     assert (await db_session.get(CcSamSession, session_id)).answer_count == 1
 
     device_claim = _device()
-    device_id = await record_completed_turn(db_session, device_claim, SAM_ID, "Device?", "Answer.", None)
+    device_id = (await record_completed_turn(db_session, device_claim, SAM_ID, "Device?", "Answer.", None)).session_id
     device_row = await db_session.get(CcSamSession, device_id)
     assert device_row.context_kind == "account_device"
     assert device_row.account_id == "account-1"
@@ -128,9 +129,9 @@ async def test_feedback_updates_and_summary_waits_for_ten_votes(db_session: Asyn
     await db_session.commit()
     ids = []
     for index in range(10):
-        ids.append(await record_completed_turn(
+        ids.append((await record_completed_turn(
             db_session, _library(f"auth0|user-{index}"), SAM_ID, f"Question {index}", "Answer.", None,
-        ))
+        )).session_id)
     for index, session_id in enumerate(ids[:9]):
         await record_feedback(db_session, _library(f"auth0|user-{index}", session_id), index % 2 == 0)
     early = await review_sam_sessions(db_session, SAM_ID)
@@ -187,7 +188,9 @@ async def test_route_rejects_reuse_and_a_failed_generation_writes_nothing(
     })).json()
     assert created["code"] == 0, created
     session_id = created["data"]["sessionId"]
+    turn_id = created["data"]["turnId"]
     assert session_id != BILL_ID
+    assert isinstance(turn_id, int) and turn_id >= 1
 
     reused = (await client.post("/api/v1/integrations/bridgingcare/sam/conversation", json={
         "question": "Another question",
@@ -216,6 +219,61 @@ async def test_route_rejects_reuse_and_a_failed_generation_writes_nothing(
     assert stored.helpful == 1
     assert stored.nexus_client_id is None
     assert (await db_session.execute(select(func.count()).select_from(CcVirtualAgentMessage))).scalar_one() == 0
+
+    answered = (await client.post("/api/v1/integrations/bridgingcare/sam/follow-up-response", json={
+        "response": False,
+        "turnId": turn_id,
+        "session": {"sessionId": session_id, "ownerSubject": "auth0|master-a", "contextKind": "library"},
+    })).json()
+    assert answered["code"] == 0, answered
+    db_session.expire_all()
+    turn_row = await db_session.get(CcSamSessionTurn, turn_id)
+    assert turn_row is not None
+    assert turn_row.follow_up_response == 0
+    stored_after = await db_session.get(CcSamSession, session_id)
+    assert stored_after.helpful == 1
+    review = await review_sam_sessions(db_session, SAM_ID, view="agent")
+    assert review["sessions"][0]["turns"][0]["followUpResponse"] is False
+    assert review["sessions"][0]["turns"][0]["id"] == turn_id
+    assert review["sessions"][0]["helpful"] is True
+
+
+@pytest.mark.asyncio
+async def test_follow_up_response_requires_follow_up_and_stays_off_helpfulness(
+    db_session: AsyncSession,
+):
+    db_session.add(_agent(SAM_ID, "Portal-US"))
+    await db_session.commit()
+    claim = _library()
+    with_follow = await record_completed_turn(
+        db_session, claim, SAM_ID, "Q1", "A1", "Has a clinician already approved a limit?",
+    )
+    without_follow = await record_completed_turn(
+        db_session,
+        _library("auth0|master-a", with_follow.session_id),
+        SAM_ID,
+        "Q2",
+        "A2",
+        None,
+    )
+    await record_follow_up_response(db_session, _library("auth0|master-a", with_follow.session_id), with_follow.turn_id, True)
+    db_session.expire_all()
+    yes_row = await db_session.get(CcSamSessionTurn, with_follow.turn_id)
+    assert yes_row.follow_up_response == 1
+    session = await db_session.get(CcSamSession, with_follow.session_id)
+    assert session.helpful is None
+    with pytest.raises(APIException) as missing_follow:
+        await record_follow_up_response(
+            db_session, _library("auth0|master-a", with_follow.session_id), without_follow.turn_id, False,
+        )
+    assert missing_follow.value.code == 400
+    await record_follow_up_response(db_session, _library("auth0|master-a", with_follow.session_id), with_follow.turn_id, False)
+    db_session.expire_all()
+    assert (await db_session.get(CcSamSessionTurn, with_follow.turn_id)).follow_up_response == 0
+    review = await review_sam_sessions(db_session, SAM_ID, view="agent")
+    turns = review["sessions"][0]["turns"]
+    assert turns[0]["followUpResponse"] is False
+    assert turns[1]["followUpResponse"] is None
 
 
 OTHER_ID = "otherclient00000000000000000001"
@@ -252,9 +310,9 @@ async def test_review_keeps_legacy_sessions_and_does_not_share_them(db_session: 
         AiDevice(id="watcher-1", mac_address="80:45:6B:4D:5D:74", agent_id=BILL_ID, alias="Betty"),
     ])
     await db_session.commit()
-    legacy = await record_completed_turn(
+    legacy = (await record_completed_turn(
         db_session, _library(), SAM_ID, "Legacy question", "Legacy answer.", None,
-    )
+    )).session_id
     owned = CcSamSession(
         session_id="billowned000000000000000000001",
         virtual_agent_id=SAM_ID,
@@ -315,29 +373,29 @@ async def test_client_is_recorded_only_when_the_account_matches_one_binding(db_s
     ])
     await db_session.commit()
 
-    verified = await record_completed_turn(
+    verified = (await record_completed_turn(
         db_session, _device(account=ACCOUNT_A), SAM_ID, "Owned?", "Yes.", None,
-    )
+    )).session_id
     row = await db_session.get(CcSamSession, verified)
     assert row is not None
     assert row.virtual_agent_id == SAM_ID
     assert row.nexus_client_id == CLIENT_A
 
-    unbound = await record_completed_turn(
+    unbound = (await record_completed_turn(
         db_session, _device(account=ACCOUNT_B), SAM_ID, "Other account?", "No client.", None,
-    )
+    )).session_id
     assert (await db_session.get(CcSamSession, unbound)).nexus_client_id is None
 
-    library = await record_completed_turn(
+    library = (await record_completed_turn(
         db_session, _library(), SAM_ID, "Library?", "No client.", None,
-    )
+    )).session_id
     assert (await db_session.get(CcSamSession, library)).nexus_client_id is None
 
     db_session.add(CcVirtualAgentBinding(client_id=CLIENT_B, virtual_agent_id=SAM_ID, created_by=1))
     await db_session.commit()
-    ambiguous = await record_completed_turn(
+    ambiguous = (await record_completed_turn(
         db_session, _device(account=ACCOUNT_A), SAM_ID, "Two bindings?", "No client.", None,
-    )
+    )).session_id
     assert (await db_session.get(CcSamSession, ambiguous)).nexus_client_id is None
     assert (await db_session.execute(select(func.count()).select_from(CcSamSessionTurn))).scalar_one() == 4
 
@@ -352,9 +410,9 @@ async def test_a_binding_without_the_verified_account_does_not_assign_a_client(d
         CcVirtualAgentBinding(client_id=CLIENT_A, virtual_agent_id=SAM_ID, created_by=1),
     ])
     await db_session.commit()
-    mismatched = await record_completed_turn(
+    mismatched = (await record_completed_turn(
         db_session, _device(account=ACCOUNT_B), SAM_ID, "Wrong client?", "Unassigned.", None,
-    )
+    )).session_id
     stored = await db_session.get(CcSamSession, mismatched)
     assert stored is not None
     assert stored.virtual_agent_id == SAM_ID
@@ -378,9 +436,9 @@ async def test_agent_view_shows_authorized_client_sessions_only(db_session: Asyn
     await db_session.commit()
     legacy_ids = []
     for index in range(4):
-        legacy_ids.append(await record_completed_turn(
+        legacy_ids.append((await record_completed_turn(
             db_session, _library(f"auth0|legacy-{index}"), SAM_ID, f"Legacy {index}", "Stored answer.", None,
-        ))
+        )).session_id)
     bill = CcSamSession(
         session_id="clientaview0000000000000000001",
         virtual_agent_id=SAM_ID,
@@ -522,9 +580,14 @@ def test_generation_module_and_phase_2a_reader_stay_separate():
     source = (API_DIR / "careconnect_api" / "sam_conversation.py").read_text()
     route = (API_DIR / "careconnect_api" / "routers" / "partner_bridgingcare.py").read_text()
     reader = (API_DIR / "careconnect_api" / "routers" / "virtual_agent_binding.py").read_text()
+    migration = (API_DIR / "migrations" / "033_sam_follow_up_response.sql").read_text()
     assert "sam_session" not in source
     assert "AiAgentChatHistory" not in source
     assert "You are Sam, the read-only BridgingCare assistant." in source
     assert "cc_virtual_agent_message" not in route
+    assert "/sam/follow-up-response" in route
+    assert "record_follow_up_response" in route
+    assert "follow_up_response" in migration
+    assert "helpful" not in migration.split("ADD COLUMN", 1)[1]
     assert "CcVirtualAgentMessage" in reader
     assert "review_sam_sessions" in reader

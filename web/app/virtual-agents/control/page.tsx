@@ -33,6 +33,7 @@ import {
 import {
   SAM_REVIEW_EMPTY,
   agentSamReviewPath,
+  samClientResponseLabel,
   samContextLabel,
   samFeedbackLabel,
   samFollowUpHeading,
@@ -157,6 +158,12 @@ function ConversationReview({ agentId }: { agentId: string }) {
                   <div data-testid="sam-turn-follow-up">
                     <div className="mt-1 text-[12px] text-slate-muted">{samFollowUpHeading("Sam")}</div>
                     <div>{turn.followUp}</div>
+                  </div>
+                ) : null}
+                {turn.followUp && samClientResponseLabel(turn.followUpResponse) ? (
+                  <div data-testid="sam-turn-client-response">
+                    <div className="mt-1 text-[12px] text-slate-muted">Client Response</div>
+                    <div>{samClientResponseLabel(turn.followUpResponse)}</div>
                   </div>
                 ) : null}
               </li>
