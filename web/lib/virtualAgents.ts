@@ -67,6 +67,20 @@ export function virtualAgentControlHref(clientId: string): string {
   return `/virtual-agents/control/?id=${encodeURIComponent(clientId)}`;
 }
 
+/** Create form route. Does not auto-bind after save. */
+export function virtualAgentNewHref(): string {
+  return "/virtual-agents/new";
+}
+
+/** Dedicated create endpoint. Same path as the attachable-VA list (POST vs GET). */
+export function virtualAgentCreatePath(): string {
+  return "/agent/virtual";
+}
+
+export function createVirtualAgentPayload(name: string): { name: string } {
+  return { name: name.trim() };
+}
+
 export function parseVirtualAgentControlId(search: string): string | null {
   const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   const id = (params.get("id") || "").trim();

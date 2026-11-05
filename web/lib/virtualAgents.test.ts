@@ -22,7 +22,10 @@ import {
   serverModelLabel,
   servingModelLabel,
   toVirtualAgentRow,
+  createVirtualAgentPayload,
   virtualAgentControlHref,
+  virtualAgentCreatePath,
+  virtualAgentNewHref,
   virtualAgentRosterStatus,
   visibleClientRecords,
 } from "./virtualAgents.ts";
@@ -262,9 +265,33 @@ test("Virtual Agents sits between Clients and Agents and uses the devices table 
   assert.match(page, /\/agent\/list\?organizationId=/);
   assert.match(page, /\/knowledge-bases/);
   assert.doesNotMatch(page, /qwen2\.5:3b/);
+  assert.match(page, /virtualAgentNewHref/);
+  assert.match(page, /\+ Add Virtual Agent/);
   assert.match(devices, /title="Solid Agents"/);
   assert.match(devices, /Physical agents on this server/);
   assert.match(devices, /MAC \/ EUI/);
   assert.match(devices, /VoiceSelector/);
   assert.match(devices, /\/admin\/device\/all/);
+});
+
+test("Add Virtual Agent creates via POST /agent/virtual without auto-bind", () => {
+  assert.equal(virtualAgentNewHref(), "/virtual-agents/new");
+  assert.equal(virtualAgentCreatePath(), "/agent/virtual");
+  assert.deepEqual(createVirtualAgentPayload("  Desk Agent  "), { name: "Desk Agent" });
+  const createPage = readFileSync(join(here, "../app/virtual-agents/new/page.tsx"), "utf8");
+  assert.match(createPage, /virtualAgentCreatePath\(\)/);
+  assert.match(createPage, /createVirtualAgentPayload\(name\)/);
+  assert.match(createPage, /apiPost/);
+  assert.match(createPage, /ask-sam-model/);
+  assert.match(createPage, /knowledge-bases/);
+  assert.match(createPage, /KnowledgeAccessFields/);
+  assert.match(createPage, /virtualAgentControlHref/);
+  assert.match(createPage, /Attach to Client/);
+  assert.match(createPage, /clientVirtualAgentsPath/);
+  assert.match(createPage, /bindVirtualAgentPayload/);
+  assert.match(createPage, /visibleClientRecords/);
+  assert.doesNotMatch(createPage, /apiPost\([^)]*onboard/);
+  assert.doesNotMatch(createPage, /auto-bind|autoBind|auto attach/i);
+  assert.doesNotMatch(createPage, /partner_bridgingcare|CC_SAM_CLIENT_ID/);
+  assert.doesNotMatch(createPage, /1c46373751d84d29a1aab382fd65501f/);
 });

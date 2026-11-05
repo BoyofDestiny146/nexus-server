@@ -13,6 +13,7 @@ import {
   clientDetailHref,
   filterVirtualAgentRows,
   virtualAgentControlHref,
+  virtualAgentNewHref,
   knowledgeAssignmentLabel,
   selectVirtualAgents,
   serverDefaultWarning,
@@ -167,6 +168,11 @@ function VirtualAgentsView() {
         kicker="Software agents"
         title="Virtual Agents"
         subtitle="Independently managed software agents. The AI Model column shows a saved override, or the server default when none is saved. Ask Sam uses a saved override only for the active integration agent."
+        actions={
+          <Link href={virtualAgentNewHref()} className="btn-primary text-[12px]">
+            + Add Virtual Agent
+          </Link>
+        }
       />
       <section className="px-8 md:px-12 py-8">
         <div className="flex items-center justify-between gap-4 mb-6">
