@@ -5,8 +5,10 @@ import {
   agentSamReviewPath,
   samContextLabel,
   samFeedbackLabel,
+  samFollowUpHeading,
   samHelpfulnessSummary,
 } from "./samConversationReview.ts";
+import { virtualAgentTurnFollowUp } from "./virtualAgentBinding.ts";
 
 test("helpfulness percentage waits for 10 votes and skip is not a vote", () => {
   assert.equal(samHelpfulnessSummary(9, 0).percent, null);
@@ -15,6 +17,16 @@ test("helpfulness percentage waits for 10 votes and skip is not a vote", () => {
   assert.equal(samFeedbackLabel(null), "No vote");
   assert.equal(samFeedbackLabel(true), "Yes");
   assert.equal(samContextLabel("library"), "Administrative");
+});
+
+test("follow-up heading uses the agent label and persisted followUp text stays separate", () => {
+  assert.equal(samFollowUpHeading(), "Sam — Follow-up");
+  assert.equal(samFollowUpHeading("Sam"), "Sam — Follow-up");
+  assert.equal(samFollowUpHeading("Nexus Agent"), "Nexus Agent — Follow-up");
+  assert.equal(samFollowUpHeading("  "), "Sam — Follow-up");
+  assert.equal(virtualAgentTurnFollowUp({ followUp: "Has a clinician already approved a limit?" }), "Has a clinician already approved a limit?");
+  assert.equal(virtualAgentTurnFollowUp({ followUp: "  " }), "");
+  assert.equal(virtualAgentTurnFollowUp({ followUp: null }), "");
 });
 
 test("resident discussion stays separate from Sam review", () => {
