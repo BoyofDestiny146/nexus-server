@@ -145,9 +145,13 @@ test("Create Client stepper stays four steps and does not include Knowledge", ()
   assert.deepEqual(CLIENT_FORM_STEPS.map((s) => s.key), ["profile", "guardrails", "device", "review"]);
 });
 
-test("Edit Client inserts Knowledge between Device and Review", () => {
+test("Edit Client inserts Knowledge between Agents and Review", () => {
   assert.deepEqual(
     EDIT_CLIENT_FORM_STEPS.map((s) => s.key),
     ["profile", "guardrails", "device", "knowledge", "review"],
+  );
+  assert.equal(
+    EDIT_CLIENT_FORM_STEPS.find((s) => s.key === "device")?.label,
+    "Agents",
   );
 });

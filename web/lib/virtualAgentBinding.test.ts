@@ -68,3 +68,41 @@ test("the client page consolidates Watchers and virtual agents under one Agents 
   assert.equal(section.includes("/sam/conversation"), false);
   assert.equal(section.includes("ai_device"), false);
 });
+
+test("unified Agents section covers empty, VA-only, solid-only, and both", () => {
+  const page = readFileSync(new URL("../app/patients/[id]/PatientDetailClient.tsx", import.meta.url), "utf8");
+  const section = readFileSync(new URL("../components/VirtualAgentBindings.tsx", import.meta.url), "utf8");
+  const agentsStart = page.indexOf("<SectionLabel>Agents</SectionLabel>");
+  const agentsEnd = page.indexOf("<AskSamDiscussions", agentsStart);
+  assert.ok(agentsStart >= 0 && agentsEnd > agentsStart);
+  const agents = page.slice(agentsStart, agentsEnd);
+  // empty: combined copy only when both solid and VA counts are zero
+  assert.match(agents, /devices\.length === 0 && virtualBoundCount === 0/);
+  assert.match(agents, /No Agents bound to this client\./);
+  // solid-only / both: solid cards gated on devices.length > 0
+  assert.match(agents, /devices\.length > 0/);
+  assert.match(agents, />Solid</);
+  // VA-only / both: embedded bindings keep cards + Discussion/Unbind; hide VA chrome empty
+  assert.match(agents, /embedded/);
+  assert.match(agents, /onBoundChange=\{/);
+  assert.match(section, /!embedded && bound && bound\.length === 0/);
+  assert.match(section, /View Discussion/);
+  assert.match(section, /Unbind/);
+  assert.match(section, />Virtual</);
+});
+
+test("Edit Client uses Attach Agent wording while keeping Watcher-specific recording copy", () => {
+  const edit = readFileSync(new URL("../components/EditClientWorkspace.tsx", import.meta.url), "utf8");
+  const form = readFileSync(new URL("./clientForm.ts", import.meta.url), "utf8");
+  assert.match(form, /key: "device", label: "Agents"/);
+  assert.match(edit, /Attach Agent/);
+  assert.match(edit, /existing Attach Agent control/);
+  assert.doesNotMatch(edit, /Attach a Watcher/);
+  assert.doesNotMatch(edit, /Attach device control/);
+  assert.doesNotMatch(edit, /existing Device controls/);
+  // genuinely Watcher-specific
+  assert.match(edit, /No Watcher is bound to this client\. Conversations will not be recorded/);
+  assert.match(edit, /SenseCAP Watcher/);
+  assert.match(edit, /Device ID/);
+  assert.match(edit, /Bound Watchers inherit these/);
+});

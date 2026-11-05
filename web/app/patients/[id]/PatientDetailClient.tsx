@@ -976,7 +976,7 @@ function AttachDeviceModal({
             data-testid="attach-device-submit"
           >
             {busy && <Loader2 size={14} className="animate-spin" />}
-            <Cpu size={14} /> Attach device
+            <Cpu size={14} /> Attach Agent
           </button>
         </>
       }

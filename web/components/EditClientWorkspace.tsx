@@ -189,7 +189,7 @@ export function EditClientWorkspace({
                 devices={devices}
                 onAttachDevice={() => {
                   if (dirty) {
-                    setErr("Save or cancel these edits before attaching a Watcher. Attach uses the existing device control and closes this editor.");
+                    setErr("Save or cancel these edits before attaching an agent. Attach uses the existing Attach Agent control and closes this editor.");
                     return;
                   }
                   onAttachDevice();
@@ -211,9 +211,9 @@ export function EditClientWorkspace({
               <div className="space-y-6">
                 <ProfileReview draft={draft} />
                 <div className="border-t border-slate-line/70 pt-6">
-                  <div className="kicker mb-3">Device</div>
+                  <div className="kicker mb-3">Agents</div>
                   {devices.length === 0 ? (
-                    <p className="text-[14px] text-slate-muted">No Watcher bound — attach from the Device step or the client sidebar.</p>
+                    <p className="text-[14px] text-slate-muted">No Solid Agent bound — attach from the Agents step or the client sidebar.</p>
                   ) : (
                     <ul className="space-y-1 text-[14px] text-slate-deep">
                       {devices.map((d) => (
@@ -262,7 +262,7 @@ export function EditClientWorkspace({
               <p className="text-[13.5px] leading-relaxed text-slate-deep">
                 {step === 0 && "These are the same profile fields as Add a client. Bot name starts voice display commands."}
                 {step === 1 && "Choose how Nexus talks. Escalation phrases and topics to avoid stay with this client. A legacy free-text persona is kept until you pick a library personality."}
-                {step === 2 && "Device bind and unbind stay on the existing Attach device control. This step shows current assignment only."}
+                {step === 2 && "Agent bind and unbind stay on the existing Attach Agent control. This step shows current Solid assignment only."}
                 {step === 3 && "Assign reusable Knowledge Bases. Bound Watchers inherit these. Revel tags are metadata only."}
                 {step === 4 && "Save updates this client and knowledge assignments. Integrations, chat history, and assessments are not changed."}
               </p>
@@ -313,10 +313,10 @@ function EditDeviceStep({
         </ul>
       )}
       <p className="text-[12.5px] text-slate-muted leading-relaxed">
-        Attach or unbind Watchers with the existing Device controls on this client page. This editor does not create a second device lifecycle.
+        Use Attach Agent on this client page for Solid or Virtual bind. This editor does not create a second agent lifecycle.
       </p>
       <button type="button" className="btn-secondary text-[13px]" onClick={onAttachDevice}>
-        <Plus size={14} /> <Cpu size={14} /> Attach a Watcher
+        <Plus size={14} /> <Cpu size={14} /> Attach Agent
       </button>
     </div>
   );
