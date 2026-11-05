@@ -1,13 +1,16 @@
-"""Bind an existing virtual agent to a Nexus client and read stored discussions.
+"""Create/bind virtual agents and read stored discussions.
 
-A virtual agent is an ai_agent in Portal AI Agents with no Watcher. Binding
-stores that id. It does not copy the agent and it does not write ai_device.
+A virtual agent is an ai_agent in Portal AI Agents with no Watcher. Create
+inserts that row unbound. Binding stores an existing id. Neither copies the
+agent nor writes ai_device. Existing Sam records are never rewritten.
 
 Conversation routes only read cc_virtual_agent_message. The Sam conversation
 endpoint does not write that table.
 """
 from __future__ import annotations
 
+import time
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -21,18 +24,43 @@ from ..agent_classification import (
     binding_membership,
     is_virtual_agent,
 )
-from ..auth import CurrentUser, get_current_user
+from ..auth import ROLE_ROOT, CurrentUser, get_current_user
+from ..client_profile import build_system_prompt, dump_profile, empty_profile
 from ..db import get_db
 from ..envelope import APIException
-from ..models import AiAgent, AiDevice, CcVirtualAgentBinding, CcVirtualAgentMessage
+from ..models import (
+    AdminClientAccess,
+    AiAgent,
+    AiDevice,
+    CcVirtualAgentBinding,
+    CcVirtualAgentMessage,
+)
+from ..personalities.store import default_personality_id, personality_mapping
 from ..rbac import assert_can_access_agent, scoped_agent_ids
 from ..sam_session import review_sam_sessions
 
 router = APIRouter(prefix="/agent", tags=["virtual-agents"])
 
 
+class CreateVirtualAgentBody(BaseModel):
+    """Minimal create payload. Model/knowledge use existing PUT endpoints after."""
+
+    name: str = Field(min_length=1, max_length=64)
+
+
 class BindVirtualAgentBody(BaseModel):
     virtualAgentId: str = Field(min_length=1, max_length=32)
+
+
+def _sanitize_agent_name(raw: str) -> str:
+    cleaned = " ".join((raw or "").split())
+    if not cleaned:
+        raise APIException(400, "name is required")
+    if any(ord(ch) < 32 for ch in cleaned):
+        raise APIException(400, "name cannot contain control characters")
+    if len(cleaned) > 64:
+        raise APIException(400, "name must be 64 characters or fewer")
+    return cleaned
 
 
 def _public_virtual_agent(agent: AiAgent, device_count: int) -> dict[str, Any]:
@@ -107,6 +135,78 @@ async def list_virtual_agents(
         visible.append(_public_virtual_agent(agent, 0))
     visible.sort(key=lambda item: (item.get("agentName") or "", item["id"]))
     return visible
+
+
+@router.post("/virtual", response_model=None)
+async def create_virtual_agent(
+    body: CreateVirtualAgentBody,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Create an unbound virtual agent in Portal AI Agents.
+
+    Inserts one ``ai_agent`` row with no Watcher and no binding. Does not
+    rewrite existing Sam / Portal-US records. Model override and knowledge
+    assignment stay on their existing PUT endpoints. Organization is fixed to
+    Portal AI Agents so the row classifies as a virtual agent.
+    """
+    name = _sanitize_agent_name(body.name)
+    agent_id = uuid.uuid4().hex
+    agent_code = f"AGT_{int(time.time() * 1000)}"
+    profile = empty_profile()
+    profile["personalityId"] = await default_personality_id(db)
+    mapping = await personality_mapping(db, profile.get("personalityId"))
+    system_prompt = build_system_prompt(
+        name=name,
+        profile=profile,
+        assistant_name=name,
+        personality=mapping,
+    )
+    agent = AiAgent(
+        id=agent_id,
+        user_id=user.id,
+        agent_code=agent_code,
+        agent_name=name,
+        bot_name=name,
+        profile_json=dump_profile(profile),
+        asr_model_id="ASR_FunASR",
+        vad_model_id="VAD_SileroVAD",
+        llm_model_id="LLM_OllamaLLM",
+        vllm_model_id="VLLM_ChatGLMVLLM",
+        tts_model_id="TTS_CustomTTS",
+        mem_model_id="Memory_mem_local_vector",
+        intent_model_id="Intent_nointent",
+        system_prompt=system_prompt,
+        chat_history_conf=1,
+        lang_code="en",
+        language="English",
+        sort=0,
+        creator=user.id,
+        created_at=func.now(),
+        updated_at=func.now(),
+        organization_id=PORTAL_AI_AGENTS_ORGANIZATION_ID,
+    )
+    db.add(agent)
+    await db.flush()
+    if user.role != ROLE_ROOT:
+        db.add(
+            AdminClientAccess(
+                admin_user_id=user.id,
+                agent_id=agent_id,
+                granted_by=user.id,
+            )
+        )
+        await db.flush()
+    await db.commit()
+    return {
+        "id": agent_id,
+        "agentId": agent_id,
+        "agentName": name,
+        "botName": name,
+        "organizationId": PORTAL_AI_AGENTS_ORGANIZATION_ID,
+        "deviceCount": 0,
+        "boundClientId": None,
+    }
 
 
 @router.get("/{client_id}/virtual-agents", response_model=None)
