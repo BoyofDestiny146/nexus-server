@@ -43,6 +43,15 @@ export function samFeedbackLabel(helpful: boolean | null): "Yes" | "No" | "No vo
   return "No vote";
 }
 
+/**
+ * Center / review heading for the persisted Sam follow-up question.
+ * Uses the agent label so Virtual Agent Control and the client center stay aligned.
+ */
+export function samFollowUpHeading(agentLabel = "Sam"): string {
+  const label = agentLabel.trim() || "Sam";
+  return `${label} — Follow-up`;
+}
+
 /** Percentage is withheld until 10 Yes or No votes. Skip is not a vote. */
 export function samHelpfulnessSummary(helpful: number, notHelpful: number): SamReviewSummary {
   const votes = helpful + notHelpful;

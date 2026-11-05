@@ -1,6 +1,7 @@
 import {
   samContextLabel,
   samFeedbackLabel,
+  samFollowUpHeading,
   type SamReviewSession,
   type SamReviewTurn,
 } from "@/lib/samConversationReview";
@@ -60,10 +61,10 @@ export function SamTurnRow({
       <div className="mt-2 text-[12px] text-slate-muted">{agentLabel}</div>
       <div className="text-[14px] text-slate-deep leading-relaxed whitespace-pre-wrap">{turn.answer}</div>
       {followUp !== "" && (
-        <>
-          <div className="mt-2 text-[12px] text-slate-muted">Follow-up</div>
+        <div data-testid="sam-turn-follow-up">
+          <div className="mt-2 text-[12px] text-slate-muted">{samFollowUpHeading(agentLabel)}</div>
           <div className="text-[14px] text-slate-deep leading-relaxed whitespace-pre-wrap">{followUp}</div>
-        </>
+        </div>
       )}
     </li>
   );
