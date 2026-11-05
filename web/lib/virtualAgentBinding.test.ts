@@ -60,10 +60,17 @@ test("the client page consolidates Watchers and virtual agents under one Agents 
   assert.equal(page.includes('data-testid="attach-agent-choose-virtual"'), true);
   assert.equal(page.includes("embedded"), true);
   assert.equal(page.includes("<VirtualAgentBindings"), true);
+  assert.equal(page.includes("onViewSamDiscussion"), true);
   assert.equal(section.includes("Attach Virtual Agent"), true);
   assert.equal(section.includes("View Discussion"), true);
   assert.equal(section.includes("Unbind"), true);
   assert.equal(section.includes("EMPTY_VIRTUAL_AGENT_DISCUSSION"), true);
+  assert.equal(section.includes("askSamReviewPath"), true);
+  assert.equal(section.includes("pickSamSessionForView"), true);
+  assert.equal(section.includes("onViewSamDiscussion"), true);
+  assert.equal(section.includes("virtualAgentSessionsPath"), false);
+  assert.equal(section.includes("cc_virtual_agent_message"), false);
+  assert.equal(section.includes("VirtualAgentDiscussionModal"), false);
   assert.equal(section.includes("embedded"), true);
   assert.equal(section.includes("/sam/conversation"), false);
   assert.equal(section.includes("ai_device"), false);
